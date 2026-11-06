@@ -12,6 +12,7 @@ import (
 // A file tool cannot put a loop's variables into the settings a session
 // takes its environment from, as a shell write to them cannot.
 func TestLoopSettings(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name  string
 		deny  bool
@@ -25,11 +26,12 @@ func TestLoopSettings(t *testing.T) {
 		{"a README naming them", false, "Write", map[string]string{"file_path": "WORK/README.md", "content": "PR_LOOP_MODE is the operator's."}},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
-			h := fakeHome(t)
+			t.Parallel()
+			ctx, h := fakeHome(t)
 			work := filepath.Join(h, "work")
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "WORK", work).Replace(string(data)))
-			reason := check(c.tool, input, baseline, work)
+			reason := check(ctx, c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -45,6 +47,7 @@ func TestLoopSettings(t *testing.T) {
 // Codex profile, or a Codex config override. Only the operator's launchers
 // start one.
 func TestLoopStartHarness(t *testing.T) {
+	t.Parallel()
 	loopEnv := `{"env": {"PR_LOOP_MODE": "bots"}}`
 	loopProfile := "[shell_environment_policy]\nset = { PR_LOOP_MODE = \"bots\" }\n"
 	for _, c := range []struct {
@@ -75,7 +78,8 @@ func TestLoopStartHarness(t *testing.T) {
 		{"Claude's -c", false, "claude -c 'explain PR_LOOP_MODE'"},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
-			h := fakeHome(t)
+			t.Parallel()
+			ctx, h := fakeHome(t)
 			work := filepath.Join(h, "work")
 			other := filepath.Join(h, "other-codex")
 			for path, text := range map[string]string{
@@ -90,9 +94,9 @@ func TestLoopStartHarness(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Setenv("CODEX_HOME", "")
+			ctx = withVars(ctx, "CODEX_HOME=")
 			command := strings.NewReplacer("WORK", work, "OTHER", other).Replace(c.command)
-			reason := judge(t, work, command)
+			reason := judge(ctx, work, command)
 			if (reason != "") != c.deny {
 				t.Errorf("%s: deny=%v, reason %q", command, !c.deny, reason)
 			}
@@ -101,12 +105,27 @@ func TestLoopStartHarness(t *testing.T) {
 			}
 		})
 	}
+	// The guard's own $CODEX_HOME names the profiles a call that sets none
+	// reads.
+	t.Run(caseName(true, "a Codex profile in the guard's CODEX_HOME"), func(t *testing.T) {
+		t.Parallel()
+		ctx, h := fakeHome(t)
+		other := filepath.Join(h, "other-codex")
+		os.MkdirAll(other, 0o755)
+		if err := os.WriteFile(filepath.Join(other, "other.config.toml"), []byte(loopProfile), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if reason := judge(withVars(ctx, "CODEX_HOME="+other), h, "codex --profile other"); reason != loopStart {
+			t.Errorf("reason %q, want the loop-start reason", reason)
+		}
+	})
 }
 
 // The settings are found through links, and by any name the file system
 // folds to theirs: in case, and in Unicode, which APFS folds as well.
 func TestLoopSettingsAliases(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	work := filepath.Join(h, "work")
 	os.MkdirAll(filepath.Join(work, ".claude"), 0o755)
 	os.MkdirAll(filepath.Join(h, ".codex"), 0o755)
@@ -139,7 +158,7 @@ func TestLoopSettingsAliases(t *testing.T) {
 	}
 	for path, deny := range cases {
 		data, _ := json.Marshal(map[string]string{"file_path": path, "content": `{"env": {"PR_LOOP_MODE": "bots"}}`})
-		if reason := check("Write", data, baseline, work); (reason == loopStart) != deny {
+		if reason := check(ctx, "Write", data, baseline, work); (reason == loopStart) != deny {
 			t.Errorf("Write %s: reason %q, want deny=%v", path, reason, deny)
 		}
 	}
@@ -148,7 +167,8 @@ func TestLoopSettingsAliases(t *testing.T) {
 // A hard link to the settings is one of them at any depth, and outside the
 // directory the session runs in.
 func TestLoopSettingsHardLinks(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	work := filepath.Join(h, "work")
 	elsewhere := t.TempDir()
 	os.MkdirAll(filepath.Join(work, ".claude"), 0o755)
@@ -167,7 +187,7 @@ func TestLoopSettingsHardLinks(t *testing.T) {
 	}
 	for path, deny := range cases {
 		data, _ := json.Marshal(map[string]string{"file_path": path, "content": `{"env": {"PR_LOOP_MODE": "bots"}}`})
-		if reason := check("Write", data, baseline, work); (reason == loopStart) != deny {
+		if reason := check(ctx, "Write", data, baseline, work); (reason == loopStart) != deny {
 			t.Errorf("Write %s: reason %q, want deny=%v", path, reason, deny)
 		}
 	}

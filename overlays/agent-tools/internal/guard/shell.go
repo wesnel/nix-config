@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"regexp"
@@ -164,7 +165,7 @@ type visitor struct {
 
 // unwrap takes the wrappers, keywords and assignments off a simple command
 // and hands the command they run, or the script, to v.
-func unwrap(c call, v visitor) string {
+func unwrap(ctx context.Context, c call, v visitor) string {
 	for len(c.words) > 0 {
 		w := c.words[0]
 		switch {
@@ -199,20 +200,20 @@ func unwrap(c call, v visitor) string {
 			// watch runs its words, joined, with sh -c.
 			return v.script(strings.Join(args[min(i, len(args)):], " "))
 		}
-		return unwrap(rest(i), v)
+		return unwrap(ctx, rest(i), v)
 	}
 	switch {
 	case name == "env":
-		return unwrapEnv(c.env, args, expands, v)
+		return unwrapEnv(ctx, c.env, args, expands, v)
 	case name == "git":
 		if reason := v.call(c); reason != "" {
 			return reason
 		}
-		return unwrapGit(c.env, args, expands, v)
+		return unwrapGit(ctx, c.env, args, expands, v)
 	case name == "direnv" && len(args) > 0 && args[0] == "exec":
-		return unwrap(rest(2), v)
+		return unwrap(ctx, rest(2), v)
 	case name == "nwrap":
-		return unwrapNwrap(c, v)
+		return unwrapNwrap(ctx, c, v)
 	case shells[name]:
 		if script, ok := shellScript(args, name == "fish"); ok {
 			return v.script(script)
@@ -229,7 +230,7 @@ func unwrap(c call, v visitor) string {
 	case name == "nix" && len(args) > 0 && (args[0] == "shell" || args[0] == "develop"):
 		for i, a := range args {
 			if a == "-c" || a == "--command" {
-				return unwrap(rest(i+1), v)
+				return unwrap(ctx, rest(i+1), v)
 			}
 		}
 	case name == "nix" && len(args) > 0 && args[0] == "run":
@@ -243,7 +244,7 @@ func unwrap(c call, v visitor) string {
 			for end < len(args) && args[end] != ";" && args[end] != "+" {
 				end++
 			}
-			if reason := unwrap(call{words: args[i+1 : end], expands: expands[i+1 : end], env: c.env}, v); reason != "" {
+			if reason := unwrap(ctx, call{words: args[i+1 : end], expands: expands[i+1 : end], env: c.env}, v); reason != "" {
 				return reason
 			}
 			i = end
@@ -259,7 +260,7 @@ func unwrap(c call, v visitor) string {
 			return reason
 		}
 		// An exported alias reaches every later git.
-		return envAliases(env, v)
+		return envAliases(ctx, env, v)
 	}
 	return v.call(c)
 }
@@ -284,7 +285,7 @@ const nwrapUnknown = "`nwrap` was given `%s`, an option the guard does not know,
 // the paths it names as it would without nwrap. With no command nwrap
 // starts the user's shell, handed on as a bare `sh`. An option it does not
 // know is refused.
-func unwrapNwrap(c call, v visitor) string {
+func unwrapNwrap(ctx context.Context, c call, v visitor) string {
 	args, expands := c.words[1:], c.expands[1:]
 	i := 0
 options:
@@ -317,13 +318,13 @@ options:
 	if i >= len(args) {
 		return v.call(call{words: []string{"sh"}, expands: []bool{false}, env: c.env})
 	}
-	return unwrap(call{words: args[i:], expands: expands[i:], env: c.env}, v)
+	return unwrap(ctx, call{words: args[i:], expands: expands[i:], env: c.env}, v)
 }
 
 // unwrapEnv reads env's options and assignments, and hands on the command
 // they run, or env itself when it runs none; `-S` splits its value into
 // words as a shell would.
-func unwrapEnv(env, args []string, expands []bool, v visitor) string {
+func unwrapEnv(ctx context.Context, env, args []string, expands []bool, v visitor) string {
 	opts := true
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -342,7 +343,7 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 				script = args[i]
 			}
 			words, x := split(script)
-			return unwrapEnv(env, append(words, args[i+1:]...), append(x, expands[i+1:]...), v)
+			return unwrapEnv(ctx, env, append(words, args[i+1:]...), append(x, expands[i+1:]...), v)
 		case opts && len(a) > 1 && a[0] == '-':
 			if envValues[a] {
 				i++
@@ -351,7 +352,7 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 			opts = false
 			env = append(env, a)
 		default:
-			return unwrap(call{words: args[i:], expands: expands[i:], env: env}, v)
+			return unwrap(ctx, call{words: args[i:], expands: expands[i:], env: env}, v)
 		}
 	}
 	return v.call(call{words: []string{"env"}, expands: []bool{false}, env: env})
@@ -390,8 +391,8 @@ func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 // has judged the git command: a shell alias given for this command alone
 // (envAlias), `bisect run`'s, `submodule foreach`'s script and
 // `rebase --exec`'s.
-func unwrapGit(env, args []string, expands []bool, v visitor) string {
-	if reason := envAliases(env, v); reason != "" {
+func unwrapGit(ctx context.Context, env, args []string, expands []bool, v visitor) string {
+	if reason := envAliases(ctx, env, v); reason != "" {
 		return reason
 	}
 	i := 0
@@ -432,7 +433,7 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 	sub, rest, x := args[i], args[i+1:], expands[i+1:]
 	switch {
 	case sub == "bisect" && len(rest) > 1 && rest[0] == "run":
-		return unwrap(call{words: rest[1:], expands: x[1:], env: env}, v)
+		return unwrap(ctx, call{words: rest[1:], expands: x[1:], env: env}, v)
 	case sub == "submodule":
 		for j, w := range rest {
 			if w == "foreach" {
@@ -711,7 +712,7 @@ func envValue(env []string, name string) (string, bool) {
 // GIT_CONFIG_SYSTEM or GIT_CONFIG names. An alias key whose value env does
 // not give, or gives through an expansion, a key that comes from one, and
 // such a file the guard cannot read or that includes another, are refused.
-func envAliases(env []string, v visitor) string {
+func envAliases(ctx context.Context, env []string, v visitor) string {
 	for _, kv := range env {
 		name, value, _ := strings.Cut(kv, "=")
 		switch {
@@ -719,7 +720,7 @@ func envAliases(env []string, v visitor) string {
 			if value == "/dev/null" {
 				continue
 			}
-			entries, reason := configFileEntries(shellPath(value, true))
+			entries, reason := configFileEntries(ctx, shellPath(ctx, value, true))
 			if reason != "" {
 				return reason
 			}
@@ -775,7 +776,7 @@ type cwds struct {
 // begin moves w for the shell keyword a call c starts with, before c is
 // judged: it opens or closes a block, or enters an else branch, which runs
 // where the guarding cd's failure left the line.
-func (w *cwds) begin(c call) {
+func (w *cwds) begin(ctx context.Context, c call) {
 	w.condition = false
 	if len(c.words) == 0 || c.expands[0] {
 		return
@@ -788,7 +789,7 @@ func (w *cwds) begin(c call) {
 		// again from where the body left it, the same place only for an
 		// absolute path.
 		w.condition = cd && (c.words[0] == "if" ||
-			c.words[0] == "while" && strings.HasPrefix(shellPath(c.words[2], c.expands[2]), "/"))
+			c.words[0] == "while" && strings.HasPrefix(shellPath(ctx, c.words[2], c.expands[2]), "/"))
 	case "{":
 		var outside *[]string
 		if len(w.before) > 0 { // a cd's && chain runs into the group
@@ -813,10 +814,10 @@ func (w *cwds) begin(c call) {
 }
 
 // cd moves w for a cd or pushd call c that end ends.
-func (w *cwds) cd(c call, end string) {
+func (w *cwds) cd(ctx context.Context, c call, end string) {
 	var to []string
 	for _, d := range w.here {
-		to = addDir(to, cdTarget(c, d))
+		to = addDir(to, cdTarget(ctx, c, d))
 	}
 	if n := len(w.blocks); w.condition && n > 0 && (end == ";" || end == "\n") {
 		outside := w.here

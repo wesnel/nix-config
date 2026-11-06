@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -239,16 +240,16 @@ func relativeTo(base, p string) string {
 // removes or moves a clone's agent settings or a directory holding them,
 // or a file that chooses them (gitLinkFile), by the targets
 // gitConfigShellWrite reads a git config write by.
-func checkAgentSettingsShell(name string, args, redirected []string, dir string) string {
-	if shellWrites(name, args, redirected, dir, func(path string) bool { return agentSettingsFile(path, dir) }) {
+func checkAgentSettingsShell(ctx context.Context, name string, args, redirected []string, dir string) string {
+	if shellWrites(ctx, name, args, redirected, dir, func(path string) bool { return agentSettingsFile(path, dir) }) {
 		return agentSettings
 	}
-	if shellWrites(name, args, redirected, dir, func(path string) bool { return gitLinkFile(path, dir) }) {
+	if shellWrites(ctx, name, args, redirected, dir, func(path string) bool { return gitLinkFile(path, dir) }) {
 		return gitLink
 	}
 	if set("mv", "rm", "unlink", "trash", "rmdir")[name] {
-		for _, t := range changedFiles(name, args, redirected) {
-			path := expandPath(t, dir)
+		for _, t := range changedFiles(ctx, name, args, redirected) {
+			path := expandPath(ctx, t, dir)
 			if agentSettingsFile(path, dir) || holdsAgentSettings(path, dir) {
 				return agentSettings
 			}
@@ -278,8 +279,8 @@ func checkFileAgentSettings(path, dir string) string {
 // settings or a file that chooses them: as a file it outputs
 // (gitTargets), or as the file `git config --file` writes. checkout is
 // the hook's directory.
-func checkGitAgentSettings(sub string, rest []string, expands []bool, physical, checkout string) string {
-	_, outputs := gitTargets(sub, rest, expands, physical)
+func checkGitAgentSettings(ctx context.Context, sub string, rest []string, expands []bool, physical, checkout string) string {
+	_, outputs := gitTargets(ctx, sub, rest, expands, physical)
 	if sub == "config" && !configRead(rest) {
 		for j, a := range rest {
 			file, at := "", j
@@ -291,7 +292,7 @@ func checkGitAgentSettings(sub string, rest []string, expands []bool, physical, 
 			default:
 				continue
 			}
-			if p := physicalPath(physical, shellPath(file, at < len(expands) && expands[at])); p != "" {
+			if p := physicalPath(physical, shellPath(ctx, file, at < len(expands) && expands[at])); p != "" {
 				outputs = append(outputs, p)
 			}
 		}

@@ -2,6 +2,7 @@ package guard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,28 +15,28 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
-// fakeHome points the guard's ~ at a directory of the test's own.
-func fakeHome(t *testing.T) string {
+// fakeHome is a directory of the test's own, and t's context, whose Env
+// (guardEnv) names that directory the guard's ~.
+func fakeHome(t *testing.T) (context.Context, string) {
 	t.Helper()
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
-	old := home
-	home = dir
-	t.Cleanup(func() { home = old })
-	return dir
+	return withVars(guardCtx(t), "HOME="+dir), dir
 }
 
-// judge runs the baseline hook on a shell command run in dir, and returns
-// the reason it denies it with.
-func judge(t *testing.T, dir, command string) string {
-	t.Helper()
+// judge runs the baseline hook, under the Env of ctx, on a shell command
+// run in dir, and returns the reason it denies it with.
+func judge(ctx context.Context, dir, command string) string {
 	input, _ := json.Marshal(map[string]string{"command": command})
-	return check("Bash", input, baseline, dir)
+	return check(ctx, "Bash", input, baseline, dir)
 }
 
 func TestSessionRules(t *testing.T) {
+	t.Parallel()
 	// Not under /nix, where the Nix build's own temporary directory is.
 	const h = "/home-for-the-test"
 	cases := []struct {
@@ -283,12 +284,11 @@ func TestSessionRules(t *testing.T) {
 		{false, "echo $NGROK_ENV"},
 		{false, "grep -rn NGROK_ENV ."},
 	}
+	ctx := withVars(guardCtx(t), "HOME="+h)
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			old := home
-			home = h
-			t.Cleanup(func() { home = old })
-			reason := judge(t, filepath.Join(h, "work"), c.command)
+			t.Parallel()
+			reason := judge(ctx, filepath.Join(h, "work"), c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -302,11 +302,10 @@ func TestSessionRules(t *testing.T) {
 // TestEnvSearch covers searching the environment with grep, which passes
 // only when no credential's line can match.
 func TestEnvSearch(t *testing.T) {
-	old := environ
-	t.Cleanup(func() { environ = old })
+	t.Parallel()
 	vars := []string{"PATH=/usr/bin", "GOPATH=/go", "GOFLAGS=-mod=mod", "NGROK_AUTHTOKEN=2abc",
 		"GUARD_TEST_TOKEN=(abc)", "SIGNING_KEY=-----BEGIN\nMIIabc\n-----END"}
-	environ = func() []string { return vars }
+	ctx := env.With(t.Context(), env.New("", vars...))
 	cases := []struct {
 		deny    bool
 		command string
@@ -343,13 +342,13 @@ func TestEnvSearch(t *testing.T) {
 		{true, "env | grep GO > /tmp/x; cat /tmp/x"},
 	}
 	for _, c := range cases {
-		reason := judge(t, "", c.command)
+		reason := judge(ctx, "", c.command)
 		if (reason != "") != c.deny {
 			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 		}
 	}
-	vars = append(vars, "GH_TOKEN=ghp_x")
-	if judge(t, "", "env | grep GH") == "" {
+	ctx = env.With(t.Context(), env.New("", append(vars, "GH_TOKEN=ghp_x")...))
+	if judge(ctx, "", "env | grep GH") == "" {
 		t.Error("a search matching GH_TOKEN's line passed")
 	}
 }
@@ -406,6 +405,8 @@ var gitStateRepos = sync.OnceValues(func() (string, error) {
 // TestGitState covers the rules that depend on where a git command runs
 // and what the repository holds there.
 func TestGitState(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	root := fixture(t, gitStateRepos)
 	main := filepath.Join(root, "main")
 	linked := filepath.Join(root, "linked")
@@ -504,7 +505,8 @@ func TestGitState(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
-			reason := judge(t, c.dir, c.command)
+			t.Parallel()
+			reason := judge(ctx, c.dir, c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
 			}
@@ -519,6 +521,8 @@ func TestGitState(t *testing.T) {
 // discard_changes deletes the session's worktree and its branch whatever
 // they hold.
 func TestExitWorktree(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	root := fixture(t, gitStateRepos)
 	discard := `{"action":"remove","discard_changes":true}`
 	for _, c := range []struct {
@@ -534,13 +538,14 @@ func TestExitWorktree(t *testing.T) {
 		{"kept", "linked", `{"action":"keep","discard_changes":true}`, false},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			if c.dir != "" {
 				dir = filepath.Join(root, c.dir)
 			}
 			event, _ := json.Marshal(map[string]any{"tool_name": "ExitWorktree", "cwd": dir, "tool_input": json.RawMessage(c.input)})
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
 				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
 			}
@@ -586,6 +591,8 @@ var signingRepos = sync.OnceValues(func() (string, error) {
 // TestSigning covers commands that write commits where the configuration
 // signs them, which would wait for a key touch.
 func TestSigning(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	root := fixture(t, signingRepos)
 	signing := filepath.Join(root, "signing")
 	loop := filepath.Join(root, "loop")
@@ -632,7 +639,8 @@ func TestSigning(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
-			reason := judge(t, c.dir, c.command)
+			t.Parallel()
+			reason := judge(ctx, c.dir, c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
 			}
@@ -695,6 +703,8 @@ var remoteRepos = sync.OnceValues(func() (string, error) {
 // whose URL, as git resolves it, is SSH, ssh, scp and sftp to the git hosts,
 // and the signing pass.
 func TestKeyTouch(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	root := fixture(t, remoteRepos)
 	dir := func(name string) string { return filepath.Join(root, name) }
 	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
@@ -784,7 +794,8 @@ func TestKeyTouch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
-			reason := judge(t, c.dir, c.command)
+			t.Parallel()
+			reason := judge(ctx, c.dir, c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
 			}
@@ -798,18 +809,19 @@ func TestKeyTouch(t *testing.T) {
 	}
 
 	t.Run("an insteadOf in the global configuration", func(t *testing.T) {
+		t.Parallel()
 		global := filepath.Join(t.TempDir(), "gitconfig")
 		if err := os.WriteFile(global, []byte("[url \"git@github.com:\"]\n\tinsteadOf = https://mirror.invalid/\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		for _, command := range []string{"git fetch", "git clone https://mirror.invalid/o/r"} {
-			if reason := judge(t, dir("short"), command); reason != "" {
+			if reason := judge(ctx, dir("short"), command); reason != "" {
 				t.Errorf("%q without the global insteadOf, denied: %q", command, reason)
 			}
 		}
-		t.Setenv("GIT_CONFIG_GLOBAL", global)
+		ctx := withVars(ctx, "GIT_CONFIG_GLOBAL="+global)
 		for _, command := range []string{"git fetch", "git clone https://mirror.invalid/o/r"} {
-			if reason := judge(t, dir("short"), command); !strings.Contains(reason, "hardware key") {
+			if reason := judge(ctx, dir("short"), command); !strings.Contains(reason, "hardware key") {
 				t.Errorf("%q with the global insteadOf: reason %q", command, reason)
 			}
 		}
@@ -818,6 +830,7 @@ func TestKeyTouch(t *testing.T) {
 	// Each agent is told to hand the command over as a line beginning with
 	// `!`, which its prompt runs in the session.
 	t.Run("formats", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct {
 			name, event string
 		}{
@@ -825,8 +838,9 @@ func TestKeyTouch(t *testing.T) {
 			{"Codex", `{"tool_name":"exec_command","turn_id":"t","cwd":%q,"tool_input":{"command":"git fetch origin"}}`},
 		} {
 			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
 				var out bytes.Buffer
-				Main([]string{"--baseline"}, strings.NewReader(fmt.Sprintf(c.event, ssh)), &out, io.Discard)
+				mainIn(ctx, []string{"--baseline"}, strings.NewReader(fmt.Sprintf(c.event, ssh)), &out, io.Discard)
 				var decision struct {
 					HookSpecificOutput struct{ PermissionDecisionReason string }
 				}
@@ -886,11 +900,13 @@ var shellEditRepos = sync.OnceValues(func() (string, error) {
 // instead, and the output a command may write to a new file or to a
 // scratch, ignored or untracked one.
 func TestShellEdits(t *testing.T) {
+	t.Parallel()
 	root := fixture(t, shellEditRepos)
 	work := filepath.Join(root, "work")
 	scratch := filepath.Join(root, "scratch")
 	outside := filepath.Join(root, "outside")
 	scratchRepo := filepath.Join(scratch, "repo")
+	ctx := withVars(guardCtx(t), "TMPDIR="+scratch)
 
 	cases := []struct {
 		deny    bool
@@ -1003,10 +1019,8 @@ func TestShellEdits(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			old := scratchRoots
-			scratchRoots = func() []string { return []string{scratch} }
-			t.Cleanup(func() { scratchRoots = old })
-			reason := judge(t, work, c.command)
+			t.Parallel()
+			reason := judge(ctx, work, c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -1026,17 +1040,15 @@ func TestShellEdits(t *testing.T) {
 	// is not followed, where the same assignment on the line is, and the
 	// denial names the file the variable holds.
 	t.Run("assignment on an earlier line", func(t *testing.T) {
+		t.Parallel()
 		const assign, edit = "f=a.go", "perl -0pi -e 's/a/b/' $f"
-		old := scratchRoots
-		scratchRoots = func() []string { return []string{scratch} }
-		t.Cleanup(func() { scratchRoots = old })
-		if reason := judge(t, work, assign); reason != "" {
+		if reason := judge(ctx, work, assign); reason != "" {
 			t.Fatalf("%q: denied: %q", assign, reason)
 		}
-		if reason := judge(t, work, edit); reason != "" {
+		if reason := judge(ctx, work, edit); reason != "" {
 			t.Errorf("%q after %q: denied: %q", edit, assign, reason)
 		}
-		if reason := judge(t, work, assign+" && "+edit); !strings.Contains(reason, "`a.go` is a tracked file") {
+		if reason := judge(ctx, work, assign+" && "+edit); !strings.Contains(reason, "`a.go` is a tracked file") {
 			t.Errorf("%q: reason %q does not name a.go as tracked", assign+" && "+edit, reason)
 		}
 	})
@@ -1044,9 +1056,8 @@ func TestShellEdits(t *testing.T) {
 	// A value that expands is not followed even into it, and an assignment
 	// that may not run never hides the target as written.
 	t.Run("assignments and HOME", func(t *testing.T) {
-		old := home
-		home = work
-		t.Cleanup(func() { home = old })
+		t.Parallel()
+		ctx := withVars(ctx, "HOME="+work)
 		for _, c := range []struct {
 			deny    bool
 			command string
@@ -1055,7 +1066,7 @@ func TestShellEdits(t *testing.T) {
 			{false, "f=$HOME/a.go && perl -0pi -e 's/a/b/' $f"},
 			{true, "false && HOME=" + outside + "; perl -0pi -e 's/a/b/' $HOME/a.go"},
 		} {
-			if reason := judge(t, work, c.command); (reason != "") != c.deny {
+			if reason := judge(ctx, work, c.command); (reason != "") != c.deny {
 				t.Errorf("%q, with HOME the work tree: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
 		}
@@ -1065,6 +1076,8 @@ func TestShellEdits(t *testing.T) {
 // TestTrash covers deleting files where trash is on PATH, which moves them
 // to the Trash instead.
 func TestTrash(t *testing.T) {
+	t.Parallel()
+	ctx := withTrash(t, guardCtx(t))
 	for _, c := range []struct {
 		deny    bool
 		command string
@@ -1084,9 +1097,8 @@ func TestTrash(t *testing.T) {
 		{false, "grep -rn rm ."},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			trashOnPath = func() bool { return true }
-			t.Cleanup(func() { trashOnPath = func() bool { return false } })
-			reason := judge(t, "/", c.command)
+			t.Parallel()
+			reason := judge(ctx, "/", c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -1097,8 +1109,8 @@ func TestTrash(t *testing.T) {
 	}
 
 	t.Run("without trash on PATH", func(t *testing.T) {
-		trashOnPath = func() bool { return false }
-		if reason := judge(t, "/", "rm x"); reason != "" {
+		t.Parallel()
+		if reason := judge(guardCtx(t), "/", "rm x"); reason != "" {
 			t.Errorf("rm without trash on PATH: %q", reason)
 		}
 	})
@@ -1108,14 +1120,11 @@ func TestTrash(t *testing.T) {
 // worktree mounted at the repository's own path: the command is judged as
 // if it ran without nwrap, and nwrap's own commands are allowed.
 func TestNwrap(t *testing.T) {
+	t.Parallel()
 	ssh := filepath.Join(fixture(t, remoteRepos), "ssh")
 	edits := fixture(t, shellEditRepos)
 	work := filepath.Join(edits, "work")
-	old := scratchRoots
-	scratchRoots = func() []string { return []string{filepath.Join(edits, "scratch")} }
-	t.Cleanup(func() { scratchRoots = old })
-	trashOnPath = func() bool { return true }
-	t.Cleanup(func() { trashOnPath = func() bool { return false } })
+	ctx := withTrash(t, withVars(guardCtx(t), "TMPDIR="+filepath.Join(edits, "scratch")))
 
 	prefixes := []string{"nwrap", "./scripts/nwrap", "/src/ngrok/scripts/nwrap", "nwrap --", "nwrap -b main --",
 		"nwrap --branch=main", "nwrap -B feat --no-autocommit --no-copy-files --no-direnv-exec", "nwrap attach -s 3 --",
@@ -1126,13 +1135,14 @@ func TestNwrap(t *testing.T) {
 		{work, "sed -i '' s/a/b/ a.go"},
 		{work, "rm a.go"},
 	} {
-		alone := judge(t, c.dir, c.command)
+		alone := judge(ctx, c.dir, c.command)
 		if alone == "" {
 			t.Fatalf("%q is allowed alone, so it cannot show nwrap judged as it", c.command)
 		}
 		for _, p := range prefixes {
 			t.Run(caseName(true, p+" "+c.command), func(t *testing.T) {
-				if reason := judge(t, c.dir, p+" "+c.command); reason != alone {
+				t.Parallel()
+				if reason := judge(ctx, c.dir, p+" "+c.command); reason != alone {
 					t.Errorf("%q: reason %q, alone %q", p+" "+c.command, reason, alone)
 				}
 			})
@@ -1141,7 +1151,8 @@ func TestNwrap(t *testing.T) {
 	for _, command := range []string{"nwrap list", "nwrap -l", "nwrap prune --all", "nwrap -b main -- go test ./...",
 		"nwrap", "nwrap -b main", "nwrap --branch=main --session=3 -- go test ./..."} {
 		t.Run(caseName(false, command), func(t *testing.T) {
-			if reason := judge(t, work, command); reason != "" {
+			t.Parallel()
+			if reason := judge(ctx, work, command); reason != "" {
 				t.Errorf("%q: %q", command, reason)
 			}
 		})
@@ -1151,7 +1162,8 @@ func TestNwrap(t *testing.T) {
 	for _, command := range []string{"nwrap --target main git push origin HEAD", "nwrap -x rm a.go",
 		"nwrap --target=main go test ./...", "nwrap -b main --verbose -- go test ./..."} {
 		t.Run(caseName(true, command), func(t *testing.T) {
-			reason := judge(t, work, command)
+			t.Parallel()
+			reason := judge(ctx, work, command)
 			if !strings.Contains(reason, "--create-branch") || !strings.Contains(reason, "--no-direnv-exec") || !saysInstead(reason) {
 				t.Errorf("%q: %q", command, reason)
 			}
@@ -1202,6 +1214,7 @@ func TestKill(t *testing.T) {
 	}
 	// This test stands in for the session's harness, whose children both
 	// processes are; with no harness, neither is the session's.
+	ctx := guardCtx(t)
 	old := harness
 	t.Cleanup(func() { harness = old })
 	for _, c := range []struct {
@@ -1223,7 +1236,7 @@ func TestKill(t *testing.T) {
 	} {
 		harness = func() int { return c.harness }
 		for command, want := range c.commands {
-			if reason := judge(t, "/", command); reason != want {
+			if reason := judge(ctx, "/", command); reason != want {
 				t.Errorf("harness %d, %q: reason %q, want %q", c.harness, command, reason, want)
 			}
 		}
@@ -1250,6 +1263,7 @@ func TestHarness(t *testing.T) {
 // A kill whose PIDs the shell or xargs fills in is refused, whatever the
 // session started; a %job is the shell's own.
 func TestKillUnseen(t *testing.T) {
+	ctx := guardCtx(t)
 	old := harness
 	t.Cleanup(func() { harness = old })
 	harness = func() int { return os.Getpid() }
@@ -1265,7 +1279,7 @@ func TestKillUnseen(t *testing.T) {
 		"kill %1":                        "",
 		"kill -l":                        "",
 	} {
-		if reason := judge(t, "/", command); reason != want {
+		if reason := judge(ctx, "/", command); reason != want {
 			t.Errorf("%q: reason %q, want %q", command, reason, want)
 		}
 	}
@@ -1273,6 +1287,7 @@ func TestKillUnseen(t *testing.T) {
 
 // A test Emacs is stopped by its own absolute socket alone.
 func TestTestEmacsSocket(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Clean(os.TempDir())
 	uid := itoa(os.Getuid())
 	for args, want := range map[string]bool{
@@ -1315,7 +1330,8 @@ func TestTestEmacsSocket(t *testing.T) {
 }
 
 func TestEmacsAlternateEditor(t *testing.T) {
-	t.Setenv("ALTERNATE_EDITOR", "false")
+	t.Parallel()
+	ctx := withVars(guardCtx(t), "ALTERNATE_EDITOR=false")
 	for command, deny := range map[string]bool{
 		`emacsclient -a "" -e '(+ 1 2)'`:                                    true,
 		`emacsclient --alternate-editor= -e '(+ 1 2)'`:                      true,
@@ -1335,17 +1351,19 @@ func TestEmacsAlternateEditor(t *testing.T) {
 		`emacsclient -p 1 -a "" -e '(+ 1 2)'`:                               true,
 	} {
 		t.Run(command, func(t *testing.T) {
-			if reason := judge(t, "/tmp", command); (reason != "") != deny {
+			t.Parallel()
+			if reason := judge(ctx, "/tmp", command); (reason != "") != deny {
 				t.Errorf("reason %q, want refusal %v", reason, deny)
 			}
 		})
 	}
 	t.Run("inherited empty editor", func(t *testing.T) {
-		t.Setenv("ALTERNATE_EDITOR", "")
-		if reason := judge(t, "/tmp", `emacsclient -e '(+ 1 2)'`); reason == "" {
+		t.Parallel()
+		ctx := withVars(ctx, "ALTERNATE_EDITOR=")
+		if reason := judge(ctx, "/tmp", `emacsclient -e '(+ 1 2)'`); reason == "" {
 			t.Fatal("inherited empty alternate editor was accepted")
 		}
-		if reason := judge(t, "/tmp", `emacsclient -a false -e '(+ 1 2)'`); reason != "" {
+		if reason := judge(ctx, "/tmp", `emacsclient -a false -e '(+ 1 2)'`); reason != "" {
 			t.Fatalf("explicit nonempty alternate editor refused: %s", reason)
 		}
 	})
@@ -1354,6 +1372,8 @@ func TestEmacsAlternateEditor(t *testing.T) {
 // Lisp that stops Emacs, or deletes or starts a server, goes only to a
 // test socket, and names no other server there.
 func TestEmacsServerCall(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	for command, deny := range map[string]bool{
 		"emacsclient -e '(server-force-delete)'":                                                   true,
 		"emacsclient --eval '(server-force-delete \"server\")'":                                    true,
@@ -1382,7 +1402,7 @@ func TestEmacsServerCall(t *testing.T) {
 		"/nix/store/x-emacs/bin/emacsclient30 -e '(server-force-delete)'":                          true,
 		"emacsclient-30.2 -s /tmp/et.ab12/server -e '(kill-emacs)'":                                false,
 	} {
-		if got := judge(t, "/tmp", command) == killEmacs; got != deny {
+		if got := judge(ctx, "/tmp", command) == killEmacs; got != deny {
 			t.Errorf("%q: refused %v, want %v", command, got, deny)
 		}
 	}
@@ -1393,6 +1413,8 @@ func TestEmacsServerCall(t *testing.T) {
 // another, in its arguments or in a file it loads, unless the same Lisp
 // names a test socket as its server.
 func TestEmacsBatchServer(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.el"), []byte("(require 'server)\n(server-force-delete)\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "good.el"), []byte("(message \"checked\")\n"), 0o644)
@@ -1412,7 +1434,7 @@ func TestEmacsBatchServer(t *testing.T) {
 		"emacs-30.2 -Q --batch --eval '(server-start)'":                              true,
 		"emacs30 -Q --batch --eval '(server-force-delete)'":                          true,
 	} {
-		if got := judge(t, dir, command) == emacsBatchServer; got != deny {
+		if got := judge(ctx, dir, command) == emacsBatchServer; got != deny {
 			t.Errorf("%q: refused %v, want %v", command, got, deny)
 		}
 	}
@@ -1428,14 +1450,14 @@ func TestEmacsBatchServer(t *testing.T) {
 		`(message "server-start") (server-start)`:            true,
 		"(progn ;; (message \"x\")\n (server-force-delete))": true,
 	} {
-		if got := judge(t, dir, "emacs -Q --batch --eval '"+lisp+"'") == emacsBatchServer; got != deny {
+		if got := judge(ctx, dir, "emacs -Q --batch --eval '"+lisp+"'") == emacsBatchServer; got != deny {
 			t.Errorf("%q: refused %v, want %v", lisp, got, deny)
 		}
 	}
 	// A loaded file is read the same way.
 	os.WriteFile(filepath.Join(dir, "mentions.el"),
 		[]byte(";; server-start is not called here\n(ert-deftest t1 () (should (fboundp 'message)) (message \"server-force-delete\"))\n"), 0o644)
-	if judge(t, dir, "emacs -Q --batch -l mentions.el -f ert-run-tests-batch-and-exit") != "" {
+	if judge(ctx, dir, "emacs -Q --batch -l mentions.el -f ert-run-tests-batch-and-exit") != "" {
 		t.Error("a test file that names server forms only in a comment and a string is refused")
 	}
 }
@@ -1444,6 +1466,7 @@ func TestEmacsBatchServer(t *testing.T) {
 // so is one under a link the guard cannot follow, such as one to a
 // directory that is not there.
 func TestTestEmacsSocketLink(t *testing.T) {
+	t.Parallel()
 	roots := map[string]func(t *testing.T) string{
 		"tmpdir": func(t *testing.T) string { return t.TempDir() },
 		"et": func(t *testing.T) string {
@@ -1457,6 +1480,7 @@ func TestTestEmacsSocketLink(t *testing.T) {
 	}
 	for rootName, mkRoot := range roots {
 		t.Run(rootName, func(t *testing.T) {
+			t.Parallel()
 			root := mkRoot(t)
 			for name, own := range map[string]string{
 				"existing": "/usr",
@@ -1495,6 +1519,7 @@ var itoa = strconv.Itoa
 
 // TestFileTools covers Claude Code's file tools and Codex's apply_patch.
 func TestFileTools(t *testing.T) {
+	t.Parallel()
 	patch := func(path, body string) map[string]string {
 		return map[string]string{"command": "*** Begin Patch\n*** Update File: " + path + "\n@@\n" + body + "\n*** End Patch\n"}
 	}
@@ -1526,13 +1551,14 @@ func TestFileTools(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
-			h := fakeHome(t)
+			t.Parallel()
+			ctx, h := fakeHome(t)
 			work := filepath.Join(h, "work")
 			os.MkdirAll(filepath.Join(h, ".claude"), 0o755)
 			os.WriteFile(filepath.Join(h, ".claude", "settings.json"), []byte(`{"hooks": {}}`), 0o644)
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "WORK", work).Replace(string(data)))
-			reason := check(c.tool, input, baseline, work)
+			reason := check(ctx, c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -1548,7 +1574,8 @@ func TestFileTools(t *testing.T) {
 // config that already holds a shell value; a file with an [alias] section,
 // as an included one, gains no `!`.
 func TestGitConfigAlias(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	write := func(name, text string) string {
 		path := filepath.Join(h, name)
 		os.MkdirAll(filepath.Dir(path), 0o755)
@@ -1564,7 +1591,7 @@ func TestGitConfigAlias(t *testing.T) {
 	hard := filepath.Join(h, "work", "plain-copy")
 	os.Link(gitconfig, hard)
 	// git's XDG config is ~/.config/git/config, a directory not there yet.
-	t.Setenv("XDG_CONFIG_HOME", "")
+	ctx = withVars(ctx, "XDG_CONFIG_HOME=")
 	write("r/.git/worktrees/w/config.worktree", "[core]\n")
 	repoLink := filepath.Join(h, "work", "repo-link")
 	os.Symlink(filepath.Join(repo, ".git", "config"), repoLink)
@@ -1615,7 +1642,7 @@ func TestGitConfigAlias(t *testing.T) {
 	}
 	for _, c := range cases {
 		data, _ := json.Marshal(c.input)
-		if reason := check(c.tool, data, baseline, h); reason != c.want {
+		if reason := check(ctx, c.tool, data, baseline, h); reason != c.want {
 			t.Errorf("%s: reason %q, want %q", c.name, reason, c.want)
 		}
 	}
@@ -1632,7 +1659,7 @@ func TestGitConfigAlias(t *testing.T) {
 		copied := filepath.Join(h, "work", "copy-of-"+filepath.Base(target))
 		os.Link(target, copied)
 		data, _ := json.Marshal(map[string]string{"file_path": copied, "content": include})
-		if reason := check("Write", data, baseline, linked); reason != includeConfig {
+		if reason := check(ctx, "Write", data, baseline, linked); reason != includeConfig {
 			t.Errorf("a hard link to %s: reason %q", target, reason)
 		}
 	}
@@ -1661,7 +1688,7 @@ func TestGitConfigAlias(t *testing.T) {
 		"cp ~/.gitconfig /tmp/copy":                   "",
 		"echo x > notes.txt":                          "",
 	} {
-		if reason := judge(t, h, command); reason != want {
+		if reason := judge(ctx, h, command); reason != want {
 			t.Errorf("%q: reason %q, want %q", command, reason, want)
 		}
 	}
@@ -1669,11 +1696,11 @@ func TestGitConfigAlias(t *testing.T) {
 	// name or through a link, and in place.
 	for _, command := range []string{"echo x >> ~/.gitconfig", "echo x > plain-name", "sed -i s/log/sh/ ~/.gitconfig",
 		"perl -pi -e s/log/sh/ ~/.gitconfig"} {
-		if judge(t, h, command) == "" {
+		if judge(ctx, h, command) == "" {
 			t.Errorf("%q passes", command)
 		}
 	}
-	if foldsCase && judge(t, h, "cp x.inc ~/.GITCONFIG.local") != gitConfigShell {
+	if foldsCase && judge(ctx, h, "cp x.inc ~/.GITCONFIG.local") != gitConfigShell {
 		t.Error("a case variant of a git config name passes")
 	}
 }
@@ -1683,7 +1710,8 @@ func TestGitConfigAlias(t *testing.T) {
 // hard link, from a session in a linked worktree. A worktree's own
 // config.worktree stays the session's.
 func TestSharedConfigFile(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	repo := filepath.Join(h, "repo")
 	gitIn(t, h, "init", "-q", "-b", "main", repo)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "x")
@@ -1735,7 +1763,7 @@ func TestSharedConfigFile(t *testing.T) {
 	for name, path := range cases {
 		for _, content := range []string{"[core]\n\thooksPath = /tmp/h\n", "[core]\n\tsshCommand = ssh -i k\n"} {
 			data, _ := json.Marshal(map[string]string{"file_path": path, "content": content})
-			if reason := check("Write", data, baseline, linked); reason != sharedConfig {
+			if reason := check(ctx, "Write", data, baseline, linked); reason != sharedConfig {
 				t.Errorf("%s, %q: reason %q", name, content, reason)
 			}
 		}
@@ -1759,8 +1787,9 @@ func TestSharedConfigFile(t *testing.T) {
 		{"one inside a submodule's git directory, from no repository", otherInside, nowhere},
 	} {
 		t.Run(caseName(true, "hard link to "+c.name), func(t *testing.T) {
+			t.Parallel()
 			data, _ := json.Marshal(map[string]string{"file_path": c.path, "content": "[core]\n\tsshCommand = ssh -i k\n"})
-			if reason := check("Write", data, baseline, c.session); reason != sharedConfig {
+			if reason := check(ctx, "Write", data, baseline, c.session); reason != sharedConfig {
 				t.Errorf("reason %q", reason)
 			}
 		})
@@ -1777,14 +1806,15 @@ func TestSharedConfigFile(t *testing.T) {
 	}
 	for name, command := range shell {
 		t.Run(caseName(true, "shell "+name), func(t *testing.T) {
-			if reason := judge(t, linked, command); reason != gitConfigShell {
+			t.Parallel()
+			if reason := judge(ctx, linked, command); reason != gitConfigShell {
 				t.Errorf("%q: reason %q, want %q", command, reason, gitConfigShell)
 			}
 		})
 	}
 	own := filepath.Join(repo, ".git", "worktrees", "linked", "config.worktree")
 	data, _ := json.Marshal(map[string]string{"file_path": own, "content": "[core]\n\thooksPath = /tmp/h\n"})
-	if reason := check("Write", data, baseline, linked); reason != "" {
+	if reason := check(ctx, "Write", data, baseline, linked); reason != "" {
 		t.Errorf("the worktree's own config.worktree: reason %q", reason)
 	}
 }
@@ -1793,7 +1823,7 @@ func TestSharedConfigFile(t *testing.T) {
 // the guard cannot look at every submodule's git directory: one past the
 // scan's limit may be the config it links to.
 func TestSubmoduleScanLimit(t *testing.T) {
-	h := fakeHome(t)
+	ctx, h := fakeHome(t)
 	repo := filepath.Join(h, "repo")
 	gitIn(t, h, "init", "-q", "-b", "main", repo)
 	for _, name := range []string{"a", "b", "c", "z"} {
@@ -1811,7 +1841,7 @@ func TestSubmoduleScanLimit(t *testing.T) {
 	}
 	write := func(path string) string {
 		data, _ := json.Marshal(map[string]string{"file_path": path, "content": "[core]\n\tsshCommand = ssh -i k\n"})
-		return check("Write", data, baseline, repo)
+		return check(ctx, "Write", data, baseline, repo)
 	}
 	for _, c := range []struct {
 		name          string
@@ -1832,7 +1862,7 @@ func TestSubmoduleScanLimit(t *testing.T) {
 			if reason := write(toNotes); reason != c.other {
 				t.Errorf("a hard link to another file: %q, want %q", reason, c.other)
 			}
-			if reason := judge(t, repo, "mv x.inc "+toConfig); reason != c.shell {
+			if reason := judge(ctx, repo, "mv x.inc "+toConfig); reason != c.shell {
 				t.Errorf("a move onto it: %q, want %q", reason, c.shell)
 			}
 		})
@@ -1862,15 +1892,15 @@ func TestGuardConfig(t *testing.T) {
 		{"another tool's config", "Write", map[string]string{"file_path": "HOME/.config/other/config.json", "content": "{}"}, false},
 	} {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
-			h := fakeHome(t)
-			t.Setenv("XDG_CONFIG_HOME", "")
+			ctx, h := fakeHome(t)
+			ctx = withVars(ctx, "XDG_CONFIG_HOME=")
 			named := filepath.Join(t.TempDir(), "named.json")
 			os.WriteFile(named, []byte("{}"), 0o600)
 			t.Setenv("AGENT_TOOLS_CONFIG", named)
 			work := filepath.Join(h, "work")
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "NAMED", named).Replace(string(data)))
-			reason := check(c.tool, input, baseline, work)
+			reason := check(ctx, c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -1884,14 +1914,14 @@ func TestGuardConfig(t *testing.T) {
 // TestBakedAgentToolsConfig covers agent-tools' config where the build bakes
 // the config directory in, as well as where the guard's environment puts it.
 func TestBakedAgentToolsConfig(t *testing.T) {
-	h := fakeHome(t)
-	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	baked := filepath.Join(h, "baked-config")
-	bake(t, baked, filepath.Join(h, "baked-state"))
+	ctx = withVars(ctx, append([]string{"XDG_CONFIG_HOME="}, hostpaths.TestBaked(baked, filepath.Join(h, "baked-state"))...)...)
 	for _, base := range []string{filepath.Join(h, ".config"), baked} {
 		file := filepath.Join(base, "agent-tools", "config.json")
 		input, _ := json.Marshal(map[string]string{"file_path": file, "content": "{}"})
-		if reason := check("Write", input, baseline, filepath.Join(h, "work")); reason == "" || !saysInstead(reason) {
+		if reason := check(ctx, "Write", input, baseline, filepath.Join(h, "work")); reason == "" || !saysInstead(reason) {
 			t.Errorf("a write of %s: %q", file, reason)
 		}
 	}
@@ -1902,6 +1932,8 @@ func TestBakedAgentToolsConfig(t *testing.T) {
 // ask, denies, as does a reviewer's hook. TestMCPTools covers the listed
 // ones.
 func TestConnectors(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	for _, c := range []struct {
 		name, hook, event, want string
 	}{
@@ -1915,8 +1947,9 @@ func TestConnectors(t *testing.T) {
 		{"Gmail search from Codex", "--baseline", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
-			Main([]string{c.hook}, strings.NewReader(c.event), &out, io.Discard)
+			mainIn(ctx, []string{c.hook}, strings.NewReader(c.event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", c.event, out.String())
 			}
@@ -1948,7 +1981,7 @@ func TestCredentialPaths(t *testing.T) {
 		{"a file under home with no list at all", nil, nil, "cat ~/notes.txt", true},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
-			h := fakeHome(t)
+			ctx, h := fakeHome(t)
 			old := builtCredentialPaths
 			builtCredentialPaths = c.built
 			t.Cleanup(func() { builtCredentialPaths = old })
@@ -1960,7 +1993,7 @@ func TestCredentialPaths(t *testing.T) {
 			data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
 			os.WriteFile(config, data, 0o600)
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			reason := judge(t, filepath.Join(h, "work"), c.command)
+			reason := judge(ctx, filepath.Join(h, "work"), c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q with %q listed: deny=%v, reason %q", c.command, listed, !c.deny, reason)
 			}
@@ -1975,7 +2008,7 @@ func TestCredentialPaths(t *testing.T) {
 // reading too, which is all Codex has: each command is judged the same
 // from Claude Code and from Codex.
 func TestCredentialList(t *testing.T) {
-	h := fakeHome(t)
+	ctx, h := fakeHome(t)
 	// A credential whose name holds an accent, composed (NFC).
 	secret := "/.secrét"
 	listed := []string{h + "/.aws/", h + "/.config/gh/", h + "/.npmrc", h + "/.cargo/credentials", h + "/tmp/*/secrets.d", h + "/.ssh/id_",
@@ -2074,8 +2107,9 @@ func TestCredentialList(t *testing.T) {
 			{"Codex", `{"tool_name":"exec_command","turn_id":"t","cwd":` + string(cwd) + `,"tool_input":` + string(input) + `}`},
 		} {
 			t.Run(caseName(c.deny, event.name+": "+c.command), func(t *testing.T) {
+				t.Parallel()
 				var out bytes.Buffer
-				Main([]string{"--baseline"}, strings.NewReader(event.json), &out, io.Discard)
+				mainIn(ctx, []string{"--baseline"}, strings.NewReader(event.json), &out, io.Discard)
 				var decision struct {
 					HookSpecificOutput struct{ PermissionDecision, PermissionDecisionReason string }
 				}
@@ -2094,7 +2128,8 @@ func TestCredentialList(t *testing.T) {
 	for path, deny := range map[string]bool{h + "/.cafeﬁle": true, h + "/café-new.md": true, h + "/work/café.md": false} {
 		input, _ := json.Marshal(map[string]string{"file_path": path, "content": "x"})
 		t.Run(caseName(deny, "Write "+path), func(t *testing.T) {
-			if reason := check("Write", input, baseline, filepath.Join(h, "work")); (reason != "") != deny {
+			t.Parallel()
+			if reason := check(ctx, "Write", input, baseline, filepath.Join(h, "work")); (reason != "") != deny {
 				t.Errorf("Write %s: reason %q", path, reason)
 			}
 		})
@@ -2105,6 +2140,8 @@ func TestCredentialList(t *testing.T) {
 // local_shell, which takes the command's argv, and write_stdin, which types
 // into a session exec_command started.
 func TestCodexShellTools(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	for _, c := range []struct {
 		name, tool, input string
 		deny              bool
@@ -2119,9 +2156,10 @@ func TestCodexShellTools(t *testing.T) {
 		{"write_stdin polling", "write_stdin", `{"session_id":1,"chars":""}`, false},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			t.Parallel()
 			event := `{"tool_name":"` + c.tool + `","turn_id":"t","cwd":"/","tool_input":` + c.input + `}`
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
 				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
 			}
@@ -2144,6 +2182,8 @@ func TestCodexShellTools(t *testing.T) {
 // input from the terminal, which write_stdin could then drive past every
 // hook.
 func TestCodexTerminalReaders(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	for _, c := range []struct {
 		command string
 		deny    bool
@@ -2184,6 +2224,7 @@ func TestCodexTerminalReaders(t *testing.T) {
 		{"ls", false},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
 			for _, agent := range []struct {
 				name, event string
@@ -2193,7 +2234,7 @@ func TestCodexTerminalReaders(t *testing.T) {
 				{"Claude Code", `{"tool_name":"Bash","cwd":"/","tool_input":` + string(input) + `}`, false},
 			} {
 				var out bytes.Buffer
-				Main([]string{"--baseline"}, strings.NewReader(agent.event), &out, io.Discard)
+				mainIn(ctx, []string{"--baseline"}, strings.NewReader(agent.event), &out, io.Discard)
 				if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != agent.deny {
 					t.Errorf("%s %q: deny=%v, printed %s", agent.name, c.command, denied, out.String())
 				}
@@ -2212,7 +2253,8 @@ func TestCodexTerminalReaders(t *testing.T) {
 // TestSleep covers long sleeps in the foreground, which hold the session,
 // and the advice each agent gets for waiting instead.
 func TestSleep(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
+	ctx := inDir(guardCtx(t), t.TempDir())
 	// Each agent's hook event for a shell command, %s its tool_input's
 	// fields.
 	const (
@@ -2248,9 +2290,10 @@ func TestSleep(t *testing.T) {
 		{"a Monitor", `{"tool_name":"Monitor","tool_input":{%s}}`, cmd("while true; do date; sleep 60; done"), ""},
 	} {
 		t.Run(caseName(c.advice != "", c.name), func(t *testing.T) {
+			t.Parallel()
 			event := strings.Replace(c.event, "%s", c.input, 1)
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			var decision struct {
 				HookSpecificOutput struct{ PermissionDecisionReason string }
 			}
@@ -2271,6 +2314,8 @@ func TestSleep(t *testing.T) {
 // TestMonitor covers Claude Code's Monitor, whose command runs in the shell
 // as Bash's does.
 func TestMonitor(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	for _, c := range []struct {
 		name  string
 		input string
@@ -2282,9 +2327,10 @@ func TestMonitor(t *testing.T) {
 		{"a log", `{"command":"tail -f build.log | grep --line-buffered ERROR","description":"d"}`, false},
 	} {
 		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			t.Parallel()
 			event := `{"tool_name":"Monitor","cwd":"/","tool_input":` + c.input + `}`
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
 				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
 			}

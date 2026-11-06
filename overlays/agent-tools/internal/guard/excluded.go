@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -63,12 +64,12 @@ func sandboxedBy(text string) []string {
 // in it fails; the command alone always runs outside it, so every other
 // line is refused, and so is the command alone holding sandboxedSyntax,
 // whose refusal names the syntax wherever the line holds it.
-func checkExcludedAlone(text string) string {
+func checkExcludedAlone(ctx context.Context, text string) string {
 	patterns := excludedPatterns()
 	if len(patterns) == 0 {
 		return ""
 	}
-	named := firstCall(text, 0, func(c call) []string { return excludedCall(c, patterns) })
+	named := firstCall(ctx, text, 0, func(c call) []string { return excludedCall(c, patterns) })
 	if named == nil {
 		return ""
 	}
@@ -104,11 +105,11 @@ const plainGh = "`gh` runs in the sandbox, which hides its login, so it cannot r
 // checkPlainGh refuses a Claude Code command line that runs one of gh's
 // reads (ghReadOnly), where the sandbox excludes gh-read. It runs after
 // the other rules, so a gh write meets its own refusal first.
-func checkPlainGh(text string) string {
+func checkPlainGh(ctx context.Context, text string) string {
 	if !slices.ContainsFunc(excludedPatterns(), func(p []string) bool { return slices.Equal(p, []string{"gh-read"}) }) {
 		return ""
 	}
-	gh := firstCall(text, 0, func(c call) []string {
+	gh := firstCall(ctx, text, 0, func(c call) []string {
 		if len(c.words) < 3 || c.expands[0] || base(c.words[0]) != "gh" || !ghReadOnly[c.words[1]+" "+c.words[2]] {
 			return nil
 		}
@@ -122,7 +123,7 @@ func checkPlainGh(text string) string {
 
 // firstCall is what match says of the first command in text it names,
 // once wrappers, assignments and shells are taken off, or nil.
-func firstCall(text string, depth int, match func(c call) []string) []string {
+func firstCall(ctx context.Context, text string, depth int, match func(c call) []string) []string {
 	if depth > maxDepth {
 		return nil
 	}
@@ -132,7 +133,7 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 		call: func(c call) string {
 			// A redirection before the program, as `< /dev/null CMD`.
 			if n := c.named(); len(n.words) < len(c.words) {
-				return unwrap(n, v)
+				return unwrap(ctx, n, v)
 			}
 			if named = match(c); named != nil {
 				return "named"
@@ -140,14 +141,14 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 			return ""
 		},
 		script: func(script string) string {
-			if named = firstCall(script, depth+1, match); named != nil {
+			if named = firstCall(ctx, script, depth+1, match); named != nil {
 				return "named"
 			}
 			return ""
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 && unwrap(call{words: words, expands: expands}, v) != "" {
+		if words, expands := split(segment); len(words) > 0 && unwrap(ctx, call{words: words, expands: expands}, v) != "" {
 			return named
 		}
 	}

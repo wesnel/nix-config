@@ -2,6 +2,7 @@ package guard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -11,10 +12,11 @@ import (
 )
 
 // plansHome gives the test a home directory whose agent-tools config puts
-// the plans under ~/git/notes/agents, and returns a plan's file there.
-func plansHome(t *testing.T) (h, plan string) {
+// the plans under ~/git/notes/agents, and returns the context whose Env
+// names it (fakeHome), and a plan's file there.
+func plansHome(t *testing.T) (ctx context.Context, h, plan string) {
 	t.Helper()
-	h = fakeHome(t)
+	ctx, h = fakeHome(t)
 	plans := filepath.Join(h, "git", "notes", "agents")
 	os.MkdirAll(plans, 0o755)
 	for _, f := range []string{"2026-10-14-x.box.org", "2026-10-14-x.box.P1.org", "2026-10-14-x.box.log.org",
@@ -25,31 +27,31 @@ func plansHome(t *testing.T) (h, plan string) {
 	data, _ := json.Marshal(map[string]any{"plans": map[string]string{"dir": plans, "host": "box"}})
 	os.WriteFile(config, data, 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	return h, filepath.Join(plans, "2026-10-14-x.box.org")
+	return ctx, h, filepath.Join(plans, "2026-10-14-x.box.org")
 }
 
 // planLogPaths makes the home plansHome does, with a work directory in it,
-// and returns a replacer that puts its paths for the placeholders PLANSDIR
-// (the plans directory), PLANFILE (the plan), LOGFILE (the plan's log) and
-// WORKDIR, and the work directory itself.
-func planLogPaths(t *testing.T) (*strings.Replacer, string) {
+// and returns its context, a replacer that puts its paths for the
+// placeholders PLANSDIR (the plans directory), PLANFILE (the plan), LOGFILE
+// (the plan's log) and WORKDIR, and the work directory itself.
+func planLogPaths(t *testing.T) (context.Context, *strings.Replacer, string) {
 	t.Helper()
-	h, plan := plansHome(t)
+	ctx, h, plan := plansHome(t)
 	plans := filepath.Dir(plan)
 	work := filepath.Join(h, "work")
 	os.MkdirAll(work, 0o755)
-	return strings.NewReplacer("PLANSDIR", plans, "PLANFILE", plan,
+	return ctx, strings.NewReplacer("PLANSDIR", plans, "PLANFILE", plan,
 		"LOGFILE", filepath.Join(plans, "2026-10-14-x.box.log.org"), "WORKDIR", work), work
 }
 
 // With a config agent-plan cannot read, the guard still protects the
 // plans directory agent-plan defaults to.
 func TestPlansDirs(t *testing.T) {
-	h := fakeHome(t)
+	ctx, h := fakeHome(t)
 	config := filepath.Join(h, "config.json")
 	os.WriteFile(config, []byte("not JSON"), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	if dirs := plansDirs(); len(dirs) == 0 || dirs[0] != filepath.Join(h, "git", "github.com", "wesnel", "notes", "agents", "plans") {
+	if dirs := plansDirs(ctx); len(dirs) == 0 || dirs[0] != filepath.Join(h, "git", "github.com", "wesnel", "notes", "agents", "plans") {
 		t.Errorf("plans directories %v", dirs)
 	}
 }
@@ -78,10 +80,10 @@ func TestPlanLog(t *testing.T) {
 	}
 	for _, c := range files {
 		t.Run(caseName(c.deny, c.tool+" of "+c.name), func(t *testing.T) {
-			paths, work := planLogPaths(t)
+			ctx, paths, work := planLogPaths(t)
 			data, _ := json.Marshal(c.input)
 			input := []byte(paths.Replace(string(data)))
-			reason := check(c.tool, input, baseline, work)
+			reason := check(ctx, c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -123,9 +125,9 @@ func TestPlanLog(t *testing.T) {
 	}
 	for _, c := range commands {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			paths, _ := planLogPaths(t)
+			ctx, paths, _ := planLogPaths(t)
 			dir, command := paths.Replace(c.dir), paths.Replace(c.command)
-			reason := judge(t, dir, command)
+			reason := judge(ctx, dir, command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q in %q: deny=%v, reason %q", command, dir, !c.deny, reason)
 			}
@@ -167,10 +169,10 @@ func TestPlanFile(t *testing.T) {
 	}
 	for _, c := range files {
 		t.Run(caseName(c.deny, c.tool+" of "+c.name), func(t *testing.T) {
-			paths, work := planLogPaths(t)
+			ctx, paths, work := planLogPaths(t)
 			data, _ := json.Marshal(c.input)
 			input := []byte(paths.Replace(string(data)))
-			reason := check(c.tool, input, baseline, work)
+			reason := check(ctx, c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -263,9 +265,9 @@ func TestPlanFile(t *testing.T) {
 	}
 	for _, c := range commands {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			paths, _ := planLogPaths(t)
+			ctx, paths, _ := planLogPaths(t)
 			dir, command := paths.Replace(c.dir), paths.Replace(c.command)
-			reason := judge(t, dir, command)
+			reason := judge(ctx, dir, command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q in %q: deny=%v, reason %q", command, dir, !c.deny, reason)
 			}
@@ -288,14 +290,14 @@ func TestReviewerPlans(t *testing.T) {
 		"agent-plan open --kind retro --json":               false,
 	} {
 		t.Run(caseName(deny, command), func(t *testing.T) {
-			paths, _ := planLogPaths(t)
+			ctx, paths, _ := planLogPaths(t)
 			command := paths.Replace(command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			reason := check("Bash", input, reviewer, "")
+			reason := check(ctx, "Bash", input, reviewer, "")
 			if (reason != "") != deny {
 				t.Errorf("reviewer %q: deny=%v, reason %q", command, !deny, reason)
 			}
-			if reason := check("Bash", input, baseline, ""); reason != "" {
+			if reason := check(ctx, "Bash", input, baseline, ""); reason != "" {
 				t.Errorf("baseline %q: denied %q", command, reason)
 			}
 		})
@@ -317,11 +319,11 @@ func TestPlansForTheOperator(t *testing.T) {
 		"grep -n 'agent-plan sync' SKILL.md":   false,
 	} {
 		t.Run(caseName(deny, command), func(t *testing.T) {
-			paths, _ := planLogPaths(t)
+			ctx, paths, _ := planLogPaths(t)
 			command := paths.Replace(command)
 			input, _ := json.Marshal(map[string]string{"command": command})
 			for _, who := range []role{baseline, reviewer} {
-				reason := check("Bash", input, who, "")
+				reason := check(ctx, "Bash", input, who, "")
 				if (reason != "") != deny {
 					t.Errorf("role %d %q: deny=%v, reason %q", who, command, !deny, reason)
 				}
@@ -341,10 +343,10 @@ func TestPlanLogHook(t *testing.T) {
 		{"Edit of a log", `{"tool_name":"Edit","cwd":"PLANSDIR","tool_input":{"file_path":"PLANSDIR/2026-10-14-x.box.log.org","old_string":"a","new_string":"b"}}`, `"permissionDecision":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			paths, _ := planLogPaths(t)
+			ctx, paths, _ := planLogPaths(t)
 			event := paths.Replace(c.event)
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", event, out.String())
 			}

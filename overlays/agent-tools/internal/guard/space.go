@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
@@ -24,13 +25,13 @@ func spaceStateFile(path string) bool {
 // checkSpaceStateShell is spaceState for a command that writes the state:
 // by a redirection or a tool's output, or by writing a directory that
 // holds it, such as an archive's extraction.
-func checkSpaceStateShell(name string, args, redirected []string, dir string) string {
-	if shellWrites(name, args, redirected, dir, spaceStateFile) {
+func checkSpaceStateShell(ctx context.Context, name string, args, redirected []string, dir string) string {
+	if shellWrites(ctx, name, args, redirected, dir, spaceStateFile) {
 		return spaceState
 	}
 	state := agentplans.SpaceStateFile()
-	for _, value := range changedFiles(name, args, redirected) {
-		path := expandPath(value, dir)
+	for _, value := range changedFiles(ctx, name, args, redirected) {
+		path := expandPath(ctx, value, dir)
 		if spaceStateFile(path) || Reaches(state, path, true) {
 			return spaceState
 		}

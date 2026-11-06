@@ -98,6 +98,7 @@ func TestMCPTools(t *testing.T) {
 		{"ops tool from a reviewer", []string{"--reviewer"}, codex("mcp__agent_ops__pr_loop_threads"), deny, "reviewer only reads"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			Main(c.args, strings.NewReader(c.event), &out, io.Discard)
 			if c.want == "" {
@@ -140,7 +141,7 @@ func TestMCPNativeRegistration(t *testing.T) {
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			event := `{"tool_name":"mcp__` + c.server + `__parallels_vm_exec","turn_id":"t","tool_input":{}}`
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(guardCtx(t), []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			if c.denied {
 				if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
 					t.Fatalf("printed %q, want refusal without registered native approval", out.String())
@@ -158,6 +159,7 @@ func TestMCPNativeRegistration(t *testing.T) {
 // and every tool mcp.json names is one the server offers. A tool the server
 // adds fails here until it is reviewed into one of the three lists.
 func TestMCPListsMatchServer(t *testing.T) {
+	t.Parallel()
 	lists := mcpLists(t)
 	files, err := filepath.Glob(filepath.Join("testdata", "tools", "*.json"))
 	if err != nil || len(files) == 0 {
@@ -166,6 +168,7 @@ func TestMCPListsMatchServer(t *testing.T) {
 	for _, file := range files {
 		id := strings.TrimSuffix(filepath.Base(file), ".json")
 		t.Run(id, func(t *testing.T) {
+			t.Parallel()
 			l, ok := lists[id]
 			if !ok {
 				t.Fatalf("%s: mcp.json has no service %s", file, id)
@@ -218,6 +221,7 @@ func mcpLists(t *testing.T) map[string]struct{ Reads, Confirms, Refuses []string
 // merge_diff it offers, to refuses alone, and each refused tool to a denial
 // on both of Linear's servers.
 func TestLinearRefuses(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("testdata", "tools", "linear.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +249,7 @@ func TestLinearRefuses(t *testing.T) {
 	for _, name := range l.Refuses {
 		for _, server := range []string{"linear", "claude_ai_Linear"} {
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(`{"tool_name":"mcp__`+server+`__`+name+`","tool_input":{}}`), &out, io.Discard)
+			mainIn(guardCtx(t), []string{"--baseline"}, strings.NewReader(`{"tool_name":"mcp__`+server+`__`+name+`","tool_input":{}}`), &out, io.Discard)
 			if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), name) {
 				t.Errorf("mcp__%s__%s: printed %s, want a denial naming it", server, name, out.String())
 			}
@@ -257,6 +261,7 @@ func TestLinearRefuses(t *testing.T) {
 // most one of reads, confirms and refuses, and to lists mcp-proxy can use:
 // an empty allow list there exposes every tool.
 func TestMCPListsDisjoint(t *testing.T) {
+	t.Parallel()
 	for id, l := range mcpLists(t) {
 		in := map[string]string{}
 		for list, names := range map[string][]string{"reads": l.Reads, "confirms": l.Confirms, "refuses": l.Refuses} {
@@ -322,6 +327,7 @@ func TestMCPLookalike(t *testing.T) {
 			harness, event, want string
 		}{{"Claude Code", claude(c.tool), "ask"}, {"Codex", codex(c.tool), "deny"}} {
 			t.Run(c.key+" from "+h.harness, func(t *testing.T) {
+				t.Parallel()
 				decision, reason := decide(t, []string{"--baseline"}, h.event)
 				if c.key == "parallels" && !strings.Contains(reason, "mcp-proxy service log") {
 					t.Errorf("local server recovery %q does not name the service log", reason)
@@ -344,6 +350,7 @@ func TestMCPLookalike(t *testing.T) {
 		}
 	}
 	t.Run("unrelated server", func(t *testing.T) {
+		t.Parallel()
 		decision, reason := decide(t, []string{"--baseline"}, claude("mcp__somewhere__get_thing"))
 		if decision != "ask" || strings.Contains(reason, "mcp-proxy-authorize") || strings.Contains(reason, "mcp__") {
 			t.Errorf("decision %q, reason %q: want ask, naming no reviewed server", decision, reason)

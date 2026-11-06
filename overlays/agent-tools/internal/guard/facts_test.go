@@ -74,7 +74,7 @@ func claudeEvent(session, cwd, command, stdout string) string {
 func postHook(t *testing.T, event string) string {
 	t.Helper()
 	var out bytes.Buffer
-	if code := Main([]string{"--post"}, strings.NewReader(event), &out, io.Discard); code != 0 {
+	if code := mainIn(guardCtx(t), []string{"--post"}, strings.NewReader(event), &out, io.Discard); code != 0 {
 		t.Errorf("%s: exit %d", event, code)
 	}
 	return out.String()

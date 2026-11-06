@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -14,7 +15,7 @@ import (
 // naming the session, else the edit's worktree, logs each change as a
 // branch-changed event, from which the next edit reads the last; a
 // session without a plan gets no hint. It never denies.
-func branchHint(session string, toolInput json.RawMessage, cwd string) string {
+func branchHint(ctx context.Context, session string, toolInput json.RawMessage, cwd string) string {
 	var in struct {
 		FilePath string `json:"file_path"`
 	}
@@ -22,7 +23,7 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	if session == "" || in.FilePath == "" {
 		return ""
 	}
-	top, g := worktreeOf(expandPath(in.FilePath, cwd))
+	top, g := worktreeOf(ctx, expandPath(ctx, in.FilePath, cwd))
 	if top == "" {
 		return ""
 	}
@@ -37,13 +38,13 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 		}
 	}
 	// A branch or tip git did not give, as when it stalled, is not noted.
-	branch, ok := g.run("branch", "--show-current")
+	branch, ok := g.run(ctx, "branch", "--show-current")
 	if !ok {
 		return ""
 	}
 	tip := ""
 	if branch == "" {
-		if tip, ok = g.run("rev-parse", "--short", "HEAD"); !ok {
+		if tip, ok = g.run(ctx, "rev-parse", "--short", "HEAD"); !ok {
 			return ""
 		}
 	}

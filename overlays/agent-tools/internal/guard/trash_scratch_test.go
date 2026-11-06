@@ -11,8 +11,9 @@ import (
 )
 
 func TestTrashScratch(t *testing.T) {
-	root := fakeHome(t)
+	ctx, root := fakeHome(t)
 	scratch := filepath.Join(root, "scratch")
+	ctx = withVars(ctx, "TMPDIR="+scratch)
 	outside := filepath.Join(root, "outside")
 	for _, dir := range []string{scratch, outside} {
 		if err := os.Mkdir(dir, 0o755); err != nil {
@@ -24,9 +25,6 @@ func TestTrashScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	old := scratchRoots
-	scratchRoots = func() []string { return []string{scratch} }
-	t.Cleanup(func() { scratchRoots = old })
 	for _, test := range []struct {
 		name, dir string
 		deny      bool
@@ -37,7 +35,7 @@ func TestTrashScratch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			data, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_id": "reviewer", "cwd": test.dir, "tool_input": map[string]string{"command": "trash-scratch new"}})
 			var out bytes.Buffer
-			Main([]string{"--reviewer"}, bytes.NewReader(data), &out, io.Discard)
+			mainIn(ctx, []string{"--reviewer"}, bytes.NewReader(data), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != test.deny {
 				t.Errorf("denied %v, want %v: %s", denied, test.deny, out.String())
 			}
@@ -66,10 +64,11 @@ func TestTrashAdvice(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			old := trashOnPath
-			trashOnPath = func() bool { return test.onPath }
-			t.Cleanup(func() { trashOnPath = old })
-			reason := judge(t, t.TempDir(), "rm new")
+			ctx := guardCtx(t)
+			if test.onPath {
+				ctx = withTrash(t, ctx)
+			}
+			reason := judge(ctx, t.TempDir(), "rm new")
 			if test.want == "" {
 				if reason != "" {
 					t.Errorf("unexpected refusal: %s", reason)

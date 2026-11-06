@@ -46,7 +46,7 @@ func TestBranchHint(t *testing.T) {
 			event, _ := json.Marshal(map[string]any{"session_id": session, "tool_name": tool, "cwd": main,
 				"tool_input": map[string]string{"file_path": path, "old_string": "a", "new_string": "b", "content": "c"}})
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			mainIn(guardCtx(t), []string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if out.Len() == 0 {
 				return "", ""
 			}

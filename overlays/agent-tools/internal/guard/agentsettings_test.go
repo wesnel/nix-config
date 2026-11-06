@@ -13,7 +13,8 @@ import (
 // link, a hard link or another worktree's .git file included, and any
 // agent reads them.
 func TestAgentSettings(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	work := filepath.Join(h, "work")
 	main := filepath.Join(work, "repo")
 	os.MkdirAll(main, 0o755)
@@ -87,8 +88,9 @@ func TestAgentSettings(t *testing.T) {
 		{"a scratch repository without settings, removed", "Bash", bash("rm -rf scratch/.git"), work, false},
 	} {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(c.input)
-			reason := check(c.tool, input, baseline, c.dir)
+			reason := check(ctx, c.tool, input, baseline, c.dir)
 			switch {
 			case c.deny && reason != agentSettings:
 				t.Errorf("%s %s in %s: reason %q, want the agent settings'", c.tool, input, c.dir, reason)
@@ -102,7 +104,7 @@ func TestAgentSettings(t *testing.T) {
 	}
 	if foldsCase {
 		input, _ := json.Marshal(write(strings.Replace(settings, "agents.json", "Agents.JSON", 1)))
-		if reason := check("Write", input, baseline, main); reason != agentSettings {
+		if reason := check(ctx, "Write", input, baseline, main); reason != agentSettings {
 			t.Errorf("a case variant of the settings: %q", reason)
 		}
 	}
@@ -115,7 +117,8 @@ func TestAgentSettings(t *testing.T) {
 // rule covers; any agent reads them, and git's own worktree commands
 // change them.
 func TestGitLinkFiles(t *testing.T) {
-	h := fakeHome(t)
+	t.Parallel()
+	ctx, h := fakeHome(t)
 	work := filepath.Join(h, "work")
 	main := filepath.Join(work, "repo")
 	os.MkdirAll(main, 0o755)
@@ -178,8 +181,9 @@ func TestGitLinkFiles(t *testing.T) {
 		{"a scratch repository's .git directory, removed", "Bash", bash("rm -rf scratch/.git"), work, false},
 	} {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(c.input)
-			reason := check(c.tool, input, baseline, c.dir)
+			reason := check(ctx, c.tool, input, baseline, c.dir)
 			switch {
 			case c.deny && reason != gitLink:
 				t.Errorf("%s %s in %s: reason %q, want the git link files'", c.tool, input, c.dir, reason)

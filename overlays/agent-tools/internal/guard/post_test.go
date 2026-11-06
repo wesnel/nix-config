@@ -47,8 +47,9 @@ func TestPost(t *testing.T) {
 		{"not JSON", `not json`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
-			if code := Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard); code != 0 {
+			if code := mainIn(guardCtx(t), []string{"--post"}, strings.NewReader(c.event), &out, io.Discard); code != 0 {
 				t.Errorf("%s: exit %d", c.event, code)
 			}
 			if c.want == "" {
@@ -85,6 +86,7 @@ func TestPost(t *testing.T) {
 // A command that opens or edits a pull request is followed by the line
 // that hands over the pull-requests skill; any other leaves it out.
 func testPostPullRequests(t *testing.T) {
+	t.Parallel()
 	claude := func(command string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
 			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": "", "stderr": ""}})
@@ -101,8 +103,9 @@ func testPostPullRequests(t *testing.T) {
 		{"echo of gh pr create", claude("echo gh pr create"), ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
-			Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard)
+			mainIn(guardCtx(t), []string{"--post"}, strings.NewReader(c.event), &out, io.Discard)
 			got := strings.Contains(out.String(), "`pull-requests` skill")
 			if got != (c.format != "") || !strings.Contains(out.String(), c.format) {
 				t.Errorf("%s: printed %s", c.event, out.String())

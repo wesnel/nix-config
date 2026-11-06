@@ -19,6 +19,7 @@ func TestExcludedAlone(t *testing.T) {
 	os.WriteFile(config, []byte(`{"guard": {"excludedCommands": `+
 		`["gh-read *", "git delegate *", "git-delegate *", "pr-loop wait *", "agent-plan log *"]}}`), 0o600)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx := guardCtx(t)
 	work := t.TempDir()
 	// hook runs the baseline hook on a shell call, as Claude Code makes it
 	// or, with codex, as Codex does, and returns its decision and reason.
@@ -30,7 +31,7 @@ func TestExcludedAlone(t *testing.T) {
 		}
 		data, _ := json.Marshal(event)
 		var out bytes.Buffer
-		Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
+		mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
 		var decision struct {
 			HookSpecificOutput struct{ PermissionDecision, PermissionDecisionReason string }
 		}
@@ -86,6 +87,7 @@ func TestExcludedAlone(t *testing.T) {
 		for i, form := range forms {
 			line, deny := form(c.cmd), i > 0 || c.aloneDeny
 			t.Run(caseName(deny, line), func(t *testing.T) {
+				t.Parallel()
 				decision, reason := hook(t, line, false)
 				if (decision == "deny") != deny {
 					t.Fatalf("decision %q, reason %q", decision, reason)
@@ -122,6 +124,7 @@ func TestExcludedAlone(t *testing.T) {
 			"git delegate --goal goal.txt main..topic --items 'a b'", "a backtick"},
 	} {
 		t.Run(caseName(true, c.refused), func(t *testing.T) {
+			t.Parallel()
 			decision, reason := hook(t, c.refused, false)
 			// Most flags have no file form, so the reason offers rewording too.
 			if decision != "deny" || !strings.Contains(reason, c.says) || !strings.Contains(reason, "--text-file") ||
@@ -130,6 +133,7 @@ func TestExcludedAlone(t *testing.T) {
 			}
 		})
 		t.Run(caseName(false, c.allowed), func(t *testing.T) {
+			t.Parallel()
 			if decision, reason := hook(t, c.allowed, false); decision == "deny" {
 				t.Errorf("decision %q, reason %q", decision, reason)
 			}
@@ -147,6 +151,7 @@ func TestExcludedAlone(t *testing.T) {
 		"# c\ngh-read pr view 1",
 	} {
 		t.Run(caseName(true, line), func(t *testing.T) {
+			t.Parallel()
 			if decision, reason := hook(t, line, false); decision != "deny" || !strings.Contains(reason, "may run sandboxed") {
 				t.Errorf("decision %q, reason %q", decision, reason)
 			}
@@ -157,7 +162,7 @@ func TestExcludedAlone(t *testing.T) {
 	for _, line := range []string{"true && gh-read pr view 5 -R o/r", "gh pr view 5 -R o/r | cat"} {
 		data, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": work, "tool_input": map[string]string{"command": line}})
 		var out bytes.Buffer
-		Main([]string{"--reviewer"}, bytes.NewReader(data), &out, io.Discard)
+		mainIn(ctx, []string{"--reviewer"}, bytes.NewReader(data), &out, io.Discard)
 		if strings.Contains(out.String(), "may run sandboxed") || strings.Contains(out.String(), "runs in the sandbox") {
 			t.Errorf("a reviewer's %q: %s", line, out.String())
 		}

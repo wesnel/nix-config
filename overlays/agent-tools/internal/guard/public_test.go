@@ -10,6 +10,8 @@ import (
 // The guard refuses a pull request's title or description, a comment or an
 // API write that names what publictext finds, read where it can be.
 func TestPublicText(t *testing.T) {
+	t.Parallel()
+	ctx := guardCtx(t)
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	write := func(name, text string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
@@ -23,6 +25,7 @@ func TestPublicText(t *testing.T) {
 	write("leak.graphql", `mutation { addComment(input: {subjectId: "PR_kwDOAbc123", body: "Fixed per D188."}) { clientMutationId } }`)
 
 	t.Run("judged", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct{ command, token string }{
 			{`gh pr create --draft --title T --body "Fixes the symlinked case (tZ1Cm)."`, "tZ1Cm"},
 			{`gh pr create --draft --title "Fix the symlinked case (tZ1Cm)" --body-file good.md`, "tZ1Cm"},
@@ -33,7 +36,7 @@ func TestPublicText(t *testing.T) {
 			{"cd " + dir + " && gh pr edit 1 --body-file leak.md", "D188"},
 			{"gh pr edit 1 --title 'Notes in /tmp/claude-501/s'", "/tmp/claude-501/s"},
 		} {
-			reason := judge(t, dir, c.command)
+			reason := judge(ctx, dir, c.command)
 			if !strings.Contains(reason, `"`+c.token+`"`) || !saysInstead(reason) {
 				t.Errorf("%q: %q", c.command, reason)
 			}
@@ -43,7 +46,7 @@ func TestPublicText(t *testing.T) {
 			"gh pr edit 1 --body-file good.md",
 			"gh pr view 1 --json body",
 		} {
-			if reason := judge(t, dir, command); reason != "" {
+			if reason := judge(ctx, dir, command); reason != "" {
 				t.Errorf("%q: %q", command, reason)
 			}
 		}
@@ -52,6 +55,7 @@ func TestPublicText(t *testing.T) {
 	// Comments and API writes are the operator's in every session today;
 	// their bodies are checked all the same.
 	t.Run("bodies", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct {
 			args  []string
 			token string
@@ -67,7 +71,7 @@ func TestPublicText(t *testing.T) {
 			{[]string{"api", "graphql", "-F", "query=@leak.graphql"}, "D188"},
 			{[]string{"api", "graphql", "-f", "query=mutation($b: String!) { x(body: $b) }", "-f", "b=x", "-f", "body=Per D188."}, "D188"},
 		} {
-			reason := checkPublicGh(c.args, make([]bool, len(c.args)), dir)
+			reason := checkPublicGh(ctx, c.args, make([]bool, len(c.args)), dir)
 			if !strings.Contains(reason, `"`+c.token+`"`) || !saysInstead(reason) {
 				t.Errorf("%q: %q", c.args, reason)
 			}
@@ -81,11 +85,11 @@ func TestPublicText(t *testing.T) {
 			{"pr", "edit", "1", "--body-file", "missing.md"},
 			{"pr", "edit", "1", "--body-file", "-"},
 		} {
-			if reason := checkPublicGh(args, make([]bool, len(args)), dir); reason != "" {
+			if reason := checkPublicGh(ctx, args, make([]bool, len(args)), dir); reason != "" {
 				t.Errorf("%q: %q", args, reason)
 			}
 		}
-		if reason := checkPublicGh([]string{"pr", "edit", "1", "--body", "$BODY"}, []bool{false, false, false, false, true}, dir); reason != "" {
+		if reason := checkPublicGh(ctx, []string{"pr", "edit", "1", "--body", "$BODY"}, []bool{false, false, false, false, true}, dir); reason != "" {
 			t.Errorf("an expanded body: %q", reason)
 		}
 	})
