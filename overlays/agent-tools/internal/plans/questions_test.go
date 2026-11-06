@@ -72,6 +72,27 @@ func TestQuestions(t *testing.T) {
 		}
 	})
 
+	// A question with a kind shows it after its ID, so a brag item reads
+	// as one; a plain question shows none.
+	t.Run("kind", func(t *testing.T) {
+		_, p := openQuestions(t)
+		if _, err := p.Ask(AskOptions{Question: "Made the loop twice as fast", Recommendation: "The loop takes half the time.",
+			Kind: "brag", Priority: "A"}, day); err != nil {
+			t.Fatal(err)
+		}
+		qs, err := p.Questions(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		org := QuestionsOrg(qs)
+		for _, s := range []string{"- Q4 [#A] brag :: Made the loop twice as fast Recommended: The loop takes half the time.\n",
+			"- Q2 :: Rename the command?"} {
+			if !strings.Contains(org, s) {
+				t.Errorf("org lacks %q:\n%s", s, org)
+			}
+		}
+	})
+
 	t.Run("none", func(t *testing.T) {
 		if QuestionsOrg(nil) != "No open questions.\n" {
 			t.Errorf("none: %q", QuestionsOrg(nil))

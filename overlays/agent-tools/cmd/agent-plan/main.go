@@ -139,7 +139,8 @@ have (see status) is refused and writes nothing.
                      it per plan, newest plan first: what waits on
                      the operator (a hand-back's command, a sign-pass not
                      yet run), the questions they can answer now, retro
-                     proposals, ready steps and open follow-ups, its parts'
+                     proposals, brag items awaiting approval, ready steps
+                     and open follow-ups, its parts'
                      included; --kind keeps one kind, --since those asked,
                      discovered or handed back since then (a step's time is
                      its first event). A plan that cannot be read is named
