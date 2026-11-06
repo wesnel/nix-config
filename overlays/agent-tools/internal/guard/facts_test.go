@@ -132,6 +132,66 @@ func testPostLinksPlans(t *testing.T) {
 	}
 }
 
+// A commit git made reaches the plan of the worktree it landed in, though
+// git printed nothing for it (-q) and the shell ran in another checkout,
+// reaching the worktree through git -C or cd, as an agent whose guard
+// refuses cd before most commands commits. A quiet commit that made
+// nothing logs nothing, nor logs again a commit already logged.
+func testPostRecordsQuietCommits(t *testing.T) {
+	main, linked, p := planned(t)
+	gitOut(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
+	// s2 is a session no plan names, so the worktree alone finds the part.
+	post := func(command, stdout string) {
+		t.Helper()
+		postHook(t, claudeEvent("s2", main, command, stdout))
+	}
+	loud := gitOut(t, linked, "commit", "--allow-empty", "-m", "Loud through -C")
+	post("git -C "+linked+" -c commit.gpgsign=false commit --allow-empty -m 'Loud through -C'", loud)
+	gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet through -C")
+	post("git -C "+linked+" -c commit.gpgsign=false commit -q --allow-empty -m 'Quiet through -C'", "")
+	gitOut(t, linked, "commit", "--quiet", "--allow-empty", "-m", "Quiet after cd")
+	post("cd "+linked+" && git -c commit.gpgsign=false commit --quiet --allow-empty -m 'Quiet after cd'", "")
+	// A quiet commit before a printed one in the same call.
+	gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet before loud")
+	loud = gitOut(t, linked, "commit", "--allow-empty", "-m", "Loud after quiet")
+	post("git -C "+linked+" commit -q --allow-empty -m 'Quiet before loud' && git -C "+linked+" commit --allow-empty -m 'Loud after quiet'", loud)
+	// The same, through two directories of one worktree, which share HEAD.
+	sub := filepath.Join(linked, "sub")
+	os.Mkdir(sub, 0o755)
+	gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet at the top")
+	loud = gitOut(t, sub, "commit", "--allow-empty", "-m", "Loud in a subdirectory")
+	post("git -C "+linked+" commit -q --allow-empty -m 'Quiet at the top' && git -C "+sub+" commit --allow-empty -m 'Loud in a subdirectory'", loud)
+	// Nothing to commit: HEAD is still the commit logged above.
+	post("git -C "+linked+" commit -q -m 'Nothing' || true", "")
+	post("git -C "+linked+" commit -q --dry-run --allow-empty -m 'Dry'", "")
+
+	events, err := p.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range events {
+		if e.Kind == "committed" {
+			got = append(got, e.Item+" "+e.Branch+" "+e.Commit+" "+e.Session)
+			if e.Revision == "" || e.Worktree != linked {
+				t.Errorf("%q: revision %q, worktree %q; want a revision in %s", e.Commit, e.Revision, e.Worktree, linked)
+			}
+		}
+	}
+	want := []string{
+		"P1 part Loud through -C s2",
+		"P1 part Quiet through -C s2",
+		"P1 part Quiet after cd s2",
+		"P1 part Loud after quiet s2",
+		"P1 part Quiet before loud s2",
+		"P1 part Loud in a subdirectory s2",
+		"P1 part Quiet at the top s2",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("logged:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // What a tool call did to the work, as git and pr-loop report it, reaches
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its

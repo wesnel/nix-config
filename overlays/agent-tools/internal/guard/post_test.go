@@ -78,6 +78,7 @@ func TestPost(t *testing.T) {
 	}
 
 	t.Run("records facts", testPostRecordsFacts)
+	t.Run("records quiet commits in another worktree", testPostRecordsQuietCommits)
 	t.Run("links plans on the facts it records", testPostLinksPlans)
 	t.Run("hands over the pull-requests skill", testPostPullRequests)
 }
