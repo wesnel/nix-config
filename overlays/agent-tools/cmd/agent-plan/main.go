@@ -252,6 +252,25 @@ have (see status) is refused and writes nothing.
                      entry, keeping its caption unless one is given, and
                      writes nothing where that changes nothing. VID --url
                      gives entry VID its recording's URL
+  digest --date YYYY-MM-DD (--text TEXT | --text-file F)
+                     write TEXT as the demo digest of that day, a Friday,
+                     at digests/YYYY/MM-DD-demo.org in the notes
+                     repository, replacing the one there. Refused for
+                     another day, over the 64 KiB the export reads, and
+                     for text without a level-1 heading per change whose
+                     property drawer holds PLAN, an id: link, and PR,
+                     OWNER/NAME#N or its GitHub URL. The same text again
+                     writes nothing
+  brag PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)
+                     add the merged change's entry to brag/YYYY.org in the
+                     notes repository, YYYY the year of --date, the day it
+                     merged: heading T, with PR, REPOSITORY and PLAN, an
+                     id: link to PLAN, and TEXT, the summary the operator
+                     approved. An entry for the same pull request again
+                     writes nothing, and is refused where it differs.
+                     digest and brag write on the host plans.notesHost
+                     names alone, whose sync sends them, and are refused
+                     on every other
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -560,6 +579,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		caption  = flags.String("caption", "", "")
 		tape     = flags.String("tape", "", "")
 		address  = flags.String("url", "", "")
+		date     = flags.String("date", "", "")
+		pr       = flags.String("pr", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -677,6 +698,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runSection(*part, *text, c, positional, given, stderr, report, reportLinking)
 	case "visual":
 		return runVisual(plans.VisualOptions{Branch: branch, Caption: *caption, URL: *address}, *span, *drawing, *tape, c, positional, stderr, report)
+	case "digest", "brag":
+		return runNotes(command, *date, *pr, *title, *text, c, positional, given, stderr, report)
 	case "reference":
 		return runReference(*note, c, positional, stderr, report)
 	case "link":
@@ -1349,6 +1372,31 @@ func visualFlags(command string, given map[string]bool, stderr io.Writer) bool {
 	return true
 }
 
+func runNotes(command, date, pr, title, text string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int) int {
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	switch {
+	case command == "digest" && (len(positional) != 0 || !given["text"] || err != nil):
+		fmt.Fprint(stderr, "agent-plan digest: takes --date YYYY-MM-DD (--text TEXT | --text-file F)\n")
+		return 2
+	case command == "brag" && (len(positional) != 1 || !given["text"] || err != nil):
+		fmt.Fprint(stderr, "agent-plan brag: takes PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)\n")
+		return 2
+	case command == "digest":
+		return report(c.WriteDigest(day, text))
+	}
+	return report(c.WriteBrag(plans.BragOptions{Day: day, PR: pr, Plan: positional[0], Title: title, Summary: text}))
+}
+
+func notesFlags(command string, given map[string]bool, stderr io.Writer) bool {
+	for _, f := range []string{"date", "pr"} {
+		if given[f] && command != "digest" && command != "brag" {
+			fmt.Fprintf(stderr, "agent-plan %s: --%s is digest's and brag's\n", command, f)
+			return false
+		}
+	}
+	return true
+}
+
 func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan string, stderr io.Writer) (map[string]bool, bool) {
 	if unset && command != "postpone" && command != "after" {
 		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
@@ -1381,11 +1429,12 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
 		return nil, false
 	}
-	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
-		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+	textual := map[string]bool{"step": true, "part": true, "edit": true, "section": true, "digest": true, "brag": true}
+	if given["text"] && !textual[command] {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's, section's, digest's and brag's\n", command)
 		return nil, false
 	}
-	return given, visualFlags(command, given, stderr)
+	return given, visualFlags(command, given, stderr) && notesFlags(command, given, stderr)
 }
 
 func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) bool {
@@ -1399,12 +1448,12 @@ func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) 
 }
 
 func commandText(command, textFile string, text, context *string, given map[string]bool, stdout, stderr io.Writer) int {
-	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
+	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "digest": "text", "brag": "text", "ask": "context",
 		"followup": "context"}[command]
 	into := map[string]*string{"text": text, "context": context}[fills]
 	switch {
 	case !ok:
-		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
+		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's, section's, digest's and brag's, and ask's and followup's for the context\n", command)
 		return 2
 	case given["text"] || given["context"]:
 		fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)

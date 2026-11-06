@@ -326,8 +326,9 @@ func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (
 	return e, errors.Join(errs[:]...)
 }
 
-// maxDigestFile is the most of a digest file read.
-const maxDigestFile = 64 << 10
+// maxDigestFile is the most of a digest file read, and so the most
+// agent-plan digest writes.
+const maxDigestFile = plans.MaxDigest
 
 // digestCap caps a digest's text, in runes.
 const digestCap = 8000

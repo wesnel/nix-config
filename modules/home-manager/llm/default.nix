@@ -1013,9 +1013,9 @@ in {
     # Syncs plans a few seconds after one changes, outside every session,
     # and every 5 minutes besides, since a watch can miss a change. launchd
     # watches the directory's entries only, so agent-plan touches the
-    # directory after each write it makes; a plan file edited in place by
-    # anything else is sent by the next run. Sync's lock keeps runs from
-    # overlapping.
+    # directory after each write it makes, a digest's or a brag file's
+    # outside it included; a plan file edited in place by anything else is
+    # sent by the next run. Sync's lock keeps runs from overlapping.
     launchd.agents.agent-plan-sync = mkIf pkgs.stdenv.hostPlatform.isDarwin {
       enable = true;
       config = {
