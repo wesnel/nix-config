@@ -16,6 +16,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/gitgrant"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/review"
 )
@@ -547,6 +548,27 @@ func callTool(ctx context.Context, name string, raw map[string]any, threadID str
 	args, worktree, err := t.check(raw)
 	if err != nil {
 		return refused(err)
+	}
+	if t.name == "git_stage" {
+		input := make(map[string]any, len(raw))
+		for k, v := range raw {
+			if k != "authorization" {
+				input[k] = v
+			}
+		}
+		data, err := json.Marshal(input)
+		if err != nil {
+			return refused(fmt.Errorf("invalid or expired hook authorization"))
+		}
+		grant, err := gitgrant.Consume(args.str("authorization"), "mcp__agent_ops__git_stage", threadID, data)
+		if err != nil {
+			return refused(err)
+		}
+		if err := guard.AuthorizeGitStage(grant.Session, grant.Agent, worktree); err != nil {
+			return refused(err)
+		}
+		// The worktree whose ownership was just checked, links resolved.
+		args["worktree"] = worktree
 	}
 	if worktree != "" {
 		if err := os.Chdir(worktree); err != nil {

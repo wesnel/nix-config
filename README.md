@@ -283,6 +283,15 @@ in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
 the edit guard's worktree boundary. Other server tools prompt, with file inputs
 confined to the worktree. A Codex review loop preapproves its named agent_ops
 tools for that session. Shell plan writes also prompt.
+Its `git_stage` tool stages literal paths in a task worktree the caller
+owns without giving commands write access to the shared Git metadata: the
+guard's hook adds a one-use grant to the call, the server checks it and
+the worktree's ownership again, stages in a private index and object
+directory with a Git child in a Codex sandbox profile of its own, run
+only once a probe in that sandbox cannot write the repository, and installs only those
+paths' entries and their verified blobs under `index.lock`. It refuses
+every call unless `wgn.home.codex.gitStage` is on; that option says what
+must pass on the machine before turning it on.
 Its GitHub read tools take a repository name without a checkout: `github_pr_view`
 returns a PR's description and discussion, `github_pr_diff` its unified
 diff with base and head SHAs, and `github_file` a text file at a full
@@ -882,8 +891,9 @@ Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
 (`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
 the routine plan-tool catalog and prompts for other calls outside a Codex
-review-loop session. Each refusal says what to do
-instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
+review-loop session. For `git_stage` the guard answers `allow` with the
+call's grant added, after the same ownership check as a file edit. Each
+refusal says what to do instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
 session. The guard also denies starting a

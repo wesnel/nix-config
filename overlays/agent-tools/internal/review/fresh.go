@@ -358,7 +358,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	defer cancel()
 	// Codex's sandbox does not start inside another macOS sandbox; Codex
 	// must then not run at all, rather than run its commands unconfined.
-	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
+	env := append(gitenv.Without(os.Environ()), "PATH="+RealDirs(os.Getenv("PATH")))
 	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
 		"-P", profile, "-C", c.Checkout, "--", "git", "rev-parse", "--verify", "HEAD")...)
 	probe.Env = env
@@ -434,10 +434,11 @@ func confinement(common, admin, codex string) ([]string, error) {
 	var fs strings.Builder
 	fs.WriteString(`{":minimal"="read", ":workspace_roots"={"."="read"}`)
 	add := func(path, access string) error {
-		if strings.ContainsFunc(path, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
-			return fmt.Errorf("%q has a control character, which Codex's configuration cannot hold", path)
+		quoted, err := TOMLString(path)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintf(&fs, `, "%s"="%s"`, tomlEscape.Replace(path), access)
+		fmt.Fprintf(&fs, `, %s="%s"`, quoted, access)
 		return nil
 	}
 	reads := []string{"/nix/store", codex, admin}
@@ -483,10 +484,10 @@ func confinement(common, admin, codex string) ([]string, error) {
 	return args, nil
 }
 
-// realDirs resolves the symbolic links in each directory of a PATH. Codex
+// RealDirs resolves the symbolic links in each directory of a PATH. Codex
 // grants its sandbox the real paths of what it may read, so it cannot follow
 // a link such as nix-darwin's /run, and Codex takes its shell from PATH.
-func realDirs(path string) string {
+func RealDirs(path string) string {
 	dirs := filepath.SplitList(path)
 	for i, dir := range dirs {
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
@@ -494,6 +495,15 @@ func realDirs(path string) string {
 		}
 	}
 	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// TOMLString quotes s as a TOML basic string for a Codex -c option. It
+// refuses a control character, which Codex's configuration cannot hold.
+func TOMLString(s string) (string, error) {
+	if strings.ContainsFunc(s, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
+		return "", fmt.Errorf("%q has a control character, which Codex's configuration cannot hold", s)
+	}
+	return `"` + tomlEscape.Replace(s) + `"`, nil
 }
 
 // tomlEscape escapes text for the inside of a TOML basic string.

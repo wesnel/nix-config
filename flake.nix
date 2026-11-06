@@ -861,16 +861,18 @@
       checks.${darwinOnly "codex-rules"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
       in
-        pkgs.runCommand "codex-rules" {
-          nativeBuildInputs = [pkgs.python3 pkgs.bash];
-          activation = ngrok.home.activation.codexRules.data;
-          opsActivation = ngrok.home.activation.codexOpsServer.data;
-          passAsFile = ["activation" "opsActivation"];
-        } ''
-          python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
-          python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
-          touch $out
-        '';
+        assert pkgs.lib.assertMsg (builtins.elem "${ngrok.xdg.stateHome}/agent-tools/git-authorizations" ngrok.wgn.home.llm.sandbox.deniedReads)
+        "Git authorization grants must be inaccessible to sandboxed commands";
+          pkgs.runCommand "codex-rules" {
+            nativeBuildInputs = [pkgs.python3 pkgs.bash];
+            activation = ngrok.home.activation.codexRules.data;
+            opsActivation = ngrok.home.activation.codexOpsServer.data;
+            passAsFile = ["activation" "opsActivation"];
+          } ''
+            python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
+            python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
+            touch $out
+          '';
 
       checks.${darwinOnly "agent-plan-sync"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
