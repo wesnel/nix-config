@@ -207,6 +207,24 @@ have (see status) is refused and writes nothing.
                      other than a block's. A Goal holds a line starting
                      "Builds on:" and one starting "Likely next changes:",
                      each followed by text, as the plan-work skill says
+  visual PLAN --branch B --range BASE..TIP --diagram ID [--caption C]
+  visual PLAN --branch B (--tape FILE | --url URL) --caption C
+  visual PLAN VID --url URL
+                     keep a visual of branch B in the plan's own Visuals,
+                     the section added with its first entry, and log it as
+                     planned: diagram ID of the review record of
+                     BASE..TIP, resolved in the worktree agent-plan runs
+                     in, with its Mermaid, verdict and range, refused
+                     unless its verdict is holds or corrected; a VHS tape's
+                     source, refused for a line Org reads as structure, as
+                     section's text is, or any #+ line; or a screenshot's
+                     or recording's https GitHub attachment URL. The caption
+                     is the entry's title, a diagram's own by default.
+                     The same visual again (a diagram by B, ID and range, a
+                     tape by B and source, a URL by B and URL) replaces its
+                     entry, keeping its caption unless one is given, and
+                     writes nothing where that changes nothing. VID --url
+                     gives entry VID its recording's URL
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -531,6 +549,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		signBase = flags.String("base", "", "")
 		signPlan = flags.String("plan", "", "")
 		reason   = flags.String("reason", "", "")
+		span     = flags.String("range", "", "")
+		drawing  = flags.String("diagram", "", "")
+		caption  = flags.String("caption", "", "")
+		tape     = flags.String("tape", "", "")
+		address  = flags.String("url", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -583,6 +606,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if given["reason"] && command != "unfile" {
 		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
 		return 2
+	}
+	for _, f := range []string{"range", "diagram", "caption", "tape", "url"} {
+		if given[f] && command != "visual" {
+			fmt.Fprintf(stderr, "agent-plan %s: --%s is visual's\n", command, f)
+			return 2
+		}
 	}
 	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
 		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
@@ -950,6 +979,37 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return reportLinking(p)(p.SetSection(*part, positional[1], *text, time.Now()))
+	case "visual":
+		if len(positional) < 1 || len(positional) > 2 || (*span == "") != (*drawing == "") {
+			fmt.Fprint(stderr, "agent-plan visual: takes PLAN --branch B --range BASE..TIP --diagram ID [--caption C], "+
+				"PLAN --branch B (--tape FILE | --url URL) --caption C, or PLAN VID --url URL\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		o := plans.VisualOptions{Branch: branch, Caption: *caption, URL: *address}
+		if len(positional) == 2 {
+			o.Entry = positional[1]
+		}
+		if *tape != "" {
+			if o.Tape, err = readTextFile(*tape); err != nil {
+				return report(nil, err)
+			}
+		}
+		if *drawing != "" {
+			top, _ := checkout()
+			if top == "" {
+				return report(nil, refusal.New("--range is resolved in the worktree agent-plan runs in, and this is none. Run `agent-plan visual` in the worktree of the reviewed change"))
+			}
+			d, err := plans.ReadDiagram(top, *span, *drawing)
+			if err != nil {
+				return report(nil, err)
+			}
+			o.Diagram = &d
+		}
+		return report(p.Visual(o, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
