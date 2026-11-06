@@ -14,6 +14,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/checkedfile"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -405,7 +406,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// nothing.
 		input := readAll(stdin)
 		if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
-			_ = quota.Record(quota.File(), ws) // a reading not recorded waits for the next refresh
+			_ = quota.Record(quota.File(env.Process()), ws) // a reading not recorded waits for the next refresh
 		}
 		var parts []string
 		if line := quota.StatusLine(input, time.Now()); line != "" {
@@ -431,7 +432,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			out = c.Remind(input)
 		}
-		if line := prompttime.Remind(prompttime.DefaultDir(), input, time.Now()); line != "" {
+		if line := prompttime.Remind(prompttime.DefaultDir(env.Process()), input, time.Now()); line != "" {
 			out = plans.WithContext(out, input, line)
 		}
 		if len(out) > 0 {

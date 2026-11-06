@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,7 +20,7 @@ type remoteView struct {
 	PRs   map[string]*PR    // head branch to an open same-repository PR
 }
 
-func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
+func viewRemote(ctx context.Context, repo *Repo, branch, base string) (*remoteView, error) {
 	owner, name, _ := strings.Cut(repo.Slug, "/")
 	type ref struct{ Target struct{ Oid string } }
 	type prs struct{ Nodes []*PR }
@@ -29,7 +30,7 @@ func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
 			HeadPRs, BasePRs prs
 		}
 	}
-	err := graphQL(`query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
+	err := graphQL(ctx, `query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
 		repository(owner: $owner, name: $name) {
 			head: ref(qualifiedName: $headRef) { target { oid } }
 			base: ref(qualifiedName: $baseRef) { target { oid } }
@@ -304,14 +305,14 @@ func (o *opening) dryRun() map[string]any {
 // GitHub, since open did not create it. It never marks the pull request ready
 // for review. A dry run says what it would open, with onGitHub, and the
 // objects it would upload.
-func Open(branch, base, title, body string, dryRun bool) (any, error) {
+func Open(ctx context.Context, branch, base, title, body string, dryRun bool) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
 	}
 	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
 		return nil, err
 	}
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if base == "" {
 		base = repo.Default
 	}
-	view, err := viewRemote(repo, branch, base)
+	view, err := viewRemote(ctx, repo, branch, base)
 	if err != nil {
 		return nil, err
 	}
@@ -338,13 +339,13 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 
 	calls, refID := 0, ""
 	if !o.onGitHub {
-		if calls, err = o.objects.upload(repo.Slug); err != nil {
+		if calls, err = o.objects.upload(ctx, repo.Slug); err != nil {
 			return nil, err
 		}
 		var created struct {
 			CreateRef struct{ Ref struct{ ID string } }
 		}
-		err = graphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
+		err = graphQL(ctx, `mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
 			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
 		if err != nil {
 			return nil, err
@@ -360,7 +361,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 			}
 		}
 	}
-	err = graphQL(`mutation($input: CreatePullRequestInput!) {
+	err = graphQL(ctx, `mutation($input: CreatePullRequestInput!) {
 		createPullRequest(input: $input) { pullRequest { number url isDraft } }
 	}`, map[string]any{"input": map[string]any{"repositoryId": repo.ID, "baseRefName": base, "headRefName": branch,
 		"title": title, "body": body, "draft": true}}, &opened)
@@ -370,7 +371,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if err != nil {
 		// Without a pull request the branch open created is outside every
 		// later check, so it is taken back down.
-		undo := graphQL(`mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
+		undo := graphQL(ctx, `mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
 			map[string]any{"input": map[string]any{"refId": refID}}, nil)
 		if undo != nil {
 			return nil, fmt.Errorf("opening the pull request failed (%w), and deleting %s from GitHub again failed too: %v", err, branch, undo)
@@ -389,7 +390,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	}
 	result := map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
 		"head": local, "apiCalls": calls + 1}
-	for k, v := range stackOpened(repo, branch, base, pr.Number) {
+	for k, v := range stackOpened(ctx, repo, branch, base, pr.Number) {
 		result[k] = v
 	}
 	return result, nil

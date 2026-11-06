@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
 )
@@ -118,7 +119,7 @@ func writeRecords(t *testing.T) {
 		{"o", "r", 7, record.Range{Title: "SENTINEL-mine", Findings: []record.Finding{finding("F1", record.Fix)},
 			Diagrams: []record.Diagram{{ID: "D2", Title: "SENTINEL-diagram", Verdict: "corrected", JSON: reviewDiagram()}}}},
 	} {
-		path, err := record.RangeFile(r.owner, r.repo, strings.Repeat("0", 40), head)
+		path, err := record.RangeFile(env.Process(), r.owner, r.repo, strings.Repeat("0", 40), head)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +128,7 @@ func writeRecords(t *testing.T) {
 		if err := record.Update(path, func(got *record.Range) error { *got = rec; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if path, err = record.PRFile(r.owner, r.repo, r.pr); err != nil {
+		if path, err = record.PRFile(env.Process(), r.owner, r.repo, r.pr); err != nil {
 			t.Fatal(err)
 		}
 		comment := []record.Comment{{Author: "alice", Type: "User", Body: "SENTINEL-comment"}}

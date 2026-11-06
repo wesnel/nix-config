@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,7 +15,7 @@ import (
 // branch to its base.
 type fakeOpenPRs struct{ bases map[string]string }
 
-func (f *fakeOpenPRs) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeOpenPRs) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	var data any
 	switch {
 	case strings.Contains(query, "viewer { login }"):
@@ -58,7 +59,7 @@ func TestSignCheck(t *testing.T) {
 	t.Run("clean stack", func(t *testing.T) {
 		s, _ := checkStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
-		if _, err := SignCheck(); err != nil {
+		if _, err := SignCheck(t.Context()); err != nil {
 			t.Fatalf("a clean stack: %v", err)
 		}
 		if got := gitIn(t, s.dir, "for-each-ref", "refs/heads/"); got != branches {
@@ -75,7 +76,7 @@ func TestSignCheck(t *testing.T) {
 		s, _ := checkStack(t)
 		os.WriteFile(filepath.Join(s.dir, "a"), []byte("a fixed again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
-		if _, err := SignCheck(); err == nil {
+		if _, err := SignCheck(t.Context()); err == nil {
 			t.Error("a fixup in the wrong branch was accepted")
 		} else if _, ok := err.(Refusal); !ok {
 			t.Errorf("not a refusal: %v", err)
@@ -86,7 +87,7 @@ func TestSignCheck(t *testing.T) {
 		s, f := checkStack(t)
 		gitIn(t, s.dir, "branch", "side", "lower")
 		f.bases["side"] = "lower"
-		if _, err := SignCheck(); err == nil || !strings.Contains(err.Error(), "linear") {
+		if _, err := SignCheck(t.Context()); err == nil || !strings.Contains(err.Error(), "linear") {
 			t.Errorf("a stack that is not linear: %v", err)
 		}
 	})
@@ -94,7 +95,7 @@ func TestSignCheck(t *testing.T) {
 	t.Run("HEAD heads no PR", func(t *testing.T) {
 		s, _ := checkStack(t)
 		gitIn(t, s.dir, "switch", "-q", "main")
-		if _, err := SignCheck(); !refused(err) {
+		if _, err := SignCheck(t.Context()); !refused(err) {
 			t.Errorf("main: %v", err)
 		}
 	})

@@ -168,7 +168,7 @@ func TestOpenAuthorityFailure(t *testing.T) {
 				operatorVerificationTimeout = 100 * time.Millisecond
 				t.Cleanup(func() { operatorVerificationTimeout = old })
 			}
-			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if len(f.calls) != 0 {
 				t.Fatalf("authority failure wrote to GitHub: %v", f.calls)
 			}
@@ -512,7 +512,7 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				}
 				t.Setenv("GNUPG_BUILD_ROOT", buildRoot)
 			}
-			_, err = Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err = Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if keyboxd {
 				if buildRootWasSet {
 					t.Setenv("GNUPG_BUILD_ROOT", oldBuildRoot)
@@ -708,7 +708,7 @@ func TestOpenOperatorSignature(t *testing.T) {
 			if name != "object identity" {
 				published(t, f, dir, "feat")
 			}
-			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if want {
 				if err != nil || strings.Join(f.calls, " ") != "createPullRequest" {
 					t.Fatalf("authorized: error %v, mutations %v", err, f.calls)

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,14 +93,14 @@ type ReplyResult struct {
 // ReplyAll posts each planned reply and resolves the threads marked for it,
 // skipping threads already resolved. Every thread is checked before anything
 // is posted, so one bad section leaves nothing half done.
-func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
-	if err := requireMode("reply", "bots"); err != nil {
+func ReplyAll(ctx context.Context, plan []PlannedReply) ([]ReplyResult, error) {
+	if err := requireMode(ctx, "reply", "bots"); err != nil {
 		return nil, err
 	}
 	if len(plan) == 0 {
 		return nil, refuse("the reply file names no threads; start each reply with a line `=== thread THREAD`")
 	}
-	policy, err := newThreadPolicy()
+	policy, err := newThreadPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +108,7 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 	var problems []string
 	allRefused := true
 	for i, r := range plan {
-		check, err := policy.check(r.Thread)
+		check, err := policy.check(ctx, r.Thread)
 		if err != nil {
 			var refusal Refusal
 			allRefused = allRefused && errors.As(err, &refusal)
@@ -122,7 +123,7 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 		}
 		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
 	}
-	if err := checkReplies(policy.repo.Slug, plan, checks); err != nil {
+	if err := checkReplies(ctx, policy.repo.Slug, plan, checks); err != nil {
 		return nil, err
 	}
 	results := []ReplyResult{}
@@ -133,11 +134,11 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 			results = append(results, result)
 			continue
 		}
-		if result.URL, err = postReply(checks[i].pr, r.Thread, r.Body); err != nil {
+		if result.URL, err = postReply(ctx, checks[i].pr, r.Thread, r.Body); err != nil {
 			return nil, partial(results, r.Thread, "replying", err)
 		}
 		if r.Resolve {
-			if err := resolveThread(checks[i].pr, r.Thread); err != nil {
+			if err := resolveThread(ctx, checks[i].pr, r.Thread); err != nil {
 				return nil, partial(append(results, result), r.Thread, "resolving", err)
 			}
 			result.Resolved = true

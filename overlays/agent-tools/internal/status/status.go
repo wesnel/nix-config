@@ -11,12 +11,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/record"
 )
@@ -91,7 +91,7 @@ func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, 
 			}
 			// Any range a review took to this head: git delegate's of the
 			// pull request is merge-base..head.
-			if found, err := filepath.Glob(filepath.Join(record.Dir(), owner, repo, "*.."+r.Head+".org")); err == nil {
+			if found, err := filepath.Glob(filepath.Join(record.Dir(env.From(ctx)), owner, repo, "*.."+r.Head+".org")); err == nil {
 				r.Record = "no"
 				if len(found) > 0 {
 					r.Record = "yes"
@@ -206,13 +206,13 @@ type search struct {
 	Nodes      []searchPR `json:"nodes"`
 }
 
-// fetch runs query with `gh api graphql`, outside any repository, and keeps
-// only the pull requests whose keys and heads have their shapes.
+// fetch runs query with `gh api graphql`, outside any repository, in ctx's
+// Env, and keeps only the pull requests whose keys and heads have their
+// shapes.
 func fetch(ctx context.Context, now time.Time) (*GitHub, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "api", "graphql", "-f", "query="+query)
-	cmd.Dir = gh.Outside
+	cmd := gh.Command(ctx, "api", "graphql", "-f", "query="+query)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

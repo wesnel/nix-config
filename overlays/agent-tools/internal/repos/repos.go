@@ -132,10 +132,10 @@ func realPath(path string, depth int) string {
 	return filepath.Join(realPath(dir, depth+1), filepath.Base(path))
 }
 
-// Path is the user's config file: agent-tools/config.json under the XDG
-// config directory, or $AGENT_TOOLS_CONFIG where hostpaths allows it.
-func Path() string {
-	return hostpaths.ConfigFile(env.Process(), "AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
+// Path is the user's config file: agent-tools/config.json under e's XDG
+// config directory, or e's $AGENT_TOOLS_CONFIG where hostpaths allows it.
+func Path(e env.Env) string {
+	return hostpaths.ConfigFile(e, "AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
 }
 
 // Remotes maps each remote of the repository containing git.Dir whose fetch

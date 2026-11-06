@@ -100,6 +100,7 @@ func corpusPR() *PR {
 // Org itself, run on the corpus's records, finds only the syntax the
 // renderer writes: the payloads stay text.
 func TestInert(t *testing.T) {
+	t.Parallel()
 	emacs, err := exec.LookPath("emacs")
 	if err != nil {
 		t.Skip("emacs is not on PATH, so Org's own check of the rendered corpus did not run")
@@ -134,6 +135,7 @@ func TestInert(t *testing.T) {
 		"golden pr":    {render: fixturePR().Render},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			data, err := tc.render()
 			if err != nil {
 				t.Fatal(err)

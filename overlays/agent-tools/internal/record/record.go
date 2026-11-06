@@ -201,11 +201,11 @@ func (p *PR) Counts() Counts {
 }
 
 // Dir is where records are kept, a fixed path under the host's XDG state
-// directory, which Emacs computes too. The sandbox denies its commands
-// writing here, and Claude Code's file tools are denied it
+// directory as e gives it, which Emacs computes too. The sandbox denies its
+// commands writing here, and Claude Code's file tools are denied it
 // (modules/home-manager/claude), so only the excluded writers change it.
-func Dir() string {
-	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-tools", "reviews")
+func Dir(e env.Env) string {
+	return filepath.Join(hostpaths.StateHome(e), "agent-tools", "reviews")
 }
 
 // name is an owner or repository name, GitHub's form, which keeps a record
@@ -217,26 +217,28 @@ func ValidName(s string) bool { return name.MatchString(s) }
 
 var sha = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
-// RangeFile is the record of base..head in owner/repo, both full SHAs.
-func RangeFile(owner, repo, base, head string) (string, error) {
+// RangeFile is the record of base..head in owner/repo, both full SHAs, in
+// Dir(e).
+func RangeFile(e env.Env, owner, repo, base, head string) (string, error) {
 	if err := checkRepo(owner, repo); err != nil {
 		return "", err
 	}
 	if !sha.MatchString(base) || !sha.MatchString(head) {
 		return "", fmt.Errorf("a range's record needs full SHAs, got %q..%q", base, head)
 	}
-	return filepath.Join(Dir(), owner, repo, base+".."+head+".org"), nil
+	return filepath.Join(Dir(e), owner, repo, base+".."+head+".org"), nil
 }
 
-// PRFile is the record of pull request n's threads in owner/repo.
-func PRFile(owner, repo string, n int) (string, error) {
+// PRFile is the record of pull request n's threads in owner/repo, in
+// Dir(e).
+func PRFile(e env.Env, owner, repo string, n int) (string, error) {
 	if err := checkRepo(owner, repo); err != nil {
 		return "", err
 	}
 	if n <= 0 {
 		return "", fmt.Errorf("%d is not a pull request number", n)
 	}
-	return filepath.Join(Dir(), owner, repo, fmt.Sprintf("pr-%d.org", n)), nil
+	return filepath.Join(Dir(e), owner, repo, fmt.Sprintf("pr-%d.org", n)), nil
 }
 
 func checkRepo(owner, repo string) error {

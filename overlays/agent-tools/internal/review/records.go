@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -184,7 +185,7 @@ func priorText(path string, s *source) (string, error) {
 // newestForPR is the newest range record of s's pull request but the one
 // at except, with its path, as record.NewestRange finds it.
 func newestForPR(s *source, except string) (*record.Range, string, error) {
-	return record.NewestRange(s.owner, s.repo, s.number, except)
+	return record.NewestRange(env.Process(), s.owner, s.repo, s.number, except)
 }
 
 // recordOf is the path of the range record a SOURCE names, for show and
@@ -199,7 +200,7 @@ func recordOf(s *source) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	return record.RangeFile(env.Process(), s.owner, s.repo, r.base, r.tip)
 }
 
 // ShowUsage is `git delegate show -h`.
@@ -411,7 +412,7 @@ func showDoc(s *source) (*ShowDoc, error) {
 		}
 	}
 	if number != 0 {
-		prPath, err := record.PRFile(s.owner, s.repo, number)
+		prPath, err := record.PRFile(env.Process(), s.owner, s.repo, number)
 		if err != nil {
 			return nil, err
 		}
@@ -559,7 +560,7 @@ func noReviewToSettle(s *source, path string) error {
 		return none
 	}
 	base, _, _ := strings.Cut(filepath.Base(path), "..")
-	listed, err := record.Ranges(s.owner, s.repo, base)
+	listed, err := record.Ranges(env.Process(), s.owner, s.repo, base)
 	if err != nil || len(listed) == 0 {
 		return none
 	}

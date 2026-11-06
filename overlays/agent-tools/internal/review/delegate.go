@@ -14,6 +14,7 @@ import (
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -400,7 +401,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return report(nil, err, 0)
 		}
 	}
-	path, err := record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	path, err := record.RangeFile(env.Process(), s.owner, s.repo, r.base, r.tip)
 	if err != nil {
 		return report(nil, err, 0)
 	}

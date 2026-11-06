@@ -3,6 +3,7 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -22,7 +23,7 @@ type Repo struct {
 	Viewer  string
 }
 
-func repository() (*Repo, error) {
+func repository(ctx context.Context) (*Repo, error) {
 	remotes, err := githubRemotes()
 	if err != nil {
 		return nil, err
@@ -53,7 +54,7 @@ func repository() (*Repo, error) {
 			DefaultBranchRef struct{ Name string }
 		}
 	}
-	err = graphQL(`query($owner: String!, $name: String!) {
+	err = graphQL(ctx, `query($owner: String!, $name: String!) {
 		viewer { login }
 		repository(owner: $owner, name: $name) { id nameWithOwner defaultBranchRef { name } }
 	}`, map[string]any{"owner": owner, "name": name}, &data)
@@ -89,11 +90,11 @@ const prFields = `id number isDraft url title isCrossRepository author { login }
 				headRefName headRefOid baseRefName`
 
 // openPRs maps head branch to PR, for the user's open PRs in repo.
-func openPRs(repo *Repo) (map[string]*PR, error) {
+func openPRs(ctx context.Context, repo *Repo) (map[string]*PR, error) {
 	var data struct {
 		Search struct{ Nodes []*PR }
 	}
-	err := graphQL(`query($q: String!) {
+	err := graphQL(ctx, `query($q: String!) {
 		search(query: $q, type: ISSUE, first: 100) {
 			nodes { ... on PullRequest { `+prFields+` } }
 		}

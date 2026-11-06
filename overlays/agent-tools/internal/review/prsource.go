@@ -20,7 +20,9 @@ import (
 
 var (
 	// graphQL and remoteURL are replaced by tests that fake GitHub.
-	graphQL   = gh.GraphQL
+	graphQL = func(query string, variables map[string]any, out any) error {
+		return gh.GraphQL(context.Background(), query, variables, out)
+	}
 	remoteURL = func(slug string) string { return "https://github.com/" + slug + ".git" }
 )
 

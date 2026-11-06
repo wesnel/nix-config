@@ -18,7 +18,7 @@ import (
 // nextStep is the one step Next gives for branch.
 func nextStep(t *testing.T, branch string) NextStep {
 	t.Helper()
-	steps, err := Next([]string{branch})
+	steps, err := Next(t.Context(), []string{branch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestNext(t *testing.T) {
 	t.Run("the current branch by default, and the text", func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
-		steps, err := Next(nil)
+		steps, err := Next(t.Context(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

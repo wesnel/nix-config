@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/diagram"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/record"
 )
 
@@ -56,7 +57,7 @@ var states = []record.State{record.Open, record.Defer, record.Operator, record.F
 func reviewOf(repo string, number int, budget *int) reviewSummary {
 	out := reviewSummary{findings: []FindingCount{}, diagrams: []ReviewDiagram{}}
 	owner, name, _ := strings.Cut(repo, "/")
-	if rec, _, err := record.NewestRange(owner, name, number, ""); err == nil && rec != nil {
+	if rec, _, err := record.NewestRange(env.Process(), owner, name, number, ""); err == nil && rec != nil {
 		out.exists = true
 		for _, s := range states {
 			n := 0
@@ -83,7 +84,7 @@ func reviewOf(repo string, number int, budget *int) reviewSummary {
 			}
 		}
 	}
-	if path, err := record.PRFile(owner, name, number); err == nil {
+	if path, err := record.PRFile(env.Process(), owner, name, number); err == nil {
 		if p, err := record.ReadPR(path); err == nil {
 			c := p.Counts()
 			out.threads, out.unanswered, out.drafted = len(p.Threads), c.Unanswered, c.Drafted

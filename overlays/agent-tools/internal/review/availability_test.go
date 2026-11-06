@@ -13,6 +13,7 @@ import (
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -239,7 +240,7 @@ func TestDiagramQuota(t *testing.T) {
 func TestKnownClaudeQuota(t *testing.T) {
 	f := setUp(t, true)
 	now := time.Now()
-	if err := usage.Record(usage.File(), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {
+	if err := usage.Record(usage.File(env.Process()), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {
 		t.Fatal(err)
 	}
 	if code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 4 {
@@ -247,7 +248,7 @@ func TestKnownClaudeQuota(t *testing.T) {
 	}
 	noProviderCall(t, f, "security-reviewer-runs", "review-guide-runs")
 	// Replace the test's snapshot with a window whose reset has passed.
-	if err := os.WriteFile(usage.File(), []byte(`{"seven_day":{"used_percentage":100,"resets_at":1,"observed_at":1}}`), 0o600); err != nil {
+	if err := os.WriteFile(usage.File(env.Process()), []byte(`{"seven_day":{"used_percentage":100,"resets_at":1,"observed_at":1}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 0 {
@@ -279,7 +280,7 @@ func TestQuotaStop(t *testing.T) {
 			f.config(t, map[string]any{"delegate": delegate})
 			now := time.Now()
 			reset := now.Add(time.Hour)
-			if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: c.used, ResetsAt: reset.Unix(), ObservedAt: now.Unix()}}); err != nil {
+			if err := usage.Record(usage.File(env.Process()), []usage.Window{{Name: "5h", Used: c.used, ResetsAt: reset.Unix(), ObservedAt: now.Unix()}}); err != nil {
 				t.Fatal(err)
 			}
 			code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")

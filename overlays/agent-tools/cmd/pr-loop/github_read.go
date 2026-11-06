@@ -39,7 +39,7 @@ func githubPRPath(argv []string) (string, error) {
 }
 
 func githubJSON(path string, out any) error {
-	data, err := gh.Read(path, "application/vnd.github+json")
+	data, err := gh.Read(context.Background(), path, "application/vnd.github+json")
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func githubPRDiff(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 		err = githubJSON(path, &before)
 	}
 	if err == nil {
-		diff, err = gh.Read(path, "application/vnd.github.diff")
+		diff, err = gh.Read(context.Background(), path, "application/vnd.github.diff")
 	}
 	if err == nil {
 		err = githubJSON(path, &after)

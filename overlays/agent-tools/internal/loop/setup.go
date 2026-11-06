@@ -1,12 +1,13 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -36,17 +37,18 @@ type SetupRun struct {
 	Exit int    `json:"exit"`
 }
 
-// RunSetup runs command with sh in each dir, in this process's sandbox. It
+// RunSetup runs command with sh in each dir, in this process's sandbox,
+// with the variables of ctx's Env but those that locate a repository. It
 // writes the command to log before running it and its exit status after,
 // and sends the command's own output there too, keeping stdout for the
 // caller's JSON. Exit is -1 when the command could not be started.
-func RunSetup(command string, dirs []string, log io.Writer) []SetupRun {
+func RunSetup(ctx context.Context, command string, dirs []string, log io.Writer) []SetupRun {
 	runs := []SetupRun{}
 	for _, dir := range dirs {
 		fmt.Fprintf(log, "pr-loop: setup in %s: %s\n", dir, command)
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = dir
-		cmd.Env = gitenv.Without(os.Environ())
+		cmd.Env = gitenv.Without(env.From(ctx).Environ())
 		cmd.Stdout, cmd.Stderr = log, log
 		run := SetupRun{Dir: dir}
 		if err := cmd.Run(); err != nil {

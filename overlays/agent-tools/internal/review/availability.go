@@ -12,6 +12,7 @@ import (
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -44,7 +45,7 @@ func (a *availability) check(p shared.Provider) error {
 	if b, ok := a.blocked[p]; ok && b.state.Active(now) {
 		return b.err
 	}
-	s, err := shared.Check(p, now)
+	s, err := shared.Check(env.Process(), p, now)
 	if err != nil {
 		return providerUnavailable{p, fmt.Sprintf("cannot read availability state: %v; use `git delegate availability --clear %s` after checking it", err, p)}
 	}
@@ -67,7 +68,7 @@ func quotaStop(now time.Time) error {
 	if err != nil || c.QuotaStop == nil {
 		return nil
 	}
-	w, over := usage.Over(usage.Load(usage.File()), float64(*c.QuotaStop), now)
+	w, over := usage.Over(usage.Load(usage.File(env.Process())), float64(*c.QuotaStop), now)
 	if !over {
 		return nil
 	}
@@ -87,12 +88,12 @@ func (a *availability) failed(p shared.Provider, why shared.Reason) error {
 		s.Until = now.Add(shared.RateLimitPause).Unix()
 	}
 	if p == shared.Claude {
-		if observed := shared.ClaudeQuota(now); observed.Reason != "" {
+		if observed := shared.ClaudeQuota(env.Process(), now); observed.Reason != "" {
 			s = observed
 		}
 	}
 	reason := "failed for " + string(why) + "; " + s.String()
-	if err := shared.Hold(p, s, now); err != nil {
+	if err := shared.Hold(env.Process(), p, s, now); err != nil {
 		reason += fmt.Sprintf("; could not remember it for later commands: %v; keep this provider disabled in the primary harness", err)
 	}
 	err := providerUnavailable{p, reason}
@@ -136,9 +137,9 @@ func availabilityCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		var err error
 		if *disable != "" {
-			err = shared.Hold(selected, shared.State{Reason: shared.Disabled}, time.Now())
+			err = shared.Hold(env.Process(), selected, shared.State{Reason: shared.Disabled}, time.Now())
 		} else {
-			err = shared.Clear(selected)
+			err = shared.Clear(env.Process(), selected)
 		}
 		if err != nil {
 			return cli.Report(name, nil, err, 0, stdout, stderr)

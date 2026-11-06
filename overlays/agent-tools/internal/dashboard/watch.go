@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -248,7 +249,7 @@ func recordsHash(pr string) string {
 	if !record.ValidName(owner) || !record.ValidName(repo) {
 		return ""
 	}
-	dir := filepath.Join(record.Dir(), owner, repo)
+	dir := filepath.Join(record.Dir(env.Process()), owner, repo)
 	entries, _ := os.ReadDir(dir)
 	sum := sha256.New()
 	found := false

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"os"
 	"strings"
 
@@ -13,12 +14,12 @@ import (
 // no fixup, and exactly the files it has now, so a conflict, a stray commit
 // or a fixup in the wrong branch shows up before the operator's
 // `git sign-pass --push`. It changes no branch.
-func SignCheck() (any, error) {
-	repo, err := repository()
+func SignCheck(ctx context.Context) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}

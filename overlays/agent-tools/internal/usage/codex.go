@@ -41,8 +41,8 @@ func FromCodexRateLimits(result []byte, now time.Time) ([]Window, bool) {
 }
 
 // CodexFile is where `agent-plan codex-usage` records the Codex account's
-// windows, in File's form: agent-plan/codex-usage.json in the state
+// windows, in File's form: agent-plan/codex-usage.json in e's state
 // directory.
-func CodexFile() string {
-	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-plan", "codex-usage.json")
+func CodexFile(e env.Env) string {
+	return filepath.Join(hostpaths.StateHome(e), "agent-plan", "codex-usage.json")
 }

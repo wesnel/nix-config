@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/record"
 )
@@ -38,6 +40,17 @@ type fakeGitHub struct {
 	replies   map[string]string
 	resolved  []string
 	failReply string
+	// ctx carries the Env the loop runs in: its config, its review
+	// records' directory, and no loop mode.
+	ctx context.Context
+}
+
+// in is f's context in loop mode mode.
+func (f *fakeGitHub) in(mode string) context.Context { return withEnv(f.ctx, ModeEnv+"="+mode) }
+
+// withEnv is ctx with vars set on its Env.
+func withEnv(ctx context.Context, vars ...string) context.Context {
+	return env.With(ctx, env.From(ctx).Set(vars...))
 }
 
 // commentPage is the page of t's comments from start.
@@ -52,7 +65,7 @@ func commentPageOf(id string, t *fakeThread, start int) any {
 		"pageInfo": map[string]any{"hasNextPage": end < len(t.comments), "endCursor": strconv.Itoa(end)}}
 }
 
-func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeGitHub) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	var data any
 	switch {
 	case strings.Contains(query, "reviewThreads(first: 100"):
@@ -132,14 +145,12 @@ var (
 )
 
 // fakeRepo makes a repository for o/r with one configured bot, copilot, and
-// threads on PR 1 and PR 2, both by "me", in no loop mode, with review
-// records kept in a directory of the test's own.
+// threads on PR 1 and PR 2, both by "me", and a context in no loop mode,
+// with review records kept in a directory of the test's own. It points the
+// git package's process-wide git.Dir at the repository, so its tests run
+// alone.
 func fakeRepo(t *testing.T) *fakeGitHub {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(ModeEnv, "")
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -148,7 +159,7 @@ func fakeRepo(t *testing.T) *fakeGitHub {
 
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`), 0o644)
-	t.Setenv("PR_LOOP_CONFIG", config)
+	ctx := withEnv(t.Context(), ModeEnv+"=", "XDG_STATE_HOME="+t.TempDir(), "PR_LOOP_CONFIG="+config)
 
 	long := []fakeComment{copilot}
 	for i := 1; i < 150; i++ {
@@ -156,7 +167,7 @@ func fakeRepo(t *testing.T) *fakeGitHub {
 	}
 	mixed := append([]fakeComment{}, long...)
 	mixed[120] = josh
-	f := &fakeGitHub{replies: map[string]string{}, threads: map[string]*fakeThread{
+	f := &fakeGitHub{ctx: ctx, replies: map[string]string{}, threads: map[string]*fakeThread{
 		"bot1":      {pr: 1, author: "me", state: "OPEN", path: "a.go", comments: []fakeComment{copilot}},
 		"answered1": {pr: 1, author: "me", state: "OPEN", path: "a.go", comments: []fakeComment{copilot, me}},
 		"human1":    {pr: 1, author: "me", state: "OPEN", path: "b.go", comments: []fakeComment{josh}},
@@ -186,8 +197,7 @@ func TestReply(t *testing.T) {
 	t.Run("outside a bots-mode loop", func(t *testing.T) {
 		for _, mode := range []string{"", "people"} {
 			f := fakeRepo(t)
-			t.Setenv(ModeEnv, mode)
-			if _, err := Reply("bot1", "x"); !refused(err) || !strings.Contains(err.Error(), "review-loop --harness claude|codex --bots|--people") {
+			if _, err := Reply(f.in(mode), "bot1", "x"); !refused(err) || !strings.Contains(err.Error(), "review-loop --harness claude|codex --bots|--people") {
 				t.Errorf("mode %q: %v", mode, err)
 			}
 			if len(f.replies) != 0 {
@@ -199,8 +209,7 @@ func TestReply(t *testing.T) {
 	for _, id := range []string{"bot1", "answered1", "long1", "bot2"} {
 		t.Run("reply/"+id, func(t *testing.T) {
 			f := fakeRepo(t)
-			t.Setenv(ModeEnv, "bots")
-			if _, err := Reply(id, "done"); err != nil || f.replies[id] != "done" {
+			if _, err := Reply(f.in("bots"), id, "done"); err != nil || f.replies[id] != "done" {
 				t.Errorf("reply to %s: %v", id, err)
 			}
 		})
@@ -211,11 +220,11 @@ func TestReply(t *testing.T) {
 	for _, id := range []string{"human1", "joined1", "posed1", "longmix1", "theirs", "closed"} {
 		t.Run("refused/"+id, func(t *testing.T) {
 			f := fakeRepo(t)
-			t.Setenv(ModeEnv, "bots")
-			if _, err := Reply(id, "x"); !refused(err) {
+			ctx := f.in("bots")
+			if _, err := Reply(ctx, id, "x"); !refused(err) {
 				t.Errorf("reply to %s: %v", id, err)
 			}
-			if _, err := Resolve(id); !refused(err) {
+			if _, err := Resolve(ctx, id); !refused(err) {
 				t.Errorf("resolve %s: %v", id, err)
 			}
 			if len(f.replies)+len(f.resolved) != 0 {
@@ -226,41 +235,39 @@ func TestReply(t *testing.T) {
 
 	t.Run("a page that fails", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := Reply("broken5", "x"); err == nil || len(f.replies) != 0 {
+		ctx := f.in("bots")
+		if _, err := Reply(ctx, "broken5", "x"); err == nil || len(f.replies) != 0 {
 			t.Errorf("a thread read in part was answered: %v", err)
 		}
-		if _, err := Threads(5, false); err == nil {
+		if _, err := Threads(ctx, 5, false); err == nil {
 			t.Error("a thread read in part was listed")
 		}
 	})
 
 	t.Run("resolve", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := Resolve("bot1"); !refused(err) {
+		ctx := f.in("bots")
+		if _, err := Resolve(ctx, "bot1"); !refused(err) {
 			t.Errorf("resolved a thread whose last comment is the bot's: %v", err)
 		}
-		if _, err := Reply("bot1", "done"); err != nil {
+		if _, err := Reply(ctx, "bot1", "done"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Resolve("bot1"); err != nil || strings.Join(f.resolved, ",") != "bot1" {
+		if _, err := Resolve(ctx, "bot1"); err != nil || strings.Join(f.resolved, ",") != "bot1" {
 			t.Errorf("resolving after a reply: %v, %v", err, f.resolved)
 		}
 	})
 
 	t.Run("missing thread", func(t *testing.T) {
-		fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := Reply("missing", "x"); err == nil {
+		f := fakeRepo(t)
+		if _, err := Reply(f.in("bots"), "missing", "x"); err == nil {
 			t.Error("replied to a thread that does not exist")
 		}
 	})
 
 	t.Run("empty reply", func(t *testing.T) {
-		fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := Reply("bot1", " \n"); !refused(err) {
+		f := fakeRepo(t)
+		if _, err := Reply(f.in("bots"), "bot1", " \n"); !refused(err) {
 			t.Errorf("empty reply: %v", err)
 		}
 	})
@@ -269,8 +276,8 @@ func TestReply(t *testing.T) {
 // threads lists the unresolved threads and writes every thread, with every
 // comment and its author's type, to the PR's record, keeping drafts.
 func TestThreads(t *testing.T) {
-	fakeRepo(t)
-	got, err := Threads(2, false)
+	f := fakeRepo(t)
+	got, err := Threads(f.ctx, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +286,7 @@ func TestThreads(t *testing.T) {
 		listed[0].Comments[0].Type != "Bot" {
 		t.Errorf("listed %+v", listed)
 	}
-	path, _ := record.PRFile("o", "r", 2)
+	path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 	err = record.Update(path, func(p *record.PR) error {
 		p.Threads[2].Draft = &record.Draft{Outcome: "rebut", Body: "No."}
 		return nil
@@ -287,7 +294,7 @@ func TestThreads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Threads(2, true); err != nil {
+	if _, err := Threads(f.ctx, 2, true); err != nil {
 		t.Fatal(err)
 	}
 	p, err := record.ReadPR(path)
@@ -303,8 +310,8 @@ func TestThreads(t *testing.T) {
 	}
 
 	t.Run("every comment of a long thread", func(t *testing.T) {
-		fakeRepo(t)
-		listed, err := Threads(1, false)
+		f := fakeRepo(t)
+		listed, err := Threads(f.ctx, 1, false)
 		if err != nil {
 			t.Fatal(err)
 		}

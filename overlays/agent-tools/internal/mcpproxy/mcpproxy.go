@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
@@ -28,7 +29,7 @@ func Load() Config {
 	var file struct {
 		MCPProxy Config `json:"mcpProxy"`
 	}
-	if data, err := os.ReadFile(repos.Path()); err == nil {
+	if data, err := os.ReadFile(repos.Path(env.Process())); err == nil {
 		json.Unmarshal(data, &file)
 	}
 	return file.MCPProxy

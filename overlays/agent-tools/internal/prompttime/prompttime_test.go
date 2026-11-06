@@ -5,12 +5,38 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
+
+// The directory is under the Env's absolute $XDG_STATE_HOME, and under its
+// $HOME's .local/state otherwise.
+func TestDefaultDir(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		env  env.Env
+		want string
+	}{
+		{"an absolute XDG_STATE_HOME", env.New("/work", "XDG_STATE_HOME=/state", "HOME=/home/u"), "/state/agent-tools/prompts"},
+		{"a relative XDG_STATE_HOME", env.New("/work", "XDG_STATE_HOME=state", "HOME=/home/u"), "/home/u/.local/state/agent-tools/prompts"},
+		{"no XDG_STATE_HOME", env.New("/work", "HOME=/home/u"), "/home/u/.local/state/agent-tools/prompts"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DefaultDir(c.env); got != c.want {
+				t.Errorf("DefaultDir = %s, want %s", got, c.want)
+			}
+		})
+	}
+}
 
 // Every prompt of a session's main thread carries the time and how long
 // it has been since the operator's previous message, which only the
 // operator's own prompts move; a sub-agent's prompts carry nothing.
 func TestRemind(t *testing.T) {
+	t.Parallel()
 	event := func(fields map[string]any) []byte {
 		data, _ := json.Marshal(fields)
 		return data

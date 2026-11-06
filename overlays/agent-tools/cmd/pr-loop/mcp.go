@@ -263,7 +263,7 @@ func githubProfile(ctx context.Context, argv []string, stdout, stderr io.Writer)
 			Pronouns *string `json:"pronouns"`
 		} `json:"user"`
 	}
-	err := gh.GraphQL(`query($login: String!) { user(login: $login) { name pronouns } }`, map[string]any{"login": argv[0]}, &data)
+	err := gh.GraphQL(context.Background(), `query($login: String!) { user(login: $login) { name pronouns } }`, map[string]any{"login": argv[0]}, &data)
 	if err == nil && data.User == nil {
 		err = fmt.Errorf("GitHub has no user %s", argv[0])
 	}

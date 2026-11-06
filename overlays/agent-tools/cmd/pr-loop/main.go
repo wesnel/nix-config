@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -297,6 +298,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return string(data), err
 	}
 
+	// The loop runs in this process's environment.
+	ctx := context.Background()
 	var result any
 	var err error
 	code := 0
@@ -315,11 +318,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			break
 		}
 		if text, err = body(); err == nil {
-			result, err = loop.Open(branch, *base, *title, text, *dryRun)
+			result, err = loop.Open(ctx, branch, *base, *title, text, *dryRun)
 		}
 	case "next":
 		var steps []loop.NextStep
-		if steps, err = loop.Next(rest); err == nil && !*asJSON {
+		if steps, err = loop.Next(ctx, rest); err == nil && !*asJSON {
 			fmt.Fprint(stdout, loop.FormatNext(steps))
 			return 0
 		}
@@ -333,9 +336,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(rest) == 1 {
 			target = rest[0]
 		}
-		result, err = loop.Stack(target)
+		result, err = loop.Stack(ctx, target)
 	case "link":
-		result, err = loop.Link(rest)
+		result, err = loop.Link(ctx, rest)
 	case "merge":
 		if len(rest) > 1 {
 			err = errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
@@ -345,7 +348,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(rest) == 1 {
 			target = rest[0]
 		}
-		result, err = loop.Merge(target, *method)
+		result, err = loop.Merge(ctx, target, *method)
 	case "push":
 		byBranch := map[string]string{}
 		for _, l := range leases {
@@ -357,33 +360,33 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			byBranch[b] = oid
 		}
 		if err == nil {
-			result, err = loop.Push(rest, byBranch, *dryRun)
+			result, err = loop.Push(ctx, rest, byBranch, *dryRun)
 		}
 	case "threads":
 		if err = need(1); err == nil {
 			var n int
 			if n, err = number(rest[0]); err == nil {
-				result, err = loop.Threads(n, *all)
+				result, err = loop.Threads(ctx, n, *all)
 			}
 		}
 	case "reply":
 		if *from != "" {
-			result, err = replyFrom(*from, *bodyFile, rest, stdin)
+			result, err = replyFrom(ctx, *from, *bodyFile, rest, stdin)
 		} else if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
-				result, err = loop.Reply(rest[0], text)
+				result, err = loop.Reply(ctx, rest[0], text)
 			}
 		}
 	case "resolve":
 		if err = need(1); err == nil {
-			result, err = loop.Resolve(rest[0])
+			result, err = loop.Resolve(ctx, rest[0])
 		}
 	case "draft":
 		if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
-				result, err = loop.Draft(rest[0], text, *outcome)
+				result, err = loop.Draft(ctx, rest[0], text, *outcome)
 			}
 		}
 	case "post":
@@ -393,18 +396,18 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		var n int
 		if n, err = number(rest[0]); err == nil {
-			result, err = loop.Post(n, rest[1:])
+			result, err = loop.Post(ctx, n, rest[1:])
 		}
 	case "request":
-		result, err = loop.Request(rest, bots, accepted)
+		result, err = loop.Request(ctx, rest, bots, accepted)
 	case "status":
-		result, err = loop.Status(rest)
+		result, err = loop.Status(ctx, rest)
 	case "ci":
-		result, err = loop.CIStatuses(rest)
+		result, err = loop.CIStatuses(ctx, rest)
 	case "logs":
 		if err = need(2); err == nil {
 			var text string
-			if text, err = loop.Logs(rest[0], rest[1], *lines); err == nil {
+			if text, err = loop.Logs(ctx, rest[0], rest[1], *lines); err == nil {
 				fmt.Fprintln(stdout, text)
 				return 0
 			}
@@ -423,7 +426,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		switch {
 		case target == "ci":
 			var w *loop.CIWait
-			w, settled, err = loop.WaitCI(rest, *sha, wait, every, time.Duration(*grace)*time.Second)
+			w, settled, err = loop.WaitCI(ctx, rest, *sha, wait, every, time.Duration(*grace)*time.Second)
 			result = w
 			if err == nil && w.Result == "noChecks" {
 				code = 4
@@ -431,7 +434,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		case ciOnly:
 			err = errors.New("--sha and --grace are for wait ci")
 		default:
-			result, settled, err = loop.WaitReviews(rest, wait, every)
+			result, settled, err = loop.WaitReviews(ctx, rest, wait, every)
 		}
 		if !settled {
 			code = 3
@@ -460,16 +463,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		runs := []loop.SetupRun{}
 		if setup.Command != "" {
-			runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
+			runs = loop.RunSetup(ctx, setup.Command, []string{dir}, stderr)
 		}
 		result = map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
 	case "sign-check":
-		result, err = loop.SignCheck()
+		result, err = loop.SignCheck(ctx)
 	case "end":
-		result, err = loop.End(rest)
+		result, err = loop.End(ctx, rest)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -484,7 +487,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 }
 
 // replyFrom posts the replies in a reply file (- for stdin).
-func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
+func replyFrom(ctx context.Context, path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
 	if bodyFile != "" || len(rest) != 0 {
 		return nil, errors.New("reply --from takes no THREAD and no --body-file; the file names the threads")
 	}
@@ -507,7 +510,7 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 			return nil, fmt.Errorf("the reply to %s: %w", r.Thread, err)
 		}
 	}
-	return loop.ReplyAll(plan)
+	return loop.ReplyAll(ctx, plan)
 }
 
 // setupFailures names each failed run and returns 1 if there was one.

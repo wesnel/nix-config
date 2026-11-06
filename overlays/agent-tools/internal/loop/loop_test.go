@@ -23,6 +23,7 @@ func useDir(t *testing.T, dir string) {
 }
 
 func TestIdentity(t *testing.T) {
+	t.Parallel()
 	t.Run("negative offset", func(t *testing.T) {
 		got, err := identity("Wesley Nelson <wgn@wgn.dev> 1790750341 -0700")
 		if err != nil {
@@ -42,6 +43,7 @@ func TestIdentity(t *testing.T) {
 }
 
 func TestVerdict(t *testing.T) {
+	t.Parallel()
 	verdicts := map[string]string{"approval": "Approval recommended", "changes": "Changes recommended", "error": "encountered an error"}
 
 	t.Run("heading wins over prose", func(t *testing.T) {
@@ -65,6 +67,7 @@ func TestVerdict(t *testing.T) {
 }
 
 func TestStackOrder(t *testing.T) {
+	t.Parallel()
 	prs := map[string]*PR{"a": {BaseRefName: "main"}, "b": {BaseRefName: "a"}, "c": {BaseRefName: "b"}, "x": {BaseRefName: "main"}}
 	if got := strings.Join(stackOrder(prs, "b"), ","); got != "a,b,c" {
 		t.Errorf("stack order: %s", got)
@@ -72,6 +75,7 @@ func TestStackOrder(t *testing.T) {
 }
 
 func TestCheckFixups(t *testing.T) {
+	t.Parallel()
 	c := func(message string) Commit { return Commit{Message: message, Author: "T <t@e>"} }
 	a, b := c("A first"), c("B second")
 
@@ -135,6 +139,7 @@ func TestCheckFixups(t *testing.T) {
 }
 
 func TestCommitBody(t *testing.T) {
+	t.Parallel()
 	t.Run("signed commit", func(t *testing.T) {
 		raw := "tree abc\nparent p1\nauthor A <a@b> 1700000000 +0000\ncommitter C <c@d> 1700000001 -0100\n" +
 			"gpgsig -----BEGIN PGP SIGNATURE-----\n \n line\n -----END PGP SIGNATURE-----\n\nSubject\n\nBody\n"
@@ -158,6 +163,7 @@ func TestCommitBody(t *testing.T) {
 }
 
 func TestCheckOpen(t *testing.T) {
+	t.Parallel()
 	repo := &Repo{Slug: "o/r", Default: "trunk", Viewer: "me"}
 	pr := func(number int, head, author string) *PR {
 		p := &PR{Number: number, HeadRefName: head}
@@ -221,8 +227,6 @@ type localStack struct {
 
 func newLocalStack(t *testing.T) *localStack {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	s := &localStack{dir: t.TempDir()}
 	dir := s.dir
 	write := func(name string) { os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o644) }
@@ -427,8 +431,6 @@ func TestSetup(t *testing.T) {
 	// it with its agent settings file, which the test may write.
 	setupRepo := func(t *testing.T) (dir, settings string) {
 		t.Helper()
-		t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		dir, _ = filepath.EvalSymlinks(t.TempDir())
 		gitIn(t, dir, "init", "-q", "-b", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
@@ -467,7 +469,7 @@ func TestSetup(t *testing.T) {
 		wt := filepath.Join(t.TempDir(), "wt")
 		gitIn(t, dir, "worktree", "add", "-q", wt, "feature")
 		var log bytes.Buffer
-		runs := RunSetup(s.Command, []string{wt}, &log)
+		runs := RunSetup(t.Context(), s.Command, []string{wt}, &log)
 		if len(runs) != 1 || runs[0].Exit != 0 {
 			t.Fatalf("setup did not run in the worktree: %+v\n%s", runs, log.String())
 		}
@@ -480,16 +482,32 @@ func TestSetup(t *testing.T) {
 		if got := gitIn(t, wt, "status", "--porcelain"); got != "?? gen" {
 			t.Errorf("setup left more than its output in the worktree: %q", got)
 		}
-		if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 {
+		if runs := RunSetup(t.Context(), "exit 3", []string{wt}, &log); runs[0].Exit != 3 {
 			t.Errorf("a failed setup: %+v", runs)
 		}
 		// The command's git finds the worktree's repository.
-		RunSetup("git rev-parse --absolute-git-dir > where", []string{wt}, &log)
+		RunSetup(t.Context(), "git rev-parse --absolute-git-dir > where", []string{wt}, &log)
 		where, _ := os.ReadFile(filepath.Join(wt, "where"))
 		if got, want := strings.TrimSpace(string(where)), gitIn(t, wt, "rev-parse", "--absolute-git-dir"); got != want {
 			t.Errorf("the setup command's git found %q, not %q", got, want)
 		}
 	})
+}
+
+// The setup command runs with the variables of the context's Env, but
+// those that would send its git to another repository.
+func TestRunSetupEnv(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := withEnv(t.Context(), "SETUP_SAYS=from the Env", "GIT_DIR="+filepath.Join(t.TempDir(), ".git"))
+	var log bytes.Buffer
+	runs := RunSetup(ctx, `printf '%s|%s' "$SETUP_SAYS" "${GIT_DIR-unset}" > said`, []string{dir}, &log)
+	if len(runs) != 1 || runs[0].Exit != 0 {
+		t.Fatalf("setup failed: %+v\n%s", runs, log.String())
+	}
+	if said, _ := os.ReadFile(filepath.Join(dir, "said")); string(said) != "from the Env|unset" {
+		t.Errorf("the setup command saw %q, want the Env's SETUP_SAYS and no GIT_DIR", said)
+	}
 }
 
 // fixedStack is a two-branch stack, lower and upper, with a fixup in each,
@@ -500,8 +518,6 @@ type fixedStack struct {
 
 func newFixedStack(t *testing.T) *fixedStack {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_AUTHOR_NAME", "T")
 	t.Setenv("GIT_AUTHOR_EMAIL", "t@e")
 	t.Setenv("GIT_COMMITTER_NAME", "T")

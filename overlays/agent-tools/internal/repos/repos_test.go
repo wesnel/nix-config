@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -24,11 +26,11 @@ func gitIn(t *testing.T, dir string, args ...string) {
 
 // clone makes a repository with one commit and points the package's git at
 // it, and returns it with the path of its settings, which do not exist
-// until the test writes them.
+// until the test writes them. git reads no global or system config:
+// TestMain's gitenv.Isolate sees to that. The tests that call it run
+// alone, since git.Dir is the git package's, process-wide.
 func clone(t *testing.T) (dir, settings string) {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir, _ = filepath.EvalSymlinks(t.TempDir())
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -58,6 +60,31 @@ func put(t *testing.T, settings string, v any) {
 	}
 	if err := os.Chmod(settings, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The config file is the Env's $AGENT_TOOLS_CONFIG, an absolute path,
+// unless a config directory is baked in, and agent-tools/config.json under
+// the config directory otherwise.
+func TestPath(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		env  env.Env
+		want string
+	}{
+		{"the override", env.New("/work", "AGENT_TOOLS_CONFIG=/elsewhere/config.json", "XDG_CONFIG_HOME=/config"), "/elsewhere/config.json"},
+		{"a relative override", env.New("/work", "AGENT_TOOLS_CONFIG=config.json", "XDG_CONFIG_HOME=/config"), "/config/agent-tools/config.json"},
+		{"no override", env.New("/work", "XDG_CONFIG_HOME=/config"), "/config/agent-tools/config.json"},
+		{"a baked config directory", env.New("/work", append(hostpaths.TestBaked("/baked", "/state"),
+			"AGENT_TOOLS_CONFIG=/elsewhere/config.json")...), "/baked/agent-tools/config.json"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Path(c.env); got != c.want {
+				t.Errorf("Path = %s, want %s", got, c.want)
+			}
+		})
 	}
 }
 

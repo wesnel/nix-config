@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,8 @@ type fakeRefs struct {
 	calls [][]string
 	// failCall, when not 0, is the updateRefs call that fails.
 	failCall int
+	// ctx carries the Env Push runs in, in no loop mode.
+	ctx context.Context
 }
 
 func (f *fakeRefs) git(stdin string, args ...string) (string, error) {
@@ -45,7 +48,7 @@ func (f *fakeRefs) git(stdin string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (f *fakeRefs) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeRefs) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	var data any
 	switch {
 	case strings.Contains(query, "viewer { login }"):
@@ -90,7 +93,7 @@ func (f *fakeRefs) graphQL(query string, vars map[string]any, out any) error {
 	return json.Unmarshal(encoded, out)
 }
 
-func (f *fakeRefs) rest(method, path string, body, out any) error {
+func (f *fakeRefs) rest(_ context.Context, method, path string, body, out any) error {
 	kind, ok := strings.CutPrefix(path, "repos/o/r/git/")
 	if method != "POST" || !ok {
 		return errors.New("unexpected call: " + method + " " + path)
@@ -142,9 +145,6 @@ func (f *fakeRefs) rest(method, path string, body, out any) error {
 // returns the fake and the checkout, and upper's head on GitHub.
 func pushStack(t *testing.T) (*fakeRefs, string, string) {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(ModeEnv, "")
 	dir, bare := t.TempDir(), filepath.Join(t.TempDir(), "github.git")
 	write := func(name, content string) { os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644) }
 	gitIn(t, dir, "init", "-q", "-b", "main")
@@ -173,7 +173,7 @@ func pushStack(t *testing.T) (*fakeRefs, string, string) {
 	gitIn(t, dir, "commit", "-qa", "--fixup=HEAD")
 	gitIn(t, dir, "rebase", "-q", "--onto", "lower", oldLower, "upper")
 
-	f := &fakeRefs{bare: bare, prs: map[string]int{"lower": 1, "upper": 2},
+	f := &fakeRefs{ctx: withEnv(t.Context(), ModeEnv+"="), bare: bare, prs: map[string]int{"lower": 1, "upper": 2},
 		bases: map[string]string{"lower": "main", "upper": "lower"}, drafts: map[string]bool{}, authors: map[string]string{}}
 	oldGraphQL, oldREST := graphQL, objectsREST
 	graphQL, objectsREST = f.graphQL, f.rest
@@ -192,7 +192,7 @@ func TestPush(t *testing.T) {
 
 	t.Run("one ref per call, bottom up", func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
-		if _, err := Push([]string{"upper", "lower"}, map[string]string{"upper": oldUpper}, false); err != nil {
+		if _, err := Push(f.ctx, []string{"upper", "lower"}, map[string]string{"upper": oldUpper}, false); err != nil {
 			t.Fatal(err)
 		}
 		if got := fmt.Sprint(f.calls); got != "[[refs/heads/lower] [refs/heads/upper]]" {
@@ -211,7 +211,7 @@ func TestPush(t *testing.T) {
 	t.Run("HEAD's branch alone by default", func(t *testing.T) {
 		f, dir, _ := pushStack(t)
 		gitIn(t, dir, "switch", "-q", "lower")
-		if _, err := Push(nil, nil, false); err != nil {
+		if _, err := Push(f.ctx, nil, nil, false); err != nil {
 			t.Fatal(err)
 		}
 		if got := fmt.Sprint(f.calls); got != "[[refs/heads/lower]]" {
@@ -226,7 +226,7 @@ func TestPush(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		f.failCall = 2
 		leases := map[string]string{"upper": oldUpper}
-		if _, err := Push([]string{"lower", "upper"}, leases, false); err == nil {
+		if _, err := Push(f.ctx, []string{"lower", "upper"}, leases, false); err == nil {
 			t.Fatal("a failed updateRefs call reported no error")
 		}
 		if !onGitHub(t, f, dir, "lower") {
@@ -236,7 +236,7 @@ func TestPush(t *testing.T) {
 			t.Errorf("GitHub has upper at %s, want it unmoved at %s", got, oldUpper)
 		}
 		f.failCall, f.calls = 0, nil
-		if _, err := Push([]string{"lower", "upper"}, leases, false); err != nil {
+		if _, err := Push(f.ctx, []string{"lower", "upper"}, leases, false); err != nil {
 			t.Fatalf("pushing again after a failure: %v", err)
 		}
 		if got := fmt.Sprint(f.calls); got != "[[refs/heads/upper]]" || !onGitHub(t, f, dir, "upper") {
@@ -246,13 +246,13 @@ func TestPush(t *testing.T) {
 
 	t.Run("a rebased branch needs a lease", func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
-		if _, err := Push([]string{"lower", "upper"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "--lease upper=") {
+		if _, err := Push(f.ctx, []string{"lower", "upper"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "--lease upper=") {
 			t.Errorf("a rebased branch without a lease: %v", err)
 		}
 		if len(f.calls) != 0 {
 			t.Errorf("pushed: %v", f.calls)
 		}
-		if _, err := Push([]string{"upper"}, map[string]string{"upper": oldUpper}, false); err != nil || !onGitHub(t, f, dir, "upper") {
+		if _, err := Push(f.ctx, []string{"upper"}, map[string]string{"upper": oldUpper}, false); err != nil || !onGitHub(t, f, dir, "upper") {
 			t.Errorf("with a lease: %v", err)
 		}
 	})
@@ -263,7 +263,7 @@ func TestPush(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		gitIn(t, dir, "push", "-q", f.bare, "lower:refs/heads/other")
 		gitIn(t, f.bare, "update-ref", "refs/heads/upper", "refs/heads/other")
-		_, err := Push([]string{"upper"}, map[string]string{"upper": oldUpper}, false)
+		_, err := Push(f.ctx, []string{"upper"}, map[string]string{"upper": oldUpper}, false)
 		if !refusedWell(err) || !strings.Contains(err.Error(), "someone else pushed") || len(f.calls) != 0 {
 			t.Errorf("a moved remote: %v, %v", err, f.calls)
 		}
@@ -273,11 +273,11 @@ func TestPush(t *testing.T) {
 		f, dir, _ := pushStack(t)
 		gitIn(t, dir, "switch", "-q", "lower")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add more")
-		if _, err := Push([]string{"lower"}, nil, false); !refusedWell(err) || len(f.calls) != 0 {
+		if _, err := Push(f.ctx, []string{"lower"}, nil, false); !refusedWell(err) || len(f.calls) != 0 {
 			t.Errorf("a plain commit on a ready PR: %v, %v", err, f.calls)
 		}
 		f.drafts["lower"] = true
-		if _, err := Push([]string{"lower"}, nil, false); err != nil || !onGitHub(t, f, dir, "lower") {
+		if _, err := Push(f.ctx, []string{"lower"}, nil, false); err != nil || !onGitHub(t, f, dir, "lower") {
 			t.Errorf("a plain commit on a draft: %v", err)
 		}
 	})
@@ -293,10 +293,10 @@ func TestPush(t *testing.T) {
 			old := gitIn(t, dir, "rev-parse", "lower")
 			os.WriteFile(filepath.Join(dir, "a"), []byte(content), 0o644)
 			gitIn(t, dir, "commit", "-qa", "--amend", "--no-edit")
-			if _, err := Push([]string{"lower"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "--lease lower=") {
+			if _, err := Push(f.ctx, []string{"lower"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "--lease lower=") {
 				t.Errorf("without a lease: %v", err)
 			}
-			_, err := Push([]string{"lower"}, map[string]string{"lower": old}, false)
+			_, err := Push(f.ctx, []string{"lower"}, map[string]string{"lower": old}, false)
 			if !refusedWell(err) || !strings.Contains(err.Error(), "--fixup=<commit>") || len(f.calls) != 0 {
 				t.Errorf("an amended own commit on a ready PR: %v, %v", err, f.calls)
 			}
@@ -318,7 +318,7 @@ func TestPush(t *testing.T) {
 			if name == "a default branch" {
 				branch = "main"
 			}
-			if _, err := Push([]string{branch}, nil, false); !refused(err) || len(f.calls) != 0 {
+			if _, err := Push(f.ctx, []string{branch}, nil, false); !refused(err) || len(f.calls) != 0 {
 				t.Errorf("%s: %v, %v", name, err, f.calls)
 			}
 		})
@@ -326,8 +326,7 @@ func TestPush(t *testing.T) {
 
 	t.Run("people mode", func(t *testing.T) {
 		f, _, _ := pushStack(t)
-		t.Setenv(ModeEnv, "people")
-		if _, err := Push([]string{"lower"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "git sign-pass --push") || len(f.calls) != 0 {
+		if _, err := Push(withEnv(f.ctx, ModeEnv+"=people"), []string{"lower"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "git sign-pass --push") || len(f.calls) != 0 {
 			t.Errorf("people mode: %v", err)
 		}
 	})
@@ -336,8 +335,6 @@ func TestPush(t *testing.T) {
 // checkPatches compares a merge by its resolution, and an empty change
 // matches only the same commit.
 func TestCheckPatches(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()
 	write := func(content string) { os.WriteFile(filepath.Join(dir, "f"), []byte(content), 0o644) }
 	gitIn(t, dir, "init", "-q", "-b", "main")

@@ -22,7 +22,9 @@ import (
 
 // refreshThreads reads a pull request's threads and writes them to its
 // record, pr-loop threads' writer; tests replace it.
-var refreshThreads = loop.RefreshThreads
+var refreshThreads = func(slug string, number int) ([]loop.Thread, error) {
+	return loop.RefreshThreads(context.Background(), slug, number)
+}
 
 // source is what a review reviews: a range of the current repository, or a
 // pull request, by its GitHub repository.

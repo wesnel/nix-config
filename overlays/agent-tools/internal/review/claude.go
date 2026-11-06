@@ -19,6 +19,7 @@ import (
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -44,7 +45,7 @@ func loadDelegateConfig() (delegateConfig, error) {
 	var config struct {
 		Delegate delegateConfig `json:"delegate"`
 	}
-	data, err := os.ReadFile(repos.Path())
+	data, err := os.ReadFile(repos.Path(env.Process()))
 	if errors.Is(err, fs.ErrNotExist) {
 		return config.Delegate, nil
 	}
@@ -63,10 +64,10 @@ func claudeMissing() string {
 	c, err := loadDelegateConfig()
 	switch {
 	case err != nil:
-		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(), err)
+		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(env.Process()), err)
 	case c.Agents == "" || c.Settings == "":
 		return fmt.Sprintf("agent-tools' config %s names no delegate.agents and delegate.settings, which the Claude Code "+
-			"module writes", repos.Path())
+			"module writes", repos.Path(env.Process()))
 	}
 	return ""
 }

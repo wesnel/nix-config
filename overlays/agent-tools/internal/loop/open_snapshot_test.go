@@ -27,7 +27,7 @@ func TestOpenCapturedTip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, err = Open("feat", "", "Add feat", "Why it is needed.", false)
+	_, err = Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 	var policy Refusal
 	if !errors.As(err, &policy) || len(f.calls) != 0 {
 		t.Fatalf("published captured tip was not validated: %v, mutations %v", err, f.calls)

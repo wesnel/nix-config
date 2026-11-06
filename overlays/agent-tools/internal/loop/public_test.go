@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -19,8 +20,7 @@ func TestReplyPublic(t *testing.T) {
 
 	t.Run("a thread's short key", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := Reply("bot1", asPosted); !leaked(err, "tZ1Cm") {
+		if _, err := Reply(f.in("bots"), "bot1", asPosted); !leaked(err, "tZ1Cm") {
 			t.Errorf("reply naming a short key: %v", err)
 		}
 		if len(f.replies) != 0 {
@@ -30,20 +30,19 @@ func TestReplyPublic(t *testing.T) {
 
 	t.Run("the short key of a thread on the PR", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
+		ctx := f.in("bots")
 		f.threads["PRRT_kwDOKj0Wfs5aB3dE"] = &fakeThread{pr: 1, author: "me", state: "OPEN", path: "a.go", comments: []fakeComment{josh}}
-		if _, err := Reply("bot1", "Same cause as aB3dE: fixed in 1a2b3c4."); !leaked(err, "aB3dE") {
+		if _, err := Reply(ctx, "bot1", "Same cause as aB3dE: fixed in 1a2b3c4."); !leaked(err, "aB3dE") {
 			t.Errorf("reply naming another thread's key: %v", err)
 		}
-		if _, err := Reply("bot1", "Same cause as https://github.com/o/r/pull/1#discussion_r2: fixed in 1a2b3c4."); err != nil {
+		if _, err := Reply(ctx, "bot1", "Same cause as https://github.com/o/r/pull/1#discussion_r2: fixed in 1a2b3c4."); err != nil {
 			t.Errorf("reply linking the thread: %v", err)
 		}
 	})
 
 	t.Run("a file of replies", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "Fixed in 1a2b3c4."}, {Thread: "bot2", Body: "Deferred per D188."}})
+		_, err := ReplyAll(f.in("bots"), []PlannedReply{{Thread: "bot1", Body: "Fixed in 1a2b3c4."}, {Thread: "bot2", Body: "Deferred per D188."}})
 		if !leaked(err, "D188") || !strings.Contains(err.Error(), "bot2") {
 			t.Errorf("reply file with a plan ID: %v", err)
 		}
@@ -64,11 +63,10 @@ func TestDraftPublic(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f, _ := draftedRepo(t)
 			f.threads["PRRT_kwDOKj0Wfs5aB3dE"] = &fakeThread{pr: 2, author: "me", state: "OPEN", path: "d.go", comments: []fakeComment{josh}}
-			t.Setenv(ModeEnv, "people")
-			if _, err := Draft("human2", c.body, "fix"); !leaked(err, c.token) {
+			if _, err := Draft(f.in("people"), "human2", c.body, "fix"); !leaked(err, c.token) {
 				t.Errorf("draft naming %q: %v", c.token, err)
 			}
-			path, _ := record.PRFile("o", "r", 2)
+			path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 			p, err := record.ReadPR(path)
 			if err != nil {
 				t.Fatal(err)
@@ -79,22 +77,21 @@ func TestDraftPublic(t *testing.T) {
 		})
 	}
 	t.Run("a draft linking the thread", func(t *testing.T) {
-		draftedRepo(t)
-		t.Setenv(ModeEnv, "people")
-		if _, err := Draft("human2", "Same cause as https://github.com/o/r/pull/2#discussion_r2: fixed in 1a2b3c4.", "fix"); err != nil {
+		f, _ := draftedRepo(t)
+		if _, err := Draft(f.in("people"), "human2", "Same cause as https://github.com/o/r/pull/2#discussion_r2: fixed in 1a2b3c4.", "fix"); err != nil {
 			t.Errorf("draft linking the thread: %v", err)
 		}
 	})
 }
 
 func TestOpenPublic(t *testing.T) {
-	fakeRepo(t)
+	f := fakeRepo(t)
 	for _, c := range []struct{ title, body, token string }{
 		{"Resolve symlinks first", "Fixes the symlinked case (tZ1Cm).", "tZ1Cm"},
 		{"Resolve symlinks first (D188)", "Fixes the symlinked case.", "D188"},
 		{"Resolve symlinks first", "Drafted in /tmp/claude-501/s/pr.md.", "/tmp/claude-501/s/pr.md"},
 	} {
-		if _, err := Open("feat", "", c.title, c.body, true); !leaked(err, c.token) {
+		if _, err := Open(f.ctx, "feat", "", c.title, c.body, true); !leaked(err, c.token) {
 			t.Errorf("open with %q: %v", c.token, err)
 		}
 	}

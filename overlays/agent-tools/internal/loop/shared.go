@@ -1,8 +1,9 @@
 package loop
 
 import (
-	"os"
+	"context"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -40,9 +41,12 @@ var (
 // review-loop sets: the guard refuses an agent's assignment of it.
 const ModeEnv = "PR_LOOP_MODE"
 
+// mode is the loop's mode in ctx's Env.
+func mode(ctx context.Context) string { return env.From(ctx).Get(ModeEnv) }
+
 // requireMode refuses command outside a loop in mode want.
-func requireMode(command, want string) error {
-	if os.Getenv(ModeEnv) != want {
+func requireMode(ctx context.Context, command, want string) error {
+	if mode(ctx) != want {
 		return refuse("`pr-loop %s` runs only in a %s-mode review loop. Only the operator starts a loop, with "+
 			"`review-loop --harness claude|codex --bots|--people`; outside one, put what you would do in the report", command, want)
 	}

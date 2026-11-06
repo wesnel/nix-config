@@ -94,7 +94,7 @@ var (
 // LoadTargets reads Targets, refusing a value that is set but not the
 // shape of its kind.
 func LoadTargets() (Targets, error) {
-	file := repos.Path()
+	file := repos.Path(env.Process())
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return Targets{}, fmt.Errorf("the Agent plans targets: %w", err)

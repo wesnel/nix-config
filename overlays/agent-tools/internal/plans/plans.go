@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -109,7 +110,7 @@ func Load() (Config, error) {
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
 	c := Config{Dir: DefaultDir(home), Repo: notesRepo(home), Host: host}
-	data, err := os.ReadFile(repos.Path())
+	data, err := os.ReadFile(repos.Path(env.Process()))
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
 	}
@@ -120,7 +121,7 @@ func Load() (Config, error) {
 		Plans Config `json:"plans"`
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
-		return Config{}, fmt.Errorf("%s: %w", repos.Path(), err)
+		return Config{}, fmt.Errorf("%s: %w", repos.Path(env.Process()), err)
 	}
 	dir, repo, host := c.Dir, c.Repo, c.Host
 	c = file.Plans
@@ -135,7 +136,7 @@ func Load() (Config, error) {
 	}
 	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) ||
 		(c.Templates != "" && !filepath.IsAbs(c.Templates)) {
-		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
+		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", repos.Path(env.Process()), c)
 	}
 	return c, nil
 }

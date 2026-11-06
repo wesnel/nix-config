@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redcheck"
@@ -34,7 +35,7 @@ func TestRecordRounds(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	want := filepath.Join(record.Dir(), "o", "r", f.base+".."+f.tip+".org")
+	want := filepath.Join(record.Dir(env.Process()), "o", "r", f.base+".."+f.tip+".org")
 	if first.Record != want || first.Counts["open"] != 1 || first.review("codex").Findings[0]["finding"] != "F1" {
 		t.Fatalf("record %s, counts %v, findings %v", first.Record, first.Counts, first.review("codex").Findings)
 	}
@@ -72,7 +73,7 @@ func TestRecordRedCheck(t *testing.T) {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 	}
-	files := must(filepath.Glob(filepath.Join(record.Dir(), "o", "r", "*.org")))
+	files := must(filepath.Glob(filepath.Join(record.Dir(env.Process()), "o", "r", "*.org")))
 	if len(files) != 1 {
 		t.Fatalf("records %v", files)
 	}
@@ -189,7 +190,7 @@ func TestPRRecordDrift(t *testing.T) {
 func writeGoldens(t *testing.T) (string, string) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := filepath.Join(record.Dir(), "owner", "repo")
+	dir := filepath.Join(record.Dir(env.Process()), "owner", "repo")
 	os.MkdirAll(dir, 0o700)
 	rangeFile := filepath.Join(dir, "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432..1a2b3c4d5e6f708192a3b4c5d6e7f80912345678.org")
 	prFile := filepath.Join(dir, "pr-12.org")
@@ -378,7 +379,7 @@ func TestSettleNoRecord(t *testing.T) {
 // returns its path.
 func writeRange(t *testing.T, base, head string, findings []record.Finding) string {
 	t.Helper()
-	path := must(record.RangeFile("o", "r", base, head))
+	path := must(record.RangeFile(env.Process(), "o", "r", base, head))
 	if err := record.Update(path, func(r *record.Range) error {
 		*r = record.Range{Repo: "o/r", Base: base, Head: head, Title: "t", Updated: time.Now(), Findings: findings,
 			Rounds: []record.Round{{ID: "R1", Reviewer: "codex", Model: "m", At: time.Now(), RedCheck: "absent"}}}

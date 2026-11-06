@@ -17,6 +17,7 @@ import (
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -124,12 +125,12 @@ func unavailable() string {
 	config, err := loadDelegateConfig()
 	switch {
 	case err != nil:
-		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(), err)
+		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(env.Process()), err)
 	case config.Codex != nil:
 		// The provider's auth command stands in for Codex's login, which
 		// `codex login status` checks.
 		if _, err := config.Codex.args(); err != nil {
-			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(), err)
+			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(env.Process()), err)
 		}
 		return ""
 	}

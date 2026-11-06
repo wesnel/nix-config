@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/guard"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
@@ -73,7 +74,7 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	now := time.Now()
-	w, over := quota.Over(quota.Load(quota.File()), float64(*threshold), now)
+	w, over := quota.Over(quota.Load(quota.File(env.Process())), float64(*threshold), now)
 	if !over {
 		return 0
 	}
@@ -126,7 +127,7 @@ func codexQuotaStop(tool, command string, subagent bool, threshold int, stdout, 
 		return 0
 	}
 	now := time.Now()
-	w, over := quota.Over(quota.Load(quota.CodexFile()), float64(threshold), now)
+	w, over := quota.Over(quota.Load(quota.CodexFile(env.Process())), float64(threshold), now)
 	if !over {
 		return 0
 	}

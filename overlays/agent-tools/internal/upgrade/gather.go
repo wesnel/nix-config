@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -87,7 +88,7 @@ func DefaultOptions(ctx context.Context) Options {
 	if home != "" {
 		o.Clones = filepath.Join(home, "git", "github.com")
 	}
-	patterns := privateModules(repos.Path())
+	patterns := privateModules(repos.Path(env.Process()))
 	for _, v := range privateVars {
 		patterns = append(patterns, os.Getenv(v))
 	}
@@ -251,7 +252,7 @@ func repoPrivate(owner, repo string) (bool, error) {
 	var r struct {
 		Private *bool `json:"private"`
 	}
-	if err := gh.REST("GET", fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo)), nil, &r); err != nil {
+	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo)), nil, &r); err != nil {
 		return false, err
 	}
 	if r.Private == nil {
@@ -778,7 +779,7 @@ func releases(p Pin) (Text, error) {
 		Draft       bool      `json:"draft"`
 		PublishedAt time.Time `json:"published_at"`
 	}
-	if err := gh.REST("GET", fmt.Sprintf("repos/%s/%s/releases?per_page=100", url.PathEscape(p.Owner), url.PathEscape(p.Repo)),
+	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s/releases?per_page=100", url.PathEscape(p.Owner), url.PathEscape(p.Repo)),
 		nil, &all); err != nil {
 		return Text{}, err
 	}
@@ -829,7 +830,7 @@ func compare(p Pin, counts bool) (Text, error) {
 			} `json:"commit"`
 		} `json:"commits"`
 	}
-	if err := gh.REST("GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(p.Owner),
+	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(p.Owner),
 		url.PathEscape(p.Repo), url.PathEscape(p.OldRef), url.PathEscape(p.NewRef)), nil, &c); err != nil {
 		return Text{}, err
 	}

@@ -6,6 +6,7 @@ package pushguard
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -63,7 +64,7 @@ func GitHub() Lookup {
 		var repo struct {
 			Private bool `json:"private"`
 		}
-		err := gh.REST("GET", "repos/"+slug, nil, &repo)
+		err := gh.REST(context.Background(), "GET", "repos/"+slug, nil, &repo)
 		var status *gh.StatusError
 		switch {
 		case errors.As(err, &status) && status.Code == 404:

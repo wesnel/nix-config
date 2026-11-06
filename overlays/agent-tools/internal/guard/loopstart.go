@@ -246,7 +246,7 @@ func settingsFile(ctx context.Context, path string) bool {
 		}
 	}
 	targets = append(targets, filepath.Join(home, ".codex", "config.toml"), filepath.Join(home, ".codex", "hooks.json"),
-		repos.Path())
+		repos.Path(env.Process()))
 	for _, t := range targets {
 		if Reaches(path, t, false) {
 			return true

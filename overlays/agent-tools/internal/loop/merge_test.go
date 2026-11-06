@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 // and every open pull request below it in its stack, and answers 202 with
 // status pending and the request's uuid. GitHub is faked since merging
 // there cannot be undone.
-func (f *fakeStacks) mergeAsync(method, path string, body, out any) error {
+func (f *fakeStacks) mergeAsync(_ context.Context, method, path string, body, out any) error {
 	f.writes = append(f.writes, method+" "+path)
 	f.bodies = append(f.bodies, body.(map[string]any))
 	if err := f.fail; err != nil {
@@ -72,7 +73,7 @@ func mergeRepo(t *testing.T, answers string) (*fakeStacks, *fakeTTY) {
 func TestMerge(t *testing.T) {
 	t.Run("the top and every open PR below it", func(t *testing.T) {
 		f, tty := mergeRepo(t, "y\n")
-		got, err := Merge("3", "")
+		got, err := Merge(t.Context(), "3", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +105,7 @@ func TestMerge(t *testing.T) {
 	t.Run("a merged PR below is left out", func(t *testing.T) {
 		f, tty := mergeRepo(t, "y\n")
 		f.prs[1].state = "MERGED"
-		got, err := Merge("c", "squash")
+		got, err := Merge(t.Context(), "c", "squash")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +119,7 @@ func TestMerge(t *testing.T) {
 
 	t.Run("a PR in no stack", func(t *testing.T) {
 		f, _ := mergeRepo(t, "y\n")
-		got, err := Merge("5", "")
+		got, err := Merge(t.Context(), "5", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +130,7 @@ func TestMerge(t *testing.T) {
 
 	t.Run("not confirmed", func(t *testing.T) {
 		f, _ := mergeRepo(t, "n\n")
-		got, err := Merge("3", "")
+		got, err := Merge(t.Context(), "3", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,7 +155,7 @@ func TestMerge(t *testing.T) {
 		t.Run("refused/"+name, func(t *testing.T) {
 			f, tty := mergeRepo(t, "y\n")
 			target, method := setup(f)
-			if _, err := Merge(target, method); !refusedWell(err) {
+			if _, err := Merge(t.Context(), target, method); !refusedWell(err) {
 				t.Errorf("%s: %v", name, err)
 			}
 			if len(f.writes) != 0 || tty.shown.Len() != 0 {
@@ -166,7 +167,7 @@ func TestMerge(t *testing.T) {
 	t.Run("refused/no terminal", func(t *testing.T) {
 		f, _ := mergeRepo(t, "")
 		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
-		if _, err := Merge("3", ""); !refusedWell(err) || len(f.writes) != 0 {
+		if _, err := Merge(t.Context(), "3", ""); !refusedWell(err) || len(f.writes) != 0 {
 			t.Errorf("no terminal: %v, writes %v", err, f.writes)
 		}
 	})
@@ -175,7 +176,7 @@ func TestMerge(t *testing.T) {
 	t.Run("GitHub's 409", func(t *testing.T) {
 		f, _ := mergeRepo(t, "y\n")
 		f.fail = &gh.StatusError{Code: 409}
-		if _, err := Merge("3", ""); err == nil || refused(err) || len(f.writes) != 1 {
+		if _, err := Merge(t.Context(), "3", ""); err == nil || refused(err) || len(f.writes) != 1 {
 			t.Errorf("a 409: %v, writes %v", err, f.writes)
 		}
 	})

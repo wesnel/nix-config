@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,8 +13,8 @@ import (
 // mergeREST asks GitHub to merge a pull request; tests replace it to fake
 // GitHub. GitHub documents merge-async beside the stacks endpoints, under
 // the REST API version they are served at.
-var mergeREST = func(method, path string, body, out any) error {
-	return gh.RESTVersion(stacksVersion, method, path, body, out)
+var mergeREST = func(ctx context.Context, method, path string, body, out any) error {
+	return gh.RESTVersion(ctx, stacksVersion, method, path, body, out)
 }
 
 // mergeMethods are the merge_method values merge-async takes.
@@ -36,7 +37,7 @@ type MergeResult struct {
 // and asks GitHub only once the operator answers y there, pinning the top's
 // head to the one shown. It is the operator's: the guard refuses it to
 // agents, and it refuses where no terminal can be opened.
-func Merge(target, method string) (any, error) {
+func Merge(ctx context.Context, target, method string) (any, error) {
 	if method == "" {
 		method = "merge"
 	}
@@ -50,11 +51,11 @@ func Merge(target, method string) (any, error) {
 			"opened here (%v); the operator runs it from a terminal of their own", err)
 	}
 	defer tty.Close()
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func Merge(target, method string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	stack, err := githubStack(repo, top.Number)
+	stack, err := githubStack(ctx, repo, top.Number)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +122,7 @@ func Merge(target, method string) (any, error) {
 	}
 	// sha makes GitHub refuse the merge if the top moved since it was shown.
 	body := map[string]any{"merge_method": method, "sha": top.HeadRefOid}
-	if err := mergeREST("PUT", fmt.Sprintf("repos/%s/pulls/%d/merge-async", repo.Slug, top.Number), body, &reply); err != nil {
+	if err := mergeREST(ctx, "PUT", fmt.Sprintf("repos/%s/pulls/%d/merge-async", repo.Slug, top.Number), body, &reply); err != nil {
 		return nil, fmt.Errorf("asking GitHub to merge #%d: %w", top.Number, err)
 	}
 	result.Status, result.UUID = reply.Status, reply.Details.UUID

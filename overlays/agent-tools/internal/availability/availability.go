@@ -79,14 +79,15 @@ func (s State) validate() error {
 
 func validProvider(p Provider) bool { return p == Claude || p == Codex }
 
-// File is where p's hold is kept, shared by every repository on this host.
-func File(p Provider) string {
-	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-tools", "review-availability", string(p)+".json")
+// File is where p's hold is kept, in e's state directory, shared by every
+// repository on this host.
+func File(e env.Env, p Provider) string {
+	return filepath.Join(hostpaths.StateHome(e), "agent-tools", "review-availability", string(p)+".json")
 }
 
-func read(p Provider) (State, error) {
+func read(e env.Env, p Provider) (State, error) {
 	var state State
-	data, err := os.ReadFile(File(p))
+	data, err := os.ReadFile(File(e, p))
 	if errors.Is(err, os.ErrNotExist) {
 		return state, nil
 	}
@@ -113,25 +114,25 @@ func read(p Provider) (State, error) {
 
 // Check is p's hold at now, or the zero State where it may be called. An
 // unreadable or invalid File is an error, which callers treat as a hold.
-func Check(p Provider, now time.Time) (State, error) {
+func Check(e env.Env, p Provider, now time.Time) (State, error) {
 	if !validProvider(p) {
 		return State{}, fmt.Errorf("invalid provider")
 	}
-	s, err := read(p)
+	s, err := read(e, p)
 	if err != nil || s.Active(now) {
 		return s, err
 	}
 	if p == Claude {
-		return ClaudeQuota(now), nil
+		return ClaudeQuota(e, now), nil
 	}
 	return State{}, nil
 }
 
 // ClaudeQuota is a Quota hold until the latest reset of the Claude quota
-// windows usage.File records as exhausted at now, or the zero State.
-func ClaudeQuota(now time.Time) State {
+// windows usage.File of e records as exhausted at now, or the zero State.
+func ClaudeQuota(e env.Env, now time.Time) State {
 	var state State
-	for _, w := range usage.Load(usage.File()) {
+	for _, w := range usage.Load(usage.File(e)) {
 		if w.Used >= 100 && w.ResetsAt > now.Unix() {
 			state.Reason, state.Until = Quota, max(state.Until, w.ResetsAt)
 		}
@@ -142,27 +143,27 @@ func ClaudeQuota(now time.Time) State {
 // Hold records next for p, merged with the hold File has at now under a
 // lock on p: Disabled outlasts every other hold, and otherwise the hold
 // that ends later stands.
-func Hold(p Provider, next State, now time.Time) error {
+func Hold(e env.Env, p Provider, next State, now time.Time) error {
 	if next.Reason == "" {
 		return fmt.Errorf("hold requires a reason")
 	}
-	return write(p, next, false, now)
+	return write(e, p, next, false, now)
 }
 
 // Clear removes p's hold, an invalid File included. It cannot clear an
 // exhausted Claude window, which holds until its reset.
-func Clear(p Provider) error {
-	return write(p, State{}, true, time.Now())
+func Clear(e env.Env, p Provider) error {
+	return write(e, p, State{}, true, time.Now())
 }
 
-func write(p Provider, next State, clear bool, now time.Time) error {
+func write(e env.Env, p Provider, next State, clear bool, now time.Time) error {
 	if !validProvider(p) {
 		return fmt.Errorf("invalid provider")
 	}
 	if err := next.validate(); err != nil {
 		return err
 	}
-	path := File(p)
+	path := File(e, p)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -182,7 +183,7 @@ func write(p Provider, next State, clear bool, now time.Time) error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	if !clear {
-		old, err := read(p)
+		old, err := read(e, p)
 		if err != nil {
 			return err
 		}

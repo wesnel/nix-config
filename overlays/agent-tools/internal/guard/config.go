@@ -62,7 +62,7 @@ func agentToolsConfig(ctx context.Context, path string) bool {
 	if !filepath.IsAbs(base) {
 		base = filepath.Join(homeDir(ctx), ".config")
 	}
-	return path == filepath.Clean(repos.Path()) || inAgentTools(path, base, hostpaths.ConfigHome(e))
+	return path == filepath.Clean(repos.Path(e)) || inAgentTools(path, base, hostpaths.ConfigHome(e))
 }
 
 // inAgentTools reports whether path is in agent-tools' directory under one
@@ -83,7 +83,7 @@ func loadSettings() settings {
 	var file struct {
 		Guard settings `json:"guard"`
 	}
-	if data, err := os.ReadFile(repos.Path()); err == nil {
+	if data, err := os.ReadFile(repos.Path(env.Process())); err == nil {
 		json.Unmarshal(data, &file)
 	}
 	return file.Guard

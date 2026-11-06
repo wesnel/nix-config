@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/codexrate"
+	"github.com/wesnel/agent-tools/internal/env"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -35,7 +36,7 @@ func codexUsage(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "agent-plan codex-usage: Codex reported neither a 5h nor a 7d window")
 		return 1
 	}
-	if err := quota.Record(quota.CodexFile(), ws); err != nil {
+	if err := quota.Record(quota.CodexFile(env.Process()), ws); err != nil {
 		fmt.Fprintln(stderr, "agent-plan codex-usage:", err)
 		return 1
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -18,7 +19,7 @@ import (
 // own say, so a product repository that mentions the harness's tools is
 // still checked in full.
 func harnessRepos() []string {
-	data, err := os.ReadFile(repos.Path())
+	data, err := os.ReadFile(repos.Path(env.Process()))
 	if err != nil {
 		return nil
 	}

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -100,8 +101,8 @@ func FormatNext(steps []NextStep) string {
 // (operatorFormatSigned), which open proves before it opens. A branch
 // GitHub lacks is opened unsigned.
 // Policy refusals become the branch's Blocked step rather than an error.
-func Next(branches []string) ([]NextStep, error) {
-	repo, err := repository()
+func Next(ctx context.Context, branches []string) ([]NextStep, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +115,7 @@ func Next(branches []string) ([]NextStep, error) {
 	}
 	var steps []NextStep
 	for _, b := range branches {
-		step, err := next(repo, b)
+		step, err := next(ctx, repo, b)
 		var r Refusal
 		if errors.As(err, &r) {
 			step, err = Blocked{Kind: "blocked", Branch: b, Why: r.Error()}, nil
@@ -128,7 +129,7 @@ func Next(branches []string) ([]NextStep, error) {
 }
 
 // next is branch's step, or the refusal that blocks it.
-func next(repo *Repo, branch string) (NextStep, error) {
+func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
@@ -147,7 +148,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 		return nil, err
 	}
 	unsigned := start != ""
-	view, err := viewRemote(repo, branch, repo.Default)
+	view, err := viewRemote(ctx, repo, branch, repo.Default)
 	if err != nil {
 		return nil, err
 	}
