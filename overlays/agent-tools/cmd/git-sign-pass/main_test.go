@@ -17,9 +17,10 @@ import (
 // this program as the test binary, which is what the commands it prints for
 // resuming name.
 func TestMain(m *testing.M) {
-	// Command subprocesses inherit isolated user paths and the fixture's signing config.
+	// Command subprocesses inherit isolated user paths and the fixture's
+	// signing config, and the directories it bakes in through
+	// hostpaths.TestConfigHomeEnv and TestStateHomeEnv.
 	if os.Getenv("GIT_SIGN_PASS_RUN_MAIN") == "1" {
-		hostpaths.BakeFromEnv()
 		main()
 	}
 	gitenv.Isolate()

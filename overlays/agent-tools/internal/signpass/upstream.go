@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
@@ -46,7 +47,7 @@ func mirrorUpstream(ctx context.Context, destination string) (string, error) {
 	if !filepath.IsAbs(upstreamGit) || !filepath.IsAbs(upstreamCA) {
 		return "", refuse("mirror upstream proof needs the installed Git and CA bundle")
 	}
-	root := hostpaths.BakedStateHome()
+	root := hostpaths.BakedStateHome(env.From(ctx))
 	if !filepath.IsAbs(root) {
 		return "", refuse("mirror upstream proof needs a protected state directory")
 	}

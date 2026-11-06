@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
@@ -134,7 +135,7 @@ func realPath(path string, depth int) string {
 // Path is the user's config file: agent-tools/config.json under the XDG
 // config directory, or $AGENT_TOOLS_CONFIG where hostpaths allows it.
 func Path() string {
-	return hostpaths.ConfigFile("AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
+	return hostpaths.ConfigFile(env.Process(), "AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
 }
 
 // Remotes maps each remote of the repository containing git.Dir whose fetch

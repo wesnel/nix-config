@@ -18,7 +18,8 @@ func TestPaths(t *testing.T) {
 	// A build that bakes the directories in takes neither from the
 	// environment.
 	baked := t.TempDir()
-	hostpaths.Bake(t, filepath.Join(baked, "config"), filepath.Join(baked, "state"))
+	t.Setenv(hostpaths.TestConfigHomeEnv, filepath.Join(baked, "config"))
+	t.Setenv(hostpaths.TestStateHomeEnv, filepath.Join(baked, "state"))
 	if Out() != filepath.Join(baked, "state", "agent-plans", "out") {
 		t.Errorf("baked: out %s", Out())
 	}

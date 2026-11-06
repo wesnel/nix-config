@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
@@ -100,7 +101,7 @@ func TestMirrorStrictFirst(t *testing.T) {
 func TestMirrorDiscovery(t *testing.T) {
 	f := newMirrorFixture(t)
 	// The baked state directory belongs to this fixture, never the operator.
-	root := hostpaths.BakedStateHome()
+	root := hostpaths.BakedStateHome(env.Process())
 	gitIn(t, root, "init", "-q")
 	gitIn(t, root, "config", "url.https://attacker.invalid/.insteadOf", "https://github.com/")
 	advertise := upstreamAdvertisement

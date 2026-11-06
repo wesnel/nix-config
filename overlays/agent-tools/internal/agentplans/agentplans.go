@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -24,7 +25,7 @@ import (
 const Schema = 5
 
 // Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
-func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
+func Dir() string { return filepath.Join(hostpaths.StateHome(env.Process()), "agent-plans") }
 
 // Out is where plan-dash export writes the page's documents and the session
 // reads the page's database into.

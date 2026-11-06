@@ -12,11 +12,19 @@ import (
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
+// bake bakes configHome and stateHome in for the rest of the test, through
+// the process environment, which the guard reads hostpaths from.
+func bake(t *testing.T, configHome, stateHome string) {
+	t.Helper()
+	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
+	t.Setenv(hostpaths.TestStateHomeEnv, stateHome)
+}
+
 // The Space publisher's state names the block it replaces, so no session
 // writes it: by any name for it, before its directory exists or after.
 func TestSpaceState(t *testing.T) {
 	root := fakeHome(t)
-	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
 	file := agentplans.SpaceStateFile()
 	alias := filepath.Join(t.TempDir(), "root-alias")
 	if err := os.Symlink(root, alias); err != nil {
@@ -75,7 +83,7 @@ func TestSpaceState(t *testing.T) {
 // reads it, or writes elsewhere, is not.
 func TestSpaceStateDirectoryWrites(t *testing.T) {
 	root := fakeHome(t)
-	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
 	dest, work := filepath.Dir(agentplans.SpaceStateFile()), t.TempDir()
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		t.Fatal(err)

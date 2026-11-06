@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -253,7 +254,7 @@ func settingsFile(path string) bool {
 	if !filepath.IsAbs(config) {
 		config = filepath.Join(home, ".config")
 	}
-	for _, base := range []string{config, hostpaths.ConfigHome()} {
+	for _, base := range []string{config, hostpaths.ConfigHome(env.Process())} {
 		if Reaches(path, filepath.Join(base, "agent-tools"), true) {
 			return true
 		}

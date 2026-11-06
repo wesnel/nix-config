@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -204,7 +205,7 @@ func (p *PR) Counts() Counts {
 // writing here, and Claude Code's file tools are denied it
 // (modules/home-manager/claude), so only the excluded writers change it.
 func Dir() string {
-	return filepath.Join(hostpaths.StateHome(), "agent-tools", "reviews")
+	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-tools", "reviews")
 }
 
 // name is an owner or repository name, GitHub's form, which keeps a record

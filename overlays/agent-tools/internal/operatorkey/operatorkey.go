@@ -26,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -86,12 +87,12 @@ func readPublicAuthority(path string) ([]byte, error) {
 	return io.ReadAll(file)
 }
 
-func verificationDir() (string, error) {
-	return privateStateDir(filepath.Join("agent-tools", "signature-verification"), "view-")
+func verificationDir(ctx context.Context) (string, error) {
+	return privateStateDir(ctx, filepath.Join("agent-tools", "signature-verification"), "view-")
 }
 
-func privateStateDir(subdir, prefix string) (string, error) {
-	root := hostpaths.BakedStateHome()
+func privateStateDir(ctx context.Context, subdir, prefix string) (string, error) {
+	root := hostpaths.BakedStateHome(env.From(ctx))
 	if !filepath.IsAbs(root) {
 		return "", refuse("there is no baked protected signing-verification state directory")
 	}
@@ -265,7 +266,7 @@ func (p Profile) MirrorUpstream(ctx context.Context, destination string) (string
 
 // Load reads the protected operator profile. It writes nothing.
 func Load(ctx context.Context) (Profile, error) {
-	p := Profile{configHome: hostpaths.BakedConfigHome()}
+	p := Profile{configHome: hostpaths.BakedConfigHome(env.From(ctx))}
 	if p.configHome == "" || !filepath.IsAbs(p.configHome) {
 		return p, refuse("there is no baked operator signing profile; use the installed agent-tools, or ask the operator to run the step")
 	}
@@ -368,7 +369,7 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 	if objectFormat != "sha1" && objectFormat != "sha256" {
 		return 0, refuse("unsupported Git object format for signing authorization")
 	}
-	dir, err := verificationDir()
+	dir, err := verificationDir(ctx)
 	if err != nil {
 		return 0, err
 	}

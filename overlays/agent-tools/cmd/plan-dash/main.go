@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/dashboard"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -195,7 +196,7 @@ func watch(stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	cache := filepath.Join(hostpaths.StateHome(), "plan-dash", "github.json")
+	cache := filepath.Join(hostpaths.StateHome(env.From(ctx)), "plan-dash", "github.json")
 	w := dashboard.Watch{Dir: agentplans.Dir(), Config: c, Now: time.Now, Out: stdout,
 		Sync: c.SyncState, Pull: c.Pull,
 		GitHub: func(now time.Time) (export.GitHub, error) { return export.GitHubOf(ctx, cache, now) },
@@ -220,7 +221,7 @@ func exportDocs(stdout, stderr io.Writer) int {
 	if err != nil {
 		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
 	}
-	state := hostpaths.StateHome()
+	state := hostpaths.StateHome(env.Process())
 	dir := filepath.Join(state, "agent-plans", "out")
 	now := time.Now()
 	e, err := export.Collect(context.Background(), c, filepath.Join(state, "plan-dash", "github.json"), now)

@@ -1,6 +1,7 @@
 package operatorkey
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
@@ -61,7 +63,7 @@ func TestVerifyMarks(t *testing.T) {
 		{"expired key", []string{"EXPKEYSIG 89ABCDEF01234567 T <t@e>", valid(operator)}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stub := pgpProfile(t)
+			stub, ctx := pgpProfile(t)
 			script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\n"
 			for _, s := range c.status {
 				script += "echo '[GNUPG:] " + s + "'\n"
@@ -79,7 +81,7 @@ func TestVerifyMarks(t *testing.T) {
 				}
 			}
 			base, tip := pgpRepo(t)
-			n, err := Verify(t.Context(), tip, []string{base})
+			n, err := Verify(ctx, tip, []string{base})
 			if c.ok {
 				if err != nil || n != 1 {
 					t.Errorf("a good signature by the operator's key: %d, %v", n, err)
@@ -101,7 +103,7 @@ func TestVerifyMarks(t *testing.T) {
 func TestVerifyEnvironmentProgram(t *testing.T) {
 	for _, name := range []string{"configured", "symlink", "missing"} {
 		t.Run(name, func(t *testing.T) {
-			stub := pgpProfile(t)
+			stub, ctx := pgpProfile(t)
 			script := "#!/bin/sh\n" +
 				"[ -z \"${OPERATOR_ENV_CANARY+x}\" ] || exit 1\n" +
 				"[ \"$HOME\" = \"$GNUPGHOME\" ] && [ \"$TMPDIR\" = \"$GNUPGHOME\" ] || exit 1\n" +
@@ -136,7 +138,7 @@ func TestVerifyEnvironmentProgram(t *testing.T) {
 			}
 			t.Setenv("OPERATOR_ENV_CANARY", "inherited")
 			base, tip := pgpRepo(t)
-			n, err := Verify(t.Context(), tip, []string{base})
+			n, err := Verify(ctx, tip, []string{base})
 			if name == "missing" {
 				var r refusal.Refusal
 				if !errors.As(err, &r) || !strings.Contains(err.Error(), "protected environment program") {
@@ -155,8 +157,9 @@ func TestVerifyEnvironmentProgram(t *testing.T) {
 }
 
 // pgpProfile bakes in an OpenPGP operator profile for operator, verified by
-// the stand-in program it returns the path of, in the protected config home.
-func pgpProfile(t *testing.T) string {
+// the stand-in program it returns the path of, in the protected config home,
+// which the context it returns bakes in.
+func pgpProfile(t *testing.T) (string, context.Context) {
 	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -180,8 +183,7 @@ func pgpProfile(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostpaths.Bake(t, configHome, state)
-	return stub
+	return stub, env.With(t.Context(), env.Process().Set(hostpaths.TestBaked(configHome, state)...))
 }
 
 // pgpRepo is a repository with an unsigned base commit and, on it, tip, a

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -333,7 +334,7 @@ func TestNextWritesNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 			gitIn(t, dir, "config", "gpg.ssh.program", verifier)
-			dirs := []string{hostpaths.BakedConfigHome(), hostpaths.BakedStateHome(), os.Getenv("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
+			dirs := []string{hostpaths.BakedConfigHome(env.Process()), hostpaths.BakedStateHome(env.Process()), os.Getenv("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
 			before := files(t, append(dirs, gnupg)...)
 			readOnly(t, dirs...)
 			step := nextStep(t, "feat")

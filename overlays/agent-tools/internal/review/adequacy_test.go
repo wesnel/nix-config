@@ -37,7 +37,8 @@ func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	// Baked in, as the module's build bakes it, and named by the
 	// environment too, which a test may change.
 	configHome := t.TempDir()
-	hostpaths.Bake(t, configHome, t.TempDir())
+	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
+	t.Setenv(hostpaths.TestStateHomeEnv, t.TempDir())
 	config := filepath.Join(configHome, "agent-tools", "config.json")
 	os.MkdirAll(filepath.Dir(config), 0o755)
 	os.WriteFile(config, must(json.Marshal(map[string]any{"plans": f.plans,

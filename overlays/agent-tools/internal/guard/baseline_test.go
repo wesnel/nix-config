@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
-	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // fakeHome points the guard's ~ at a directory of the test's own.
@@ -1888,7 +1887,7 @@ func TestBakedAgentToolsConfig(t *testing.T) {
 	h := fakeHome(t)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	baked := filepath.Join(h, "baked-config")
-	hostpaths.Bake(t, baked, filepath.Join(h, "baked-state"))
+	bake(t, baked, filepath.Join(h, "baked-state"))
 	for _, base := range []string{filepath.Join(h, ".config"), baked} {
 		file := filepath.Join(base, "agent-tools", "config.json")
 		input, _ := json.Marshal(map[string]string{"file_path": file, "content": "{}"})

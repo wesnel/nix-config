@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/usage"
 )
@@ -80,7 +81,7 @@ func validProvider(p Provider) bool { return p == Claude || p == Codex }
 
 // File is where p's hold is kept, shared by every repository on this host.
 func File(p Provider) string {
-	return filepath.Join(hostpaths.StateHome(), "agent-tools", "review-availability", string(p)+".json")
+	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-tools", "review-availability", string(p)+".json")
 }
 
 func read(p Provider) (State, error) {

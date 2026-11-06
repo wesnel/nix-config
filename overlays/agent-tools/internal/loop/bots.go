@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -47,7 +48,7 @@ type botConfig struct {
 // configPath is pr-loop's config: pr-loop/config.json under the XDG config
 // directory, or $PR_LOOP_CONFIG where hostpaths allows it.
 func configPath() string {
-	return hostpaths.ConfigFile("PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))
+	return hostpaths.ConfigFile(env.Process(), "PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))
 }
 
 // botsFor returns the configured bots that apply to a repository, by name.

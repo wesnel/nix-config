@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -43,5 +44,5 @@ func FromCodexRateLimits(result []byte, now time.Time) ([]Window, bool) {
 // windows, in File's form: agent-plan/codex-usage.json in the state
 // directory.
 func CodexFile() string {
-	return filepath.Join(hostpaths.StateHome(), "agent-plan", "codex-usage.json")
+	return filepath.Join(hostpaths.StateHome(env.Process()), "agent-plan", "codex-usage.json")
 }

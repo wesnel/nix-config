@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -58,7 +59,7 @@ func agentToolsConfig(path string) bool {
 	if !filepath.IsAbs(base) {
 		base = filepath.Join(home, ".config")
 	}
-	return path == filepath.Clean(repos.Path()) || inAgentTools(path, base, hostpaths.ConfigHome())
+	return path == filepath.Clean(repos.Path()) || inAgentTools(path, base, hostpaths.ConfigHome(env.Process()))
 }
 
 // inAgentTools reports whether path is in agent-tools' directory under one

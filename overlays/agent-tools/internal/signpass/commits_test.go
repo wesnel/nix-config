@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -137,7 +138,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 			}
 		}},
 		{"malformed config", func(t *testing.T, p plans.Plan) func() {
-			config := filepath.Join(hostpaths.BakedConfigHome(), "agent-tools", "config.json")
+			config := filepath.Join(hostpaths.BakedConfigHome(env.Process()), "agent-tools", "config.json")
 			original, err := os.ReadFile(config)
 			if err != nil {
 				t.Fatal(err)

@@ -142,7 +142,9 @@ func TestGolden(t *testing.T) {
 
 func TestPaths(t *testing.T) {
 	state := t.TempDir()
-	hostpaths.Bake(t, t.TempDir(), state)
+	// Dir reads hostpaths from the process environment.
+	t.Setenv(hostpaths.TestConfigHomeEnv, t.TempDir())
+	t.Setenv(hostpaths.TestStateHomeEnv, state)
 	if got, want := Dir(), filepath.Join(state, "agent-tools", "reviews"); got != want {
 		t.Errorf("Dir() = %s, want %s", got, want)
 	}

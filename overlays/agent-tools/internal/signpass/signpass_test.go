@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
@@ -57,7 +58,7 @@ func signingConfig(t *testing.T, dir string) string {
 // with a state home beside it.
 func bakedHome(t *testing.T) string {
 	t.Helper()
-	if home := hostpaths.BakedConfigHome(); home != "" {
+	if home := hostpaths.BakedConfigHome(env.Process()); home != "" {
 		return home
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -71,7 +72,9 @@ func bakedHome(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	hostpaths.Bake(t, configHome, state)
+	// The pass reads hostpaths from the process environment.
+	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
+	t.Setenv(hostpaths.TestStateHomeEnv, state)
 	return configHome
 }
 
