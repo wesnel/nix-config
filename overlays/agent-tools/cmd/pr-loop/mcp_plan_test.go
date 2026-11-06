@@ -116,6 +116,22 @@ func TestMCPPlan(t *testing.T) {
 			t.Fatalf("visual: %v\n%s", err, data)
 		}
 	})
+	t.Run("digest and brag", func(t *testing.T) {
+		notes := filepath.Dir(filepath.Dir(f.plan))
+		digest := "* Grow the code\n:PROPERTIES:\n:PLAN: id:abc-1\n:PR: o/r#7\n:END:\nRun `go test` and $(see).\n"
+		r := c.tool(t, "agent_plan_digest", map[string]any{"worktree": f.repo, "date": "2026-11-06", "text": digest})
+		if r.isError || !strings.Contains(r.text, "exit 0") {
+			t.Fatalf("digest: %s", r.text)
+		}
+		if data, err := os.ReadFile(filepath.Join(notes, "digests", "2026", "11-06-demo.org")); err != nil || string(data) != digest {
+			t.Errorf("digest: %v\n%s", err, data)
+		}
+		call(t, "brag", map[string]any{"pr": "o/r#7", "date": "2026-11-05", "title": "Grew the code", "text": "It grew."})
+		if data, err := os.ReadFile(filepath.Join(notes, "brag", "2026.org")); err != nil ||
+			!strings.Contains(string(data), "* Grew the code\n:PROPERTIES:\n:PR: https://github.com/o/r/pull/7\n") {
+			t.Errorf("brag: %v\n%s", err, data)
+		}
+	})
 	t.Run("empty section", func(t *testing.T) {
 		call(t, "section", map[string]any{"section": "Verification", "text": "Temporary verification text."})
 		before, err := os.ReadFile(f.plan)

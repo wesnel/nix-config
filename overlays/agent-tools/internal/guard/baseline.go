@@ -1554,6 +1554,55 @@ const planWrite = "This is a plan file, which agents change through agent-plan a
 	"a workstream's file is made by `agent-plan workstream new --title T --summary S` and is the operator's to edit; " +
 	"a change none of them makes goes in your report for the operator."
 
+const notesWrite = "This is a demo digest or a brag file in the notes repository, which agents write through agent-plan alone, " +
+	"on the one host that writes them, so that no two hosts write the same file. " +
+	"Write a digest with `agent-plan digest --date FRIDAY --text-file FILE`, and add a merged change to the brag file with " +
+	"`agent-plan brag PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T --text-file FILE`; " +
+	"a change neither makes goes in your report for the operator."
+
+// notesFile reports whether path is a demo digest or a brag file
+// (plans.NotesFile) in the notes repository agent-plan's config names, as
+// named or through its parent's symlinks. A relative path counts when it
+// ends in one's name and directories, since where it is cannot be told.
+func notesFile(path string) bool {
+	if !filepath.IsAbs(path) {
+		parts := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
+		for n := 2; n <= 3 && n <= len(parts); n++ {
+			if plans.NotesFile(strings.Join(parts[len(parts)-n:], "/")) {
+				return true
+			}
+		}
+		return false
+	}
+	names := []string{filepath.Clean(path)}
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		names = append(names, filepath.Join(parent, filepath.Base(path)))
+	}
+	for _, repo := range notesRepos() {
+		for _, p := range names {
+			if rel, err := filepath.Rel(repo, p); err == nil && plans.NotesFile(filepath.ToSlash(rel)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// notesRepos are the repository the plans directory agent-plan's config
+// names is in, or its default when the config cannot be read, as named and
+// as its symlinks resolve.
+func notesRepos() []string {
+	repo := plans.DefaultRepo(home)
+	if c, err := plans.Load(); err == nil {
+		repo = c.RepoDir()
+	}
+	out := []string{filepath.Clean(repo)}
+	if real, err := filepath.EvalSymlinks(repo); err == nil && real != out[0] {
+		out = append(out, real)
+	}
+	return out
+}
+
 // planLog reports whether path is a plan's log, or the lock file that
 // records its state, in the plans directory agent-plan's config names. A
 // relative path counts, since where it is cannot be told.
@@ -1599,43 +1648,104 @@ func plansDirs() []string {
 	return out
 }
 
-// nearPlans reports, for path, absolute, whether it is the plans directory
-// or inside it, and whether it holds it, as named or as its symlinks
-// resolve.
-func nearPlans(path string) (inside, holds bool) {
+// guardedDir is a directory whose files agent-plan alone writes, as named
+// and as its symlinks resolve, and the reason a write there is refused.
+type guardedDir struct {
+	names  []string
+	reason string
+}
+
+// guardedDirs are the plans directory, and the notes repository's digests
+// and brag directories.
+func guardedDirs() []guardedDir {
+	notes := []string{}
+	for _, repo := range notesRepos() {
+		for _, d := range []string{"digests", "brag"} {
+			notes = append(notes, filepath.Join(repo, d))
+			if real, err := filepath.EvalSymlinks(filepath.Join(repo, d)); err == nil {
+				notes = append(notes, real)
+			}
+		}
+	}
+	return []guardedDir{{plansDirs(), planWrite}, {notes, notesWrite}}
+}
+
+// nearGuarded gives, for path, absolute, the reason of the guarded
+// directory it is or is inside, and of the one it holds, as named or as its
+// symlinks resolve; "" for none.
+func nearGuarded(path string) (inside, holds string) {
 	names := []string{filepath.Clean(path)}
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		names = append(names, real)
 	} else if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
 		names = append(names, filepath.Join(parent, filepath.Base(path)))
 	}
-	for _, d := range plansDirs() {
-		for _, p := range names {
-			inside = inside || p == d || strings.HasPrefix(p, d+"/")
-			holds = holds || p == "/" || strings.HasPrefix(d, p+"/")
+	for _, g := range guardedDirs() {
+		for _, d := range g.names {
+			for _, p := range names {
+				if inside == "" && (p == d || strings.HasPrefix(p, d+"/")) {
+					inside = g.reason
+				}
+				if holds == "" && (p == "/" || strings.HasPrefix(d, p+"/")) {
+					holds = g.reason
+				}
+			}
 		}
 	}
 	return inside, holds
 }
 
-// checkCopyIntoPlans denies a copy, move, install or link into the plans
-// directory of a file under a plan's or a log's name, of a directory's
-// contents, or of a source word the shell expands (a glob, braces, a
-// variable or a command's output), any of which may hold either; and a
-// tar or unzip extracting there, or a ditto copying there. changedFiles
-// names only the directory.
-func checkCopyIntoPlans(name string, args []string, dir string) string {
-	unpackInto := unpackTargets(name, args)
-	for _, d := range unpackInto {
-		if inside, _ := nearPlans(expandPath(d, dir)); inside {
-			return planWrite
-		}
+// wholeGuarded is the reason to refuse a change to path as a whole, which
+// may write or remove any file of a guarded directory: a guarded directory
+// itself or a digests year directory, or a glob in one, each known by its
+// path whether or not it exists, or with holds, a directory that holds one;
+// "" for none.
+func wholeGuarded(path string, holds bool) string {
+	inside, holder := nearGuarded(path)
+	if holds && holder != "" {
+		return holder
 	}
-	if !set("cp", "mv", "install", "ln", "rsync")[name] {
+	if inside == "" {
 		return ""
 	}
+	if strings.ContainsAny(filepath.Base(path), "*?[") || guardedDirPath(path) {
+		return inside
+	}
+	return ""
+}
+
+// guardedDirPath reports whether path, as named or as its symlinks
+// resolve, is a guarded directory, or a year's directory of digests.
+func guardedDirPath(path string) bool {
+	names := []string{filepath.Clean(path)}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		names = append(names, real)
+	} else if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		names = append(names, filepath.Join(parent, filepath.Base(path)))
+	}
+	for _, p := range names {
+		for _, g := range guardedDirs() {
+			if slices.Contains(g.names, p) {
+				return true
+			}
+		}
+		for _, repo := range notesRepos() {
+			if rel, err := filepath.Rel(repo, p); err == nil && plans.NotesFile(filepath.ToSlash(rel)+"/01-01-demo.org") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// guardedCopyOperands are a cp, mv, install, ln or rsync's destination
+// directories and sources, and whether it copies recursively.
+func guardedCopyOperands(name string, args []string) (dests, sources []string, recursive bool) {
+	if !set("cp", "mv", "install", "ln", "rsync")[name] {
+		return nil, nil, false
+	}
 	var positional []string
-	recursive := name == "rsync"
+	recursive = name == "rsync"
 	for _, a := range args {
 		switch {
 		case a == "-r" || a == "-R" || a == "-a" || a == "--recursive" || a == "--archive" ||
@@ -1645,16 +1755,38 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 			positional = append(positional, a)
 		}
 	}
-	dests, sources := targetDirectories(args), positional
+	dests, sources = targetDirectories(args), positional
 	if len(dests) == 0 && len(positional) > 1 {
 		dests, sources = positional[len(positional)-1:], positional[:len(positional)-1]
 	}
+	return dests, sources, recursive
+}
+
+// checkCopyIntoPlans denies a copy, move, install or link into a guarded
+// directory (the plans, digests or brag directory) of a file under a
+// plan's or a log's name, of a directory's contents, or of a source word
+// the shell expands (a glob, braces, a variable or a command's output),
+// any of which may hold either; and a tar or unzip extracting there, or a
+// ditto copying there. changedFiles names only the directory.
+func checkCopyIntoPlans(name string, args []string, dir string) string {
+	for _, d := range unpackTargets(name, args) {
+		if inside, _ := nearGuarded(expandPath(d, dir)); inside != "" {
+			return inside
+		}
+	}
+	dests, sources, recursive := guardedCopyOperands(name, args)
 	for _, d := range dests {
-		if inside, _ := nearPlans(expandPath(d, dir)); !inside {
+		for _, s := range sources {
+			if notesFile(filepath.Join(expandPath(d, dir), filepath.Base(s))) {
+				return notesWrite
+			}
+		}
+		inside, _ := nearGuarded(expandPath(d, dir))
+		if inside == "" {
 			continue
 		}
 		for _, s := range sources {
-			if reason := copiedPlanSource(s, recursive, dir); reason != "" {
+			if reason := copiedPlanSource(s, recursive, dir, inside); reason != "" {
 				return reason
 			}
 		}
@@ -1693,23 +1825,23 @@ func unpackTargets(name string, args []string) []string {
 	return unpackInto
 }
 
-func copiedPlanSource(s string, recursive bool, dir string) string {
+func copiedPlanSource(s string, recursive bool, dir, inside string) string {
 	base := filepath.Base(s)
 	if plans.IsLog(base) {
 		return appendOnly
 	}
 	if plans.IsPlan(base) || plans.IsWorkstream(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
-		return planWrite
+		return inside
 	}
 	if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {
-		return planWrite
+		return inside
 	}
 	return ""
 }
 
 // checkPlanCheckout denies a git checkout or restore of a path that is a
-// plan's file or log, a glob in the plans directory, or a directory that is
-// or holds it, all of which git writes from history.
+// plan's file or log, a digest or brag file, or a directory or glob that
+// wholeGuarded refuses, all of which git writes from history.
 func checkPlanCheckout(sub string, rest []string, dir string) string {
 	if sub != "checkout" && sub != "restore" || dir == "" {
 		return ""
@@ -1724,26 +1856,19 @@ func checkPlanCheckout(sub string, rest []string, dir string) string {
 			continue
 		}
 		path := expandPath(a, dir)
-		inside, holds := nearPlans(path)
 		switch {
 		case planLog(path):
 			return appendOnly
-		case planFile(path), holds, isPlansDir(path), inside && strings.ContainsAny(filepath.Base(path), "*?["):
+		case planFile(path):
 			return planWrite
+		case notesFile(path):
+			return notesWrite
+		}
+		if reason := wholeGuarded(path, true); reason != "" {
+			return reason
 		}
 	}
 	return ""
-}
-
-// isPlansDir reports whether path is the plans directory itself.
-func isPlansDir(path string) bool {
-	real, err := filepath.EvalSymlinks(path)
-	for _, d := range plansDirs() {
-		if filepath.Clean(path) == d || err == nil && real == d {
-			return true
-		}
-	}
-	return false
 }
 
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's
@@ -1756,12 +1881,20 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 	if reason := checkCopyIntoPlans(name, args, dir); reason != "" {
 		return reason
 	}
+	// A copy's destination directory is checkCopyIntoPlans's to judge.
+	dests, _, _ := guardedCopyOperands(name, args)
 	for _, t := range changedFiles(name, args, redirected) {
 		if planLog(expandPath(t, dir)) {
 			return appendOnly
 		}
 		if planFile(expandPath(t, dir)) {
 			return planWrite
+		}
+		if notesFile(expandPath(t, dir)) {
+			return notesWrite
+		}
+		if reason := wholeGuarded(expandPath(t, dir), false); reason != "" && !slices.Contains(dests, t) {
+			return reason
 		}
 	}
 	return ""
@@ -2346,6 +2479,9 @@ func checkFileChange(c change, dir string) string {
 	}
 	if planFile(path) {
 		return planWrite
+	}
+	if notesFile(path) {
+		return notesWrite
 	}
 	if reason := checkFileAgentSettings(path, dir); reason != "" {
 		return reason

@@ -1469,6 +1469,8 @@
           nativeBuildInputs = [pkgs.jq];
           settings = builtins.toJSON home.wgn.home.claude.settings;
           codex = builtins.toJSON home.wgn.home.codex.sandbox;
+          notes = home.wgn.home.llm.plans.repository.path;
+          inherit (home.home) homeDirectory;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
           reviewerSettings = home.wgn.home.llm.delegate.settings;
@@ -1515,6 +1517,15 @@
             else "agent-plan link is not excluded from the sandbox" end'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
             else "agent-plan link is not allowed" end'
+          # Demo digests and brag files are agent-plan's alone to write, as
+          # plans are: the sandbox denies shell writes to their directories
+          # and a deny rule the file tools' writes, and the commands that
+          # write them run outside the sandbox.
+          check --arg notes "$notes" --arg home "$homeDirectory" '. as $s | ($notes + "/digests", $notes + "/brag")
+            | (select(. as $d | $s.sandbox.filesystem.denyWrite | index([$d]) == null) | "shell writes not denied: \(.)"),
+              ("Edit(~" + ltrimstr($home) + "/**)" | select(. as $r | $s.permissions.deny | index([$r]) == null) | "file tool writes not denied: \(.)")'
+          check '. as $s | ("agent-plan digest *", "agent-plan brag *") | select(. as $c | $s.sandbox.excludedCommands | index([$c]) == null)
+            | "not excluded from the sandbox: \(.)"'
           check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]
             | select(. as $t | $d | index([$t]) == null) | "not denied: \(.)"'
           check --slurpfile mcp "$mcpPath" '. as $s | $mcp[0][] | .servers[] as $server

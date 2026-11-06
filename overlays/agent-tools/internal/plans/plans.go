@@ -103,6 +103,14 @@ func notesRepo(home string) string {
 // none: agents/plans in the operator's notes repository.
 func DefaultDir(home string) string { return filepath.Join(notesRepo(home), "agents", "plans") }
 
+// DefaultRepo is the notes repository under home when the config names no
+// plans directory.
+func DefaultRepo(home string) string { return notesRepo(home) }
+
+// RepoDir is the repository the plans directory is in, which holds the
+// notes files too.
+func (c Config) RepoDir() string { return c.repo() }
+
 // Load reads the config, defaulting to this machine's short host name and
 // to DefaultDir, in the notes repository, which is then the plans'
 // repository too.
