@@ -19,8 +19,8 @@ func notesConfig(t *testing.T) (c Config, repo string) {
 	return c, filepath.Dir(c.Dir)
 }
 
-// friday is a Friday, the day a digest is named for.
-var friday = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+// lastDay is the last day of a digest's range, which names it.
+var lastDay = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
 
 // demo is a digest in the format the export parses: a level-1 heading per
 // change, with its plan and pull request.
@@ -65,7 +65,7 @@ func TestWriteDigest(t *testing.T) {
 		}
 		os.MkdirAll(c.Dir, 0o755)
 		os.Chtimes(c.Dir, old, old)
-		got, err := c.WriteDigest(friday, demo)
+		got, err := c.WriteDigest(lastDay, demo)
 		if err != nil || got.File != file || !got.Changed {
 			t.Fatalf("WriteDigest: %+v, %v", got, err)
 		}
@@ -74,14 +74,14 @@ func TestWriteDigest(t *testing.T) {
 		}
 		before, _ := os.Stat(file)
 		os.Chtimes(c.Dir, old, old)
-		if got, err := c.WriteDigest(friday, demo); err != nil || got.Changed {
+		if got, err := c.WriteDigest(lastDay, demo); err != nil || got.Changed {
 			t.Errorf("the same digest again: %+v, %v", got, err)
 		}
 		if after, _ := os.Stat(file); !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) || touched() {
 			t.Errorf("the same digest again replaced the file, or touched the plans directory")
 		}
 		newer := demo + "More.\n"
-		if got, err := c.WriteDigest(friday, newer); err != nil || !got.Changed || !touched() {
+		if got, err := c.WriteDigest(lastDay, newer); err != nil || !got.Changed || !touched() {
 			t.Errorf("a newer digest: %+v, %v; the plans directory touched: %v", got, err, touched())
 		}
 		if data, _ := os.ReadFile(file); string(data) != newer {
@@ -91,7 +91,7 @@ func TestWriteDigest(t *testing.T) {
 	t.Run("as large as the export reads", func(t *testing.T) {
 		c, _ := notesConfig(t)
 		text := demo + strings.Repeat("x", 64<<10-len(demo)-1) + "\n"
-		if got, err := c.WriteDigest(friday, text); err != nil || !got.Changed {
+		if got, err := c.WriteDigest(lastDay, text); err != nil || !got.Changed {
 			t.Errorf("a digest of 64 KiB: %+v, %v", got, err)
 		}
 	})
@@ -100,17 +100,24 @@ func TestWriteDigest(t *testing.T) {
 	t.Run("a star line in a block", func(t *testing.T) {
 		c, _ := notesConfig(t)
 		text := demo + "#+begin_example\n* not a change\n#+end_example\n"
-		if got, err := c.WriteDigest(friday, text); err != nil || !got.Changed {
+		if got, err := c.WriteDigest(lastDay, text); err != nil || !got.Changed {
 			t.Errorf("a digest whose output holds a star line: %+v, %v", got, err)
+		}
+	})
+	// A range ends on whatever day the operator chooses.
+	t.Run("named for any day", func(t *testing.T) {
+		c, repo := notesConfig(t)
+		got, err := c.WriteDigest(time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), demo)
+		if err != nil || !got.Changed || got.File != filepath.Join(repo, "digests", "2026", "11-05-demo.org") {
+			t.Errorf("a digest named for a Thursday: %+v, %v", got, err)
 		}
 	})
 	refused := map[string]struct {
 		day        time.Time
 		text, want string
 	}{
-		"not a Friday": {day: friday.AddDate(0, 0, -1), text: demo, want: "Thursday"},
-		"over 64 KiB":  {text: demo + strings.Repeat("x", 64<<10-len(demo)) + "\n", want: "64 KiB"},
-		"no change":    {text: "Just text.\n", want: "level-1 heading"},
+		"over 64 KiB": {text: demo + strings.Repeat("x", 64<<10-len(demo)) + "\n", want: "64 KiB"},
+		"no change":   {text: "Just text.\n", want: "level-1 heading"},
 		"changes only in a block": {text: "#+begin_example\n* Loop\n:PROPERTIES:\n:PR: o/r#1\n:PLAN: id:abc-1\n:END:\n#+end_example\n",
 			want: "level-1 heading"},
 		"a change without PR":       {text: "* Loop\n:PROPERTIES:\n:PLAN: id:abc-1\n:END:\n", want: "PR"},
@@ -126,7 +133,7 @@ func TestWriteDigest(t *testing.T) {
 			c, repo := notesConfig(t)
 			day := tc.day
 			if day.IsZero() {
-				day = friday
+				day = lastDay
 			}
 			got, err := c.WriteDigest(day, tc.text)
 			refusedSaying(t, err, tc.want)
@@ -140,7 +147,7 @@ func TestWriteDigest(t *testing.T) {
 		elsewhere := t.TempDir()
 		os.MkdirAll(repo, 0o755)
 		os.Symlink(elsewhere, filepath.Join(repo, "digests"))
-		_, err := c.WriteDigest(friday, demo)
+		_, err := c.WriteDigest(lastDay, demo)
 		refusedSaying(t, err, "link")
 		if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
 			t.Errorf("wrote through the link: %v", entries)

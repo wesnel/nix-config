@@ -211,20 +211,16 @@ func checkDigest(text string) error {
 // badDigest refuses a digest for why, and says how to write it.
 func badDigest(why string, args ...any) error {
 	return refusal.New(why+". Write it as a level-1 heading per change, its drawer holding :PLAN: and :PR:, and run "+
-		"`agent-plan digest --date FRIDAY --text-file FILE` again", args...)
+		"`agent-plan digest --date YYYY-MM-DD --text-file FILE` again", args...)
 }
 
-// WriteDigest writes text as the demo digest of day, a Friday, replacing
-// the one there, and changes nothing when it holds text already. It
-// refuses any other day, text over MaxDigest or not in the format
+// WriteDigest writes text as the demo digest of day, the last day of the
+// range it covers, replacing the one there, and changes nothing when it
+// holds text already. It refuses text over MaxDigest or not in the format
 // checkDigest reads.
 func (c Config) WriteDigest(day time.Time, text string) (NotesWrite, error) {
-	if day.Weekday() != time.Friday {
-		return NotesWrite{}, refusal.New("%s is a %s, and a digest is named for its week's Friday. Run `agent-plan digest --date YYYY-MM-DD --text-file FILE` with that Friday's date",
-			day.Format("2006-01-02"), day.Weekday())
-	}
 	if len(text) > MaxDigest {
-		return NotesWrite{}, refusal.New("the digest is %d bytes, over the %d KiB the export reads. Shorten it, linking long output rather than holding it, and run `agent-plan digest --date FRIDAY --text-file FILE` again",
+		return NotesWrite{}, refusal.New("the digest is %d bytes, over the %d KiB the export reads. Shorten it, linking long output rather than holding it, and run `agent-plan digest --date YYYY-MM-DD --text-file FILE` again",
 			len(text), MaxDigest>>10)
 	}
 	if err := checkDigest(text); err != nil {
