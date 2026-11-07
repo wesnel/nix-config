@@ -25,9 +25,12 @@ type Bot struct {
 		Comment string `json:"comment"`
 	}
 	// Verdicts maps a verdict name to text that appears in the bot's review
-	// body, or in the top-level comment a bot asked by comment can answer
-	// with instead of a review (headComment).
+	// body or result comment.
 	Verdicts map[string]string
+	// ResultComments are texts that mark a top-level comment of a bot asked
+	// by comment as its finished review of the commit the comment links,
+	// posted instead of a review (headComment).
+	ResultComments []string
 	// ResolvesOwnThreads: the bot resolves its threads itself when it
 	// re-reviews, so the loop leaves fixed ones to it.
 	ResolvesOwnThreads bool
@@ -42,6 +45,7 @@ type botConfig struct {
 		Comment  string `json:"comment"`
 	} `json:"request"`
 	Verdicts           map[string]string `json:"verdicts"`
+	ResultComments     []string          `json:"resultComments"`
 	ResolvesOwnThreads bool              `json:"resolvesOwnThreads"`
 	Repos              []string          `json:"repos"`
 }
@@ -86,7 +90,8 @@ func botsFor(slug string) ([]*Bot, error) {
 		if !matchesAny(slug, c.Repos) {
 			continue
 		}
-		bot := &Bot{Name: name, Pattern: pattern, Verdicts: c.Verdicts, ResolvesOwnThreads: c.ResolvesOwnThreads, Repos: c.Repos}
+		bot := &Bot{Name: name, Pattern: pattern, Verdicts: c.Verdicts, ResultComments: c.ResultComments,
+			ResolvesOwnThreads: c.ResolvesOwnThreads, Repos: c.Repos}
 		bot.Request.Reviewer, bot.Request.Comment = c.Request.Reviewer, c.Request.Comment
 		bots = append(bots, bot)
 	}
