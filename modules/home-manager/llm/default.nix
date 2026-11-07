@@ -739,7 +739,9 @@ in {
             reviewer, or `{ comment = "..."; }` to post a top-level trigger
             comment, which the loop deletes once superseded
           - `verdicts` (optional): verdict name to text found in the bot's
-            review body
+            review body. A bot asked by comment has also reviewed the head
+            when, after the trigger, it posts a top-level comment that links
+            the head's commit (`/commit/SHA`) and holds one of these texts
           - `resolvesOwnThreads` (optional): the bot resolves its threads
             itself when it re-reviews, so the loop leaves fixed ones to it
           - `repos` (optional): `owner/name` globs it is limited to
@@ -759,9 +761,12 @@ in {
 
           # Reviews once on its own when a PR opens or leaves draft, and never
           # on push. A bare @-mention gets a chat reply rather than a review.
+          # Finding nothing, it answers the trigger with a top-level comment
+          # alone, which this verdict recognises.
           qodo = {
             login = "^qodo-code-review";
             request.comment = "/agentic_review";
+            verdicts.approval = "Great, no issues found!";
             resolvesOwnThreads = true;
           };
         };
