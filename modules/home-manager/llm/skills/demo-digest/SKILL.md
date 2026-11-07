@@ -1,53 +1,54 @@
 ---
 name: demo-digest
-description: Write the week's demo digest on the notes host, running each change's demo steps and recording what they showed, then move approved brag items into the brag file.
+description: Write the demo digest for a range of days, running each change's demo steps and recording what they showed, then move approved brag items into the brag file. Takes optional SINCE, UNTIL and ZONE arguments.
 disable-model-invocation: true
 ---
 
 # Demo digest
 
-The demo digest is what the operator shows in the weekly demo meeting:
-each change merged or opened that week, with steps a viewer can follow
-and the result each step gave when you ran it. Every result in it is
-observed: output you saw, from the step exactly as the digest shows it.
-Running the steps is the point: a step that fails is a bug found before
-the meeting, and the digest shows it failing.
+The demo digest is what the operator shows in the demo meeting: each
+change merged or opened in a range of days, with steps a viewer can
+follow and the result each step gave when you ran it. Every result in it
+is observed: output you saw, from the step exactly as the digest shows
+it. Running the steps is the point: a step that fails is a bug found
+before the meeting, and the digest shows it failing.
 
-The weekly timer on the notes host (`plans.notesHost` in
-`~/.config/agent-tools/config.json`) starts you headless, with ZONE, the
-operator's time zone, as your prompt's argument (as
-`America/Los_Angeles`). Nobody answers questions during the run: what you
-would ask goes into the digest or the run's plan.
+The operator runs it by name on the ngrok Mac or the devbox, after
+bringing the notes repository up to date on both, so this run reads every
+host's plans as they stand.
 
 ## 1. Start the run
 
-1. Read today's date in ZONE, here `America/Los_Angeles`:
+1. Read the arguments: SINCE and UNTIL, days as `YYYY-MM-DD`, and ZONE,
+   the operator's time zone, `America/Los_Angeles` when not given. UNTIL
+   defaults to today in ZONE:
 
    ```sh
    TZ=America/Los_Angeles date '+%F %A'
    ```
 
-   FRIDAY is today when today is a Friday, else the latest Friday before
-   today. SINCE is seven days before FRIDAY. The week is SINCE through
-   FRIDAY, both days included, in ZONE.
+   SINCE defaults to six days before UNTIL. The range is SINCE through
+   UNTIL, both days included, in ZONE. A SINCE after UNTIL is a mistake to
+   name to the operator before going on.
 2. Make the run's plan, which records the host, the session and the
    directory you run in, and log its start against the ID it prints:
 
    ```sh
-   agent-plan new --title 'Demo digest of 2026-11-06' --slug demo-digest
+   agent-plan new --title 'Demo digest of 2026-10-31 to 2026-11-06' --slug demo-digest
    ```
 
-Done when FRIDAY, SINCE and the run's plan are known.
+Done when SINCE, UNTIL, ZONE and the run's plan are known.
 
-## 2. Find the week's changes
+## 2. Find the range's changes
 
 PLANS is `plans.dir` in `~/.config/agent-tools/config.json`, every
 host's plans.
 
 1. List the repositories whose pull requests any plan names, from the
    `:PULL_REQUESTS:` lines of PLANS (`grep -h '^:PULL_REQUESTS:' PLANS/*.org`).
-2. For each repository, read its pull requests updated since SINCE; their
-   times are UTC, so read each in ZONE:
+2. For each repository, read its pull requests updated since the day
+   before SINCE, which GitHub's UTC dates need; their times are UTC, so
+   read each in ZONE:
 
    ```sh
    gh-read pr list -R wesnel/nix-config --author @me --state all --search 'updated:>=2026-10-30' --limit 100 --json number,title,url,state,createdAt,mergedAt
@@ -59,8 +60,8 @@ host's plans.
    limit at 800, name that repository as cut short, with the limit, in
    the digest's summary and in the hand-back.
 
-3. A pull request is a change of the week when it was opened or merged
-   during the week and is open or merged now.
+3. A pull request is a change of the range when it was opened or merged
+   during the range and is open or merged now.
 4. Its plan is the file in PLANS whose `:PULL_REQUESTS:` names its URL. A
    part's file (`NAME.HOST.P1.org`) has no `:ID:`; its plan is the file
    its `:PARENT:` names. PLAN is `[[id:ID][TITLE]]`, from the plan file's
@@ -68,10 +69,10 @@ host's plans.
 
 Done when every repository's last read returned fewer than its limit or
 is named as cut short, and every pull request the reads returned is a
-change of the week with its PLAN, or set aside with why (no plan names
-it; closed unmerged; outside the week). If GitHub cannot be read, log `blocked` in the run's
-plan with what `gh-read` printed, and stop: a digest without the week's
-changes misleads.
+change of the range with its PLAN, or set aside with why (no plan names
+it; closed unmerged; outside the range). If GitHub cannot be read, log
+`blocked` in the run's plan with what `gh-read` printed, and stop: a
+digest without the range's changes misleads.
 
 ## 3. Choose each change's steps
 
@@ -131,10 +132,11 @@ Done when every step has run once, or is recorded as not run.
   `agent-plan followup` in the run's plan, naming the pull request and
   the step. The step stays as written and run: a fix is the change's own
   work, after the meeting.
-- **Step the devbox cannot run:** it needs macOS (launchd, the Keychain,
-  Parallels), the hardware key, a Mac-hosted service, or a write the
-  sandbox refuses. First look for a step the devbox can run that shows
-  the same behaviour. If there is none, keep the step; its sentence
+- **Step this host cannot run:** it needs the other host's system (on
+  the devbox, macOS: launchd, the Keychain, Parallels; on the Mac,
+  Linux: systemd), the hardware key, or a write the sandbox refuses.
+  First look for a step this host can run that shows the same
+  behaviour. If there is none, keep the step; its sentence
   starts `NOT RUN:` with why, and its result is `not run on HOST: REASON`.
   Its result is never an expected output.
 
@@ -147,7 +149,7 @@ The digest is Org that `agent-plan digest` checks and the Agent plans
 page parses:
 
 ```org
-Written on devbox for SINCE to FRIDAY (ZONE), in the run's plan NAME.
+Written on devbox for SINCE to UNTIL (ZONE), in the run's plan NAME.
 Set aside: wesnel/notes#3, which no plan names.
 
 * Keep each change's visuals in notes
@@ -176,8 +178,8 @@ flowchart LR
 [[https://github.com/user-attachments/assets/0f1e2d3c][Recording: agent-plan visual]]
 ```
 
-- Before the first change: one paragraph saying where and for which week
-  the digest was written, and naming each pull request set aside, with
+- Before the first change: one paragraph saying on which host and for
+  which range the digest was written, and naming each pull request set aside, with
   why.
 - One level-1 heading per change, its title the pull request's, with the
   property drawer right below holding `:PLAN:` and `:PR:`, then one
@@ -194,7 +196,7 @@ flowchart LR
 - The whole digest stays under 64 KiB.
 
 Write the text to a file in your working directory with the file tools,
-then write the digest from it:
+then write the digest from it, named for UNTIL:
 
 ```sh
 agent-plan digest --date 2026-11-06 --text-file digest.org
