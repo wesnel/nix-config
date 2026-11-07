@@ -35,7 +35,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    - the design reviews' open questions for the operator and the decisions you
      made yourself, as one list;
    - the `retro` skill's proposals for findings settled `fix` and session
-     papercuts, referring to those already recorded as they occurred.
+     papercuts, referring to those already recorded as they occurred;
+   - the `brag` skill's items for brag-worthy work in the change, referring
+     to those already recorded as they occurred.
 
 ## Review selection
 

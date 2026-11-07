@@ -12,8 +12,9 @@ import (
 
 // OpenKinds are the kinds of an open item: a hand-back's command or a
 // sign-pass waiting on the operator, a question the operator can answer
-// now, a retro proposal, a ready step, and an open follow-up.
-var OpenKinds = []string{"waiting", "question", "retro", "step", "follow-up"}
+// now, a retro proposal, a brag item waiting for approval, a ready step,
+// and an open follow-up.
+var OpenKinds = []string{"waiting", "question", "retro", "brag", "step", "follow-up"}
 
 // OpenItem is one thing left open in one of this host's plans, with the
 // plan it belongs to, so that a listing can group items by any of the
@@ -188,8 +189,8 @@ func (p Plan) OpenItems(now time.Time) ([]OpenItem, error) {
 	}
 	for _, q := range Askable(qs) {
 		kind := "question"
-		if q.Kind == "retro" {
-			kind = "retro"
+		if q.Kind != "" {
+			kind = q.Kind
 		}
 		it := open(kind, q.ID)
 		it.Part, it.Title, it.Time = q.Part, q.Question, at(q.ID, "asked")

@@ -43,22 +43,53 @@ func TestDigestCommand(t *testing.T) {
 	}
 }
 
-// agent-plan brag adds one entry per pull request.
+// agent-plan brag writes an approved brag item, its summary the
+// operator's answer, once per pull request; brags lists it until then.
 func TestBragCommand(t *testing.T) {
 	c := setup(t)
 	plan := newPlan(t)
+	if code, out, errs := agentPlan(t, "", "ask", plan, "--kind", "brag", "--question", "Ran the loop",
+		"--recommendation", "A drafted summary."); code != 0 || !strings.Contains(out, `"id": "Q1"`) {
+		t.Fatalf("ask --kind brag: %d %s %s", code, out, errs)
+	}
+	if code, out, errs := agentPlan(t, "", "decide", plan, "Q1", "--answer", "Agents run the loop themselves."); code != 0 {
+		t.Fatalf("decide: %d %s %s", code, out, errs)
+	}
+	pending := func() []plans.BragItem {
+		t.Helper()
+		code, out, errs := agentPlan(t, "", "brags")
+		var items []plans.BragItem
+		if code != 0 || json.Unmarshal([]byte(out), &items) != nil {
+			t.Fatalf("brags: %d %s %s", code, out, errs)
+		}
+		return items
+	}
+	if items := pending(); len(items) != 1 || items[0].ID != "Q1" || items[0].Summary != "Agents run the loop themselves." {
+		t.Errorf("pending before: %+v", items)
+	}
 	for i, changed := range []bool{true, false} {
-		code, out, errs := agentPlan(t, "", "brag", plan, "--pr", "o/r#1", "--date", "2026-11-05", "--title", "Ran the loop", "--text", "Done.")
+		code, out, errs := agentPlan(t, "", "brag", plan, "Q1", "--pr", "o/r#1", "--date", "2026-11-05")
 		var w plans.NotesWrite
 		if code != 0 || json.Unmarshal([]byte(out), &w) != nil || w.Changed != changed {
 			t.Fatalf("run %d: %d %s %s", i+1, code, out, errs)
 		}
 	}
 	data, _ := os.ReadFile(filepath.Join(filepath.Dir(c.Dir), "brag", "2026.org"))
-	if strings.Count(string(data), ":PR: https://github.com/o/r/pull/1\n") != 1 || !strings.HasSuffix(string(data), ":END:\nDone.\n") {
+	if !strings.Contains(string(data), "* Ran the loop\n:PROPERTIES:\n:PR: https://github.com/o/r/pull/1\n") ||
+		!strings.HasSuffix(string(data), ":END:\nAgents run the loop themselves.\n") {
 		t.Errorf("the brag file holds\n%s", data)
 	}
-	if code, _, _ := agentPlan(t, "", "brag", plan, "--pr", "o/r#2", "--title", "No date", "--text", "Done."); code != 2 {
-		t.Errorf("without --date: exit %d", code)
+	if items := pending(); len(items) != 0 {
+		t.Errorf("pending after: %+v", items)
+	}
+	for _, args := range [][]string{
+		{"brag", plan, "Q1", "--pr", "o/r#2"},
+		{"brag", plan, "--pr", "o/r#2", "--date", "2026-11-05"},
+		{"brag", plan, "Q1", "--pr", "o/r#2", "--date", "2026-11-05", "--title", "Ran the loop", "--text", "Done."},
+		{"brags", plan},
+	} {
+		if code, _, _ := agentPlan(t, "", args...); code != 2 {
+			t.Errorf("%q: exit %d", args, code)
+		}
 	}
 }

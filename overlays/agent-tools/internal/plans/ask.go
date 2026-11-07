@@ -55,6 +55,9 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		return Asked{}, refusal.New("%q is not a question's kind. Pass `--kind %s`, or no --kind for a plain question", o.Kind,
 			strings.Join(QuestionKinds, "` or `--kind "))
 	}
+	if o.Kind == "brag" && o.Answer != "" {
+		return Asked{}, refusal.New("a brag item's summary is the operator's to approve, so it is not settled as it is asked. Ask it without `--answer`, and leave it for the operator to answer through the questions skill")
+	}
 	if err := checkTitle("question", o.Question); err != nil {
 		return Asked{}, err
 	}
