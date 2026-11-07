@@ -100,9 +100,12 @@ func TestMCPPlan(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(notes, "digests", "2026", "11-06-demo.org")); err != nil || string(data) != digest {
 			t.Errorf("digest: %v\n%s", err, data)
 		}
-		call(t, "brag", map[string]any{"pr": "o/r#7", "date": "2026-11-05", "title": "Grew the code", "text": "It grew."})
+		q := call(t, "ask", map[string]any{"question": "Grew the code", "recommendation": "A drafted summary.", "kind": "brag"})
+		call(t, "decide", map[string]any{"question": q["id"], "answer": "It grew."})
+		call(t, "brag", map[string]any{"question": q["id"], "pr": "o/r#7", "date": "2026-11-05"})
 		if data, err := os.ReadFile(filepath.Join(notes, "brag", "2026.org")); err != nil ||
-			!strings.Contains(string(data), "* Grew the code\n:PROPERTIES:\n:PR: https://github.com/o/r/pull/7\n") {
+			!strings.Contains(string(data), "* Grew the code\n:PROPERTIES:\n:PR: https://github.com/o/r/pull/7\n") ||
+			!strings.HasSuffix(string(data), ":END:\nIt grew.\n") {
 			t.Errorf("brag: %v\n%s", err, data)
 		}
 	})
