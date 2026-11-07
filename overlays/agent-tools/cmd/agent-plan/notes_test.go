@@ -12,20 +12,10 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// notesSetup is setup with this host the one that writes the notes files.
-func notesSetup(t *testing.T) plans.Config {
-	t.Helper()
-	c := setup(t)
-	c.NotesHost = c.Host
-	data, _ := json.Marshal(map[string]any{"plans": c})
-	os.WriteFile(os.Getenv("AGENT_TOOLS_CONFIG"), data, 0o644)
-	return c
-}
-
 // agent-plan digest writes a digest the export then reads, and writing it
 // again changes nothing.
 func TestDigestCommand(t *testing.T) {
-	c := notesSetup(t)
+	c := setup(t)
 	file := filepath.Join(t.TempDir(), "digest.org")
 	os.WriteFile(file, []byte("* Add the loop\n:PROPERTIES:\n:PR: o/r#1\n:PLAN: id:abc-1\n:END:\nSHOWN-IN-THE-EXPORT\n"), 0o644)
 	var w plans.NotesWrite
@@ -54,7 +44,7 @@ func TestDigestCommand(t *testing.T) {
 
 // agent-plan brag adds one entry per pull request.
 func TestBragCommand(t *testing.T) {
-	c := notesSetup(t)
+	c := setup(t)
 	plan := newPlan(t)
 	for i, changed := range []bool{true, false} {
 		code, out, errs := agentPlan(t, "", "brag", plan, "--pr", "o/r#1", "--date", "2026-11-05", "--title", "Ran the loop", "--text", "Done.")

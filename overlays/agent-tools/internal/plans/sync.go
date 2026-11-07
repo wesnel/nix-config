@@ -10,12 +10,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 // SyncOptions say what a sync does.
@@ -162,9 +164,10 @@ func lockFile(path string, try bool) (*os.File, error) {
 	return f, nil
 }
 
-// ownFiles are this host's plan files and workstreams, and the notes files
-// where it is their host, as paths relative to the repository: those in
-// the working tree, and those in any of trees that are gone from it.
+// ownFiles are this host's plan files and workstreams, and the notes
+// files, which every host sends its changes to, as paths relative to the
+// repository: those in the working tree, and those in any of trees that
+// are gone from it.
 func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error) {
 	rel, err := filepath.Rel(c.repo(), c.Dir)
 	if err != nil {
@@ -198,9 +201,6 @@ func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error)
 			}
 		}
 	}
-	if !c.ownsNotes() {
-		return out, nil
-	}
 	notes, err := c.notesFiles()
 	if err != nil {
 		return nil, err
@@ -223,13 +223,13 @@ func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error)
 
 // ownPath reports whether f, a path relative to the repository, is one of
 // this host's files, which sync sends: a plan file or workstream of its own
-// in the plans directory, plans relative to the repository, or a notes file
-// where it is their host.
+// in the plans directory, plans relative to the repository, or a notes
+// file.
 func (c Config) ownPath(plans, f string) bool {
 	if filepath.Dir(f) == plans {
 		return c.ownName(filepath.Base(f))
 	}
-	return c.ownsNotes() && NotesFile(filepath.ToSlash(f))
+	return NotesFile(filepath.ToSlash(f))
 }
 
 // ownName reports whether a file named name in the plans directory is one
@@ -382,31 +382,52 @@ func (c Config) forward(ctx context.Context, branch, tip string) (string, error)
 	if caught, err := c.catchUp(ctx, branch, tip); err != nil || caught {
 		return "", err
 	}
-	if _, others, err := c.incoming(ctx, "HEAD", tip); err == nil && len(others) > 0 {
-		return fmt.Sprintf("origin's %s changes %s, which this host's sync did not commit, so this host's copy is not sent over it",
-			branch, strings.Join(others, ", ")), nil
+	if a, err := c.arrivals(ctx, "HEAD", tip); err == nil && a.why != "" {
+		return a.why, nil
 	}
 	return behind, nil
 }
 
-// incoming reads the commits at..tip adds: own is whether they change
-// nothing but this host's files (ownPath), each notes file among them in a
-// commit this host's sync committed; others are the notes files of this
-// host's that a commit of anyone else changes.
-func (c Config) incoming(ctx context.Context, at, tip string) (own bool, others []string, err error) {
+// arrived is what the commits at..tip bring that catchUp must judge.
+type arrived struct {
+	// ok is whether they change nothing but this host's files (ownPath),
+	// and each notes file among them as a sync commit (syncCommitter) with
+	// nothing lost by taking it; why says why not, where a notes file is
+	// the reason.
+	ok  bool
+	why string
+	// take are the notes files another host's sync changed that the
+	// working tree holds as at does, which it takes from tip as a
+	// fast-forward would.
+	take []string
+}
+
+// syncCommitter is the committer of a sync commit, on any host: syncName,
+// at agent-plan@HOST.invalid.
+var syncCommitter = regexp.MustCompile(`^` + regexp.QuoteMeta(syncName) + ` <agent-plan@[A-Za-z0-9][A-Za-z0-9_-]*\.invalid>$`)
+
+// arrivals reads the commits at..tip adds. A notes file is one any host
+// writes and the operator may also commit with git: a change to one is
+// taken only from a sync commit; this host's own leaves the working tree's
+// copy, which is the same or newer, and another host's is taken into the
+// working tree where that copy is as at holds it, and refused where it has
+// changed here too.
+func (c Config) arrivals(ctx context.Context, at, tip string) (arrived, error) {
 	rel, err := filepath.Rel(c.repo(), c.Dir)
 	if err != nil {
-		return false, nil, err
+		return arrived{}, err
 	}
 	// Each merge against each of its parents, whatever log.diffMerges
 	// says, so that no change a merge brings goes unlisted. Each commit's
 	// committer comes first, after \x01, then its files, each ended by a
 	// NUL, the first after a newline.
-	out, err := c.gitRaw(ctx, "log", "--format=%x01%ce", "--name-only", "--no-renames", "--diff-merges=separate", "-z", at+".."+tip)
+	out, err := c.gitRaw(ctx, "log", "--format=%x01%cn <%ce>", "--name-only", "--no-renames", "--diff-merges=separate", "-z", at+".."+tip)
 	if err != nil {
-		return false, nil, err
+		return arrived{}, err
 	}
-	own = true
+	a := arrived{ok: true}
+	ours := syncName + " <" + c.syncEmail() + ">"
+	var others, theirs []string
 	committer := ""
 	for _, f := range strings.Split(out, "\x00") {
 		if who, ok := strings.CutPrefix(f, "\x01"); ok {
@@ -417,15 +438,93 @@ func (c Config) incoming(ctx context.Context, at, tip string) (own bool, others 
 		switch {
 		case f == "":
 		case !c.ownPath(rel, f):
-			own = false
-		case filepath.Dir(f) != rel && committer != c.syncEmail():
-			own = false
+			a.ok = false
+		case filepath.Dir(f) == rel || committer == ours:
+		case syncCommitter.MatchString(committer):
+			if !slices.Contains(theirs, f) {
+				theirs = append(theirs, f)
+			}
+		default:
 			if !slices.Contains(others, f) {
 				others = append(others, f)
 			}
 		}
 	}
-	return own, others, nil
+	if len(others) > 0 {
+		a.ok = false
+		a.why = fmt.Sprintf("origin changes %s in a commit agent-plan sync did not make, so this host's copy is not sent over it",
+			strings.Join(others, ", "))
+		return a, nil
+	}
+	if len(theirs) == 0 {
+		return a, nil
+	}
+	had, err := c.treeBlobs(ctx, at, theirs)
+	if err != nil {
+		return arrived{}, err
+	}
+	want, err := c.treeBlobs(ctx, tip, theirs)
+	if err != nil {
+		return arrived{}, err
+	}
+	now, err := c.dirBlobs(ctx, theirs, false)
+	if err != nil {
+		return arrived{}, err
+	}
+	var both []string
+	for _, f := range theirs {
+		// Taking it would write through a link among its directories.
+		var r refusal.Refusal
+		if err := c.notesParents(f, false); errors.As(err, &r) {
+			a.ok, a.why = false, err.Error()
+			return a, nil
+		} else if err != nil {
+			return arrived{}, err
+		}
+		switch now[f] {
+		case want[f]:
+		case had[f]:
+			a.take = append(a.take, f)
+		default:
+			both = append(both, f)
+		}
+	}
+	if len(both) > 0 {
+		a.ok = false
+		a.why = fmt.Sprintf("%s changed here and on another host, so neither copy is sent over the other; the operator reconciles them",
+			strings.Join(both, ", "))
+	}
+	return a, nil
+}
+
+// takeFiles writes files, notes files, in the working tree as tip holds
+// them, removing those tip lacks, each replaced whole by a rename, and
+// never through a link among their directories (notesParents).
+func (c Config) takeFiles(ctx context.Context, tip string, files []string) error {
+	blobs, err := c.treeBlobs(ctx, tip, files)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		file := filepath.Join(c.repo(), f)
+		if err := c.notesParents(f, blobs[f] != ""); err != nil {
+			return err
+		}
+		if blobs[f] == "" {
+			if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			continue
+		}
+		data, err := c.gitRaw(ctx, "cat-file", "blob", blobs[f])
+		if err != nil {
+			return err
+		}
+		if err := replaceFile(file, data, func() bool { return true }); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // catchUp moves branch and the index to tip, and leaves the working tree as
@@ -435,13 +534,17 @@ func (c Config) incoming(ctx context.Context, at, tip string) (own bool, others 
 // commits are sync's own, so the working tree holds the same version of
 // each of those files or a newer one, which sync sends next: what git does
 // for `git reset tip` with nothing staged. It reports whether it moved
-// branch, and why not where a notes file is the reason.
+// branch.
 //
 // A plan file is written by agent-plan alone, so its commits are taken to
-// be sync's. A notes file is one the operator may also commit with git, so
-// a commit that changes one counts as sync's only where this host's sync
-// committed it (syncEmail); any other leaves the branch where it is, so
-// that sync never sends this host's copy over that commit's change.
+// be sync's. A notes file is judged as arrivals says: a change to one in
+// another host's sync commit is written into the working tree first, as a
+// fast-forward would write it, holding the notes lock so that no
+// agent-plan digest or brag write comes between the check and the write;
+// a change to one that would be lost, or that sync did not commit, leaves
+// the branch where it is, so that sync never sends this host's copy over
+// it. Written before the branch moves, a file stopped there is one tip
+// already holds, which the next sync stages and fast-forwards over.
 //
 // It holds the index's lock, as git does to write the index, from before
 // it reads HEAD until it has written the new index, so the operator's git
@@ -517,7 +620,13 @@ func (c Config) catchUp(ctx context.Context, branch, tip string) (bool, error) {
 	if op, err := c.inProgress(ctx); err != nil || op != "" {
 		return false, err
 	}
-	if own, _, err := c.incoming(ctx, at, tip); err != nil || !own {
+	notes, err := lockFile(filepath.Join(c.Dir, ".notes.lock"), false)
+	if err != nil {
+		return false, err
+	}
+	defer notes.Close()
+	a, err := c.arrivals(ctx, at, tip)
+	if err != nil || !a.ok {
 		return false, err
 	}
 	env := []string{"GIT_INDEX_FILE=" + lock, "GIT_LITERAL_PATHSPECS=1"}
@@ -538,6 +647,9 @@ func (c Config) catchUp(ctx context.Context, branch, tip string) (bool, error) {
 		stop <- s
 		return false, nil
 	default:
+	}
+	if err := c.takeFiles(ctx, tip, a.take); err != nil {
+		return false, err
 	}
 	if _, err := c.git(ctx, "update-ref", "-m", "agent-plan sync: catch up with origin", "refs/heads/"+branch, tip, at); err != nil {
 		// A signal to sync's process group can stop update-ref once it
@@ -708,18 +820,14 @@ func (c Config) stagedAfterSync(ctx context.Context) (bool, error) {
 }
 
 // plansStaged reports whether the index holds a change under the plans
-// directory, or the notes files' directories where this host is theirs,
-// against the commit at, which bringForward will not stage over.
+// directory or the notes files' directories against the commit at, which
+// bringForward will not stage over.
 func (c Config) plansStaged(ctx context.Context, at string) (bool, error) {
 	rel, err := filepath.Rel(c.repo(), c.Dir)
 	if err != nil {
 		return false, err
 	}
-	paths := []string{rel}
-	if c.ownsNotes() {
-		paths = append(paths, notesDirs...)
-	}
-	_, err = c.git(ctx, append([]string{"diff", "--cached", "--quiet", at, "--"}, paths...)...)
+	_, err = c.git(ctx, append([]string{"diff", "--cached", "--quiet", at, "--", rel}, notesDirs...)...)
 	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) && exit.ExitCode() == 1 {
 		return true, nil
 	}

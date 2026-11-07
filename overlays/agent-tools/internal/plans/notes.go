@@ -19,9 +19,10 @@ import (
 )
 
 // The notes files are the files agent-plan writes in the notes repository
-// outside the plans directory: each week's demo digest, DigestFile, and
-// each year's brag file, BragFile. Only the host Config.NotesHost names
-// writes them, and its sync alone sends them.
+// outside the plans directory: each demo digest, DigestFile, and each
+// year's brag file, BragFile. Their names hold no host: every host writes
+// them and its sync sends its changes to them, and catchUp never sends one
+// host's copy over another writer's change.
 
 var (
 	// digestName is a demo digest's file name in its year's directory
@@ -72,10 +73,6 @@ func NotesFile(rel string) bool {
 	}
 	return false
 }
-
-// ownsNotes reports whether this host is the one that writes the notes
-// files.
-func (c Config) ownsNotes() bool { return c.NotesHost != "" && c.NotesHost == c.Host }
 
 // notesFiles are the notes files in the repository's working tree, as
 // slash paths relative to it: regular files in directories that are not
@@ -160,19 +157,6 @@ func (pr pullRequest) url() string {
 	return "https://github.com/" + pr.repo + "/pull/" + pr.number
 }
 
-// checkNotesHost refuses a write of the notes files on any host but theirs,
-// whose sync alone sends them.
-func (c Config) checkNotesHost() error {
-	if c.NotesHost == "" {
-		return refusal.New("no host writes digests and brag files: plans.notesHost in the agent-tools config names none. Leave the write to the host that should, or report it to the operator")
-	}
-	if !c.ownsNotes() {
-		return refusal.New("digests and brag files are written on %s alone, which plans.notesHost names, so that no two hosts write the same file; this is %s. Run the command on %s, or report it to the operator",
-			c.NotesHost, c.Host, c.NotesHost)
-	}
-	return nil
-}
-
 // checkDigest refuses text that is not a demo digest as the export parses
 // one: Org, with at least one level-1 heading, each a change whose property
 // drawer, right below it, holds PLAN, an id: link, and PR, OWNER/NAME#N or
@@ -233,11 +217,8 @@ func badDigest(why string, args ...any) error {
 // WriteDigest writes text as the demo digest of day, a Friday, replacing
 // the one there, and changes nothing when it holds text already. It
 // refuses any other day, text over MaxDigest or not in the format
-// checkDigest reads, and any host but the notes host.
+// checkDigest reads.
 func (c Config) WriteDigest(day time.Time, text string) (NotesWrite, error) {
-	if err := c.checkNotesHost(); err != nil {
-		return NotesWrite{}, err
-	}
 	if day.Weekday() != time.Friday {
 		return NotesWrite{}, refusal.New("%s is a %s, and a digest is named for its week's Friday. Run `agent-plan digest --date YYYY-MM-DD --text-file FILE` with that Friday's date",
 			day.Format("2006-01-02"), day.Weekday())
@@ -265,12 +246,8 @@ type BragOptions struct {
 // heading, the title, whose drawer holds PR, as its GitHub URL,
 // REPOSITORY and PLAN, an id: link to the plan, followed by the summary.
 // An entry for the same pull request already there, the same, changes
-// nothing, and refuses o where it differs. It refuses any host but the
-// notes host.
+// nothing, and refuses o where it differs.
 func (c Config) WriteBrag(o BragOptions) (NotesWrite, error) {
-	if err := c.checkNotesHost(); err != nil {
-		return NotesWrite{}, err
-	}
 	pr, ok := parsePR(o.PR)
 	if !ok {
 		return NotesWrite{}, refusal.New("PR %q names no pull request. Pass `--pr OWNER/NAME#N` or its https://github.com URL", o.PR)
@@ -341,22 +318,8 @@ func (c Config) writeNotesFile(rel string, next func(old []byte) (string, error)
 		return w, err
 	}
 	defer lock.Close()
-	dir := c.repo()
-	for _, part := range strings.Split(path.Dir(rel), "/") {
-		dir = filepath.Join(dir, part)
-		info, err := os.Lstat(dir)
-		if errors.Is(err, fs.ErrNotExist) {
-			if err := os.Mkdir(dir, 0o755); err != nil { //nolint:gosec // a directory of the notes repository, which git tracks
-				return w, err
-			}
-			continue
-		}
-		if err != nil {
-			return w, err
-		}
-		if !info.IsDir() {
-			return w, refusal.New("%s is a link or a file, not a directory, so %s is not written through it. Report it to the operator", dir, rel)
-		}
+	if err := c.notesParents(rel, true); err != nil {
+		return w, err
 	}
 	old, err := readRegularFile(file)
 	if err != nil {
@@ -372,6 +335,30 @@ func (c Config) writeNotesFile(rel string, next func(old []byte) (string, error)
 	touch(c.Dir)
 	w.Changed = true
 	return w, nil
+}
+
+// notesParents refuses a notes file rel, a path relative to the repository,
+// whose directories are not all directories, a link among them, so that
+// nothing is written through one; with create it makes those missing.
+func (c Config) notesParents(rel string, create bool) error {
+	dir := c.repo()
+	for _, part := range strings.Split(path.Dir(filepath.ToSlash(rel)), "/") {
+		dir = filepath.Join(dir, part)
+		info, err := os.Lstat(dir)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) && create:
+			if err := os.Mkdir(dir, 0o755); err != nil { //nolint:gosec // a directory of the notes repository, which git tracks
+				return err
+			}
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
+			return err
+		case !info.IsDir():
+			return refusal.New("%s is a link or a file, not a directory, so %s is not written through it. Report it to the operator", dir, rel)
+		}
+	}
+	return nil
 }
 
 // readRegularFile reads file, nil where it is missing, refusing anything but

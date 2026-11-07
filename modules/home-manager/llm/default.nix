@@ -15,7 +15,7 @@ with lib; let
 
   agentToolsConfig = pkgs.writeText "agent-tools-config.json" (builtins.toJSON {
     plans = {
-      inherit (cfg.plans) dir host notesHost;
+      inherit (cfg.plans) dir host;
       inherit (cfg.plans.repository) remote;
       repo = cfg.plans.repository.path;
       sshConfig = "${config.xdg.configHome}/${notesSshConfigFile}";
@@ -319,21 +319,6 @@ in {
         description = ''
           This machine's name in its plans' file names. It holds no dot,
           which separates the parts of those names.
-        '';
-      };
-
-      notesHost = mkOption {
-        type = types.str;
-        default = "devbox";
-
-        description = ''
-          The {option}`host` of the one machine that writes the demo
-          digests (`digests/YYYY/MM-DD-demo.org`) and brag files
-          (`brag/YYYY.org`) in the notes repository, through `agent-plan
-          digest` and `agent-plan brag`, and whose sync sends them. Every
-          other machine refuses to write them and only receives them, so
-          no two machines write the same file; every machine must name the
-          same one.
         '';
       };
 
