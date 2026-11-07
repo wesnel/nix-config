@@ -127,9 +127,8 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 				review.Pending = review.Pending || bot.Pattern.MatchString(login)
 			}
 		} else if t := lastTrigger(comments, viewer, bot.Request.Comment); t != nil {
-			c, verdict := headComment(comments, bot, t.At, pr.HeadRefOid)
-			if c != nil && (latest == nil || c.At > latest.SubmittedAt) {
-				review.At, review.ReviewedHead, review.Verdict, review.NewComments = c.At, true, verdict, nil
+			if c := headComment(comments, bot, t.At, pr.HeadRefOid); c != nil && (latest == nil || c.At > latest.SubmittedAt) {
+				review.At, review.ReviewedHead, review.Verdict, review.NewComments = c.At, true, verdictOf(bot.Verdicts, c.Body), nil
 			}
 			if !review.ReviewedHead {
 				// A trigger the bot has not answered with a review since.
@@ -143,23 +142,27 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 }
 
 // headComment is bot's newest top-level comment posted after the trigger at
-// after that links head's commit and holds one of bot's verdicts' text, with
-// that verdict, or nil. A bot asked by comment can answer with such a comment
-// and no review: Qodo does when it finds nothing, linking the commit it
-// reviewed in an HTML comment.
-func headComment(comments []issueComment, bot *Bot, after, head string) (*issueComment, string) {
+// after that links head's commit and holds one of bot's ResultComments, or
+// nil. A bot asked by comment can answer with such a comment and no review:
+// Qodo posts its summary comment when its first review finds nothing, and a
+// comment linking the commit when a later review has finished. Only a
+// comment's creation counts: Qodo edits its summary comment to link each new
+// head soon after a push, reviewed or not.
+func headComment(comments []issueComment, bot *Bot, after, head string) *issueComment {
 	var found *issueComment
-	verdict := ""
 	for i := range comments {
 		c := &comments[i]
 		if c.At <= after || !bot.Pattern.MatchString(c.Login) || !strings.Contains(c.Body, "/commit/"+head) {
 			continue
 		}
-		if v := verdictOf(bot.Verdicts, c.Body); v != "unknown" {
-			found, verdict = c, v
+		for _, text := range bot.ResultComments {
+			if strings.Contains(c.Body, text) {
+				found = c
+				break
+			}
 		}
 	}
-	return found, verdict
+	return found
 }
 
 // openThreads counts a PR's unresolved review threads by the bot that
