@@ -109,6 +109,34 @@ refuses escape
 refuses ../outside/file
 printf scratch >untracked
 refuses untracked tracked-dir/keep
+# A worktree nested in the working directory's tracks files its index does
+# not list: neither they, its untracked files, its Git metadata, nor a
+# directory holding one is scratch.
+mkdir -p holder
+for inner in inner holder/inner; do
+  git init -q "$inner"
+  printf kept >"$inner/kept"
+  git -C "$inner" add kept
+  git -C "$inner" -c user.name=test -c user.email=test@example.com commit -qm nested
+done
+printf loose >inner/loose
+refuses_with 'is in a worktree nested in' inner/kept
+refuses_with 'is in a worktree nested in' inner/loose
+refuses_with 'Git metadata is not scratch' inner/.git/config
+refuses_with 'Git metadata is not scratch' inner/.git
+refuses_with 'holds a nested worktree' inner
+refuses_with 'holds a nested worktree' holder
+# A directory the check cannot read may hide one.
+mkdir -p locked-holder/locked
+git init -q locked-holder/locked/inner
+chmod 000 locked-holder/locked
+trap 'chmod -R u+rwX "$root" 2>/dev/null || true' EXIT
+if [[ -r locked-holder/locked ]]; then
+  echo 'chmod 000 left a directory readable, as for root, so the unreadable-directory case cannot run' >&2
+  exit 1
+fi
+refuses_with 'cannot inspect locked-holder for nested worktrees' locked-holder
+chmod 755 locked-holder/locked
 # What the sandbox keeps from a sandboxed command's writes: Claude Code's
 # settings in the project, and the paths this module denies (here one in
 # the worktree, as the plans directory is in the notes repository).

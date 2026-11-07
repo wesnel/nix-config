@@ -450,7 +450,7 @@ with lib; let
   }:
     pkgs.writeShellApplication {
       name = "trash-scratch";
-      runtimeInputs = [pkgs.coreutils pkgs.git];
+      runtimeInputs = [pkgs.coreutils pkgs.findutils pkgs.git];
       derivationArgs = {inherit postCheck;};
       text =
         ''
