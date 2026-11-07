@@ -24,7 +24,9 @@ type Bot struct {
 		// "/agentic_review". The loop deletes it once superseded.
 		Comment string `json:"comment"`
 	}
-	// Verdicts maps a verdict name to text that appears in the bot's review body.
+	// Verdicts maps a verdict name to text that appears in the bot's review
+	// body, or in the top-level comment a bot asked by comment can answer
+	// with instead of a review (headComment).
 	Verdicts map[string]string
 	// ResolvesOwnThreads: the bot resolves its threads itself when it
 	// re-reviews, so the loop leaves fixed ones to it.

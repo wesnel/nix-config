@@ -5,17 +5,17 @@ import (
 	"strings"
 )
 
-// issueComment is one of the authenticated user's top-level comments on a
-// pull request.
+// issueComment is a top-level comment on a pull request.
 type issueComment struct {
-	ID   int64
-	Body string
-	At   string
+	ID    int64
+	Login string // "" for a deleted account
+	Body  string
+	At    string
 }
 
-// viewerComments lists viewer's top-level comments on PR number, oldest
-// first, reading every page.
-func viewerComments(slug string, number int, viewer string) ([]issueComment, error) {
+// prComments lists PR number's top-level comments, oldest first, reading
+// every page.
+func prComments(slug string, number int) ([]issueComment, error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	var out []issueComment
 	var cursor *string
@@ -51,9 +51,11 @@ func viewerComments(slug string, number int, viewer string) ([]issueComment, err
 		}
 		comments := data.Repository.PullRequest.Comments
 		for _, c := range comments.Nodes {
-			if c.Author != nil && c.Author.Login == viewer {
-				out = append(out, issueComment{ID: c.DatabaseID, Body: c.Body, At: c.CreatedAt})
+			comment := issueComment{ID: c.DatabaseID, Body: c.Body, At: c.CreatedAt}
+			if c.Author != nil {
+				comment.Login = c.Author.Login
 			}
+			out = append(out, comment)
 		}
 		if !comments.PageInfo.HasNextPage {
 			return out, nil
@@ -63,11 +65,12 @@ func viewerComments(slug string, number int, viewer string) ([]issueComment, err
 	}
 }
 
-// lastTrigger is the newest of comments whose body is trigger, or nil.
-func lastTrigger(comments []issueComment, trigger string) *issueComment {
+// lastTrigger is the newest of viewer's comments whose body is trigger, or
+// nil.
+func lastTrigger(comments []issueComment, viewer, trigger string) *issueComment {
 	var last *issueComment
 	for i := range comments {
-		if comments[i].Body == trigger {
+		if comments[i].Login == viewer && comments[i].Body == trigger {
 			last = &comments[i]
 		}
 	}
@@ -77,13 +80,13 @@ func lastTrigger(comments []issueComment, trigger string) *issueComment {
 // deleteTriggers deletes the authenticated user's top-level comments on PR
 // number whose body is one of triggers, and returns how many it deleted.
 func deleteTriggers(repo *Repo, number int, triggers []string) (int, error) {
-	comments, err := viewerComments(repo.Slug, number, repo.Viewer)
+	comments, err := prComments(repo.Slug, number)
 	if err != nil {
 		return 0, err
 	}
 	deleted := 0
 	for _, c := range comments {
-		if !contains(triggers, c.Body) {
+		if c.Login != repo.Viewer || !contains(triggers, c.Body) {
 			continue
 		}
 		if err := commentsREST("DELETE", fmt.Sprintf("repos/%s/issues/comments/%d", repo.Slug, c.ID), nil, nil); err != nil {
