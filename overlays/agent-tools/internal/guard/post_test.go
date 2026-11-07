@@ -79,6 +79,8 @@ func TestPost(t *testing.T) {
 
 	t.Run("records facts", testPostRecordsFacts)
 	t.Run("links plans on the facts it records", testPostLinksPlans)
+	t.Run("skips worktrees and branches of scratch repositories", testPostSkipsScratchRepos)
+	t.Run("files a worktree at a scratch path", testPostFilesWorktreeInScratch)
 	t.Run("hands over the pull-requests skill", testPostPullRequests)
 }
 

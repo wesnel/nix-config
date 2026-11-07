@@ -30,12 +30,19 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 
 // planned makes a repository with a worktree for a plan's part, and a plan
 // in a plans directory of the test's own that names the session claude:s1
-// and the main worktree, with part P1 in the linked one.
+// and the main worktree, with part P1 in the linked one. For the test,
+// the only scratch root is the directory "scratch" beside main, so the
+// repository is not scratch.
 func planned(t *testing.T) (main, linked string, p plans.Plan) {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	main, linked = filepath.Join(root, "main"), filepath.Join(root, "linked")
+	scratch := filepath.Join(root, "scratch")
 	os.Mkdir(main, 0o755)
+	os.Mkdir(scratch, 0o755)
+	old := scratchRoots
+	scratchRoots = func() []string { return []string{scratch} }
+	t.Cleanup(func() { scratchRoots = old })
 	gitIn(t, main, "init", "-q", "-b", "main")
 	gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, main, "worktree", "add", "-q", "-b", "part", linked)
@@ -247,5 +254,50 @@ func testPostRecordsFacts(t *testing.T) {
 	// The properties are what the log gives them.
 	if s, err := p.Status(); err != nil || len(s.PropertyDrift) != 0 {
 		t.Errorf("property drift %+v, %v", s.PropertyDrift, err)
+	}
+}
+
+// A repository made under a scratch root to try something is no plan's
+// work: the worktrees and branches made in it stay out of the plan of the
+// session that made them.
+func testPostSkipsScratchRepos(t *testing.T) {
+	main, _, p := planned(t)
+	probe := filepath.Join(filepath.Dir(main), "scratch", "probe")
+	os.Mkdir(probe, 0o755)
+	gitOut(t, probe, "init", "-q", "-b", "main")
+	gitOut(t, probe, "commit", "-q", "--allow-empty", "-m", "base")
+	for _, c := range []struct {
+		name, command, stdout string
+		args                  []string
+	}{
+		{"worktree add", "git worktree add -b probed ../probed", "", []string{"worktree", "add", "-q", "-b", "probed", "../probed"}},
+		{"switch -c", "git switch -c switched", "Switched to a new branch 'switched'\n", []string{"switch", "-q", "-c", "switched"}},
+		{"checkout -b", "git checkout -b checked", "Switched to a new branch 'checked'\n", []string{"checkout", "-q", "-b", "checked"}},
+		{"branch", "git branch made", "", []string{"branch", "made"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			gitOut(t, probe, c.args...)
+			postHook(t, claudeEvent("s1", probe, c.command, c.stdout))
+			gitOut(t, probe, "switch", "-q", "main")
+			for name, want := range map[string]string{"WORKTREES": main, "BRANCHES": "main..loop"} {
+				if got := planProperty(t, p.File(), name); got != want {
+					t.Errorf("%s: %q, want %q", name, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A worktree of a repository outside scratch is the plan's wherever it
+// lies, a scratch root included, and so is its new branch.
+func testPostFilesWorktreeInScratch(t *testing.T) {
+	main, _, p := planned(t)
+	worktree := filepath.Join(filepath.Dir(main), "scratch", "feature")
+	gitOut(t, main, "worktree", "add", "-q", "-b", "feature", worktree)
+	postHook(t, claudeEvent("s1", main, "git worktree add -b feature "+worktree, ""))
+	for name, want := range map[string]string{"WORKTREES": main + " " + worktree, "BRANCHES": "main..loop main..feature"} {
+		if got := planProperty(t, p.File(), name); got != want {
+			t.Errorf("%s: %q, want %q", name, got, want)
+		}
 	}
 }
