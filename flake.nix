@@ -1354,7 +1354,9 @@
         '';
 
       # The Claude Code settings the ngrok Mac's home configuration writes
-      # hold the permission rules beside the guard: bypass mode off; for
+      # hold the permission rules beside the guard: bypass mode off; MCP
+      # denials only by claude.ai connector name, never of the connectors
+      # kept, so no local server is denied; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
@@ -1403,6 +1405,10 @@
           fi
           check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
             else "bypass-permissions mode is not disabled" end'
+          check '.deniedMcpServers[] | select((keys != ["serverName"]) or (.serverName | startswith("claude.ai ") | not))
+            | "deny entry is not a claude.ai connector name: \(tojson)"'
+          check '.deniedMcpServers as $d | ["claude.ai Claude Docs", "claude.ai ngrok Debug (prod)", "claude.ai ngrok Deploys"][]
+            | select(. as $n | $d | any(.serverName == $n)) | "kept connector is denied: \(.)"'
           check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
             else "agent-plan link is not excluded from the sandbox" end'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
