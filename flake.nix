@@ -747,8 +747,9 @@
         '';
 
       # Every skill the skills, the playbooks skill's plan templates, agent
-      # files, AGENTS.md files and README name ("the `NAME` skill", "the `A`
-      # and `B` skills", "the =NAME= skill" in a template), and every one an
+      # files, AGENTS.md files, CHECKS.md and README name ("the `NAME`
+      # skill", "the `A` and `B` skills", "the =NAME= skill" in a
+      # template), and every one an
       # agent file's `skills:` lists, is one the ngrok Mac installs: Claude
       # Code skips a missing preload with only a debug-log warning. Each
       # principle skill, a directory under
@@ -763,6 +764,7 @@
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
             ./AGENTS.md
+            ./CHECKS.md
             ./README.md
             ./modules/home-manager/llm
             ./modules/home-manager/claude/agents
@@ -1352,7 +1354,9 @@
         '';
 
       # The Claude Code settings the ngrok Mac's home configuration writes
-      # hold the permission rules beside the guard: bypass mode off; for
+      # hold the permission rules beside the guard: bypass mode off; MCP
+      # denials only by claude.ai connector name, never of the connectors
+      # kept, so no local server is denied; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
@@ -1401,6 +1405,10 @@
           fi
           check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
             else "bypass-permissions mode is not disabled" end'
+          check '.deniedMcpServers[] | select((keys != ["serverName"]) or (.serverName | startswith("claude.ai ") | not))
+            | "deny entry is not a claude.ai connector name: \(tojson)"'
+          check '.deniedMcpServers as $d | ["claude.ai Claude Docs", "claude.ai ngrok Debug (prod)", "claude.ai ngrok Deploys"][]
+            | select(. as $n | $d | any(.serverName == $n)) | "kept connector is denied: \(.)"'
           check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
             else "agent-plan link is not excluded from the sandbox" end'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
@@ -1429,8 +1437,8 @@
         '';
 
       # Every line of a shell code block, fenced or indented, and every
-      # inline code span in the skills and the AGENTS.md files, judged by
-      # the guard as a Claude Code Bash call with the ngrok Mac's excluded
+      # inline code span in the skills, the AGENTS files and CHECKS.md,
+      # judged by the guard as a Claude Code Bash call with the ngrok Mac's excluded
       # commands: none is refused for naming an excluded command anywhere
       # but alone, or with syntax that sends it sandboxed even inside
       # quotes, or for running a read of gh's that gh-read runs, so no
@@ -1444,7 +1452,9 @@
           fileset = pkgs.lib.fileset.unions [
             ./modules/home-manager/llm/skills
             ./modules/home-manager/llm/AGENTS.md
+            ./modules/home-manager/llm/AGENTS.codex.md
             ./AGENTS.md
+            ./CHECKS.md
           ];
         };
       in
@@ -1565,7 +1575,7 @@
                 failed=1
                 ;;
             esac
-          done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md AGENTS.md)
+          done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md modules/home-manager/llm/AGENTS.codex.md AGENTS.md CHECKS.md)
           [ -z "$failed" ]
           touch $out
         '';

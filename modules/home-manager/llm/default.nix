@@ -153,6 +153,7 @@ in {
       description = ''
         Working agreements every enabled coding agent loads into each session,
         linked to wherever that agent reads its user-level instructions.
+        Codex reads ./AGENTS.codex.md after them.
       '';
     };
 
