@@ -835,6 +835,8 @@ in {
           # invoking it unasked, as disable-model-invocation does in Claude
           # Code.
           grill = ./skills/grill;
+          # The same; the weekly demo digest's timer runs it by name.
+          demo-digest = ./skills/demo-digest;
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.
