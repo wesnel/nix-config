@@ -7,7 +7,7 @@ description: Always use trash instead of rm. This applies to all file and direct
 
 When deleting files or directories, **always** use the `trash` command instead of `rm`. The `trash` command moves items to the system Trash (macOS) rather than permanently deleting them, making deletions recoverable.
 
-In a sandboxed Claude Code session, run `trash-scratch PATH...` alone on its command line. It moves untracked paths in the working directory's worktree, or paths inside this session's scratch directory (the one holding its scratchpad), to the system Trash. It refuses tracked files and directories containing them, Git metadata, the project's `.claude` directory, the session's task output, and paths the sandbox denies writes to; validate that its arguments are the scratch paths you intend to remove.
+In a sandboxed Claude Code session, run `trash-scratch PATH...` alone on its command line. It moves untracked paths in the working directory's worktree or in a linked worktree (not a main checkout) listed in `WORKTREES` of this host's plan that names this session, unless the newest of this host's plans whose `OWNERS` names it gives it to an agent other than `main`, or paths inside this session's scratch directory (the one holding its scratchpad), to the system Trash. It refuses a worktree's root, tracked files and directories containing them, Git metadata, a worktree's `.claude` directory, the session's task output, and paths the sandbox denies writes to; validate that its arguments are the scratch paths you intend to remove.
 
 ## Rules
 
