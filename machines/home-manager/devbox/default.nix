@@ -20,7 +20,10 @@
     (_: {
       wgn.home = {
         bash.enable = true;
-        claude.enable = true;
+        claude = {
+          enable = true;
+          demoDigest.enable = true;
+        };
         codex.enable = true;
         emacs.enable = true;
         fish.enable = true;

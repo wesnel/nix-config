@@ -595,6 +595,23 @@ Session-start and user-turn hooks run `plan-dash remind`. They provide a
 bounded reminder when a session has a plan; publication happens at the
 skill’s checkpoints.
 
+## the demo digest
+
+`wgn.home.claude.demoDigest.enable` (the devbox, the notes host) runs
+`demo-digest.service` each Friday at the option's `at` in its
+`timeZone`, or at boot after a Friday the devbox missed: `claude -p '/demo-digest ZONE'`
+in `$XDG_STATE_HOME/demo-digest`, with the operator's own Claude Code
+login and settings, so the sandbox, guard and quota stop hold it as they
+hold every session. The `demo-digest` skill finds the week's merged and
+opened pull requests and their plans, runs each change's demo steps in a
+throwaway checkout, and writes what they showed with `agent-plan digest`;
+a failing step stays in the digest, marked `FAILS:`, and becomes a
+follow-up in the run's own plan. The same run then moves the approved
+brag items whose change has merged into `brag/YYYY.org`, as the `brag`
+skill says. The run stops at its time limit or its
+`--max-budget-usd`, whichever comes first, and the journal
+(`journalctl --user -u demo-digest`) ends with its JSON result.
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every
