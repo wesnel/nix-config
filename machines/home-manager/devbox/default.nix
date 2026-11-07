@@ -23,7 +23,6 @@
         claude = {
           enable = true;
           agentPlans.enable = true;
-          demoDigest.enable = true;
         };
         codex.enable = true;
         emacs.enable = true;
