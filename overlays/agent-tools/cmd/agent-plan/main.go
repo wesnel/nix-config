@@ -268,9 +268,10 @@ have (see status) is refused and writes nothing.
                      id: link to PLAN, and TEXT, the summary the operator
                      approved. An entry for the same pull request again
                      writes nothing, and is refused where it differs.
-                     digest and brag write on the host plans.notesHost
-                     names alone, whose sync sends them, and are refused
-                     on every other
+                     Any host writes them, and its sync sends them; a
+                     digest or brag file changed on two hosts at once
+                     leaves sync behind origin, saying so, rather than
+                     send either over the other
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as

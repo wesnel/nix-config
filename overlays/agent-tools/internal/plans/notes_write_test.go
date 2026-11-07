@@ -11,12 +11,11 @@ import (
 	"time"
 )
 
-// notesConfig is a config whose host writes the notes files, in a notes
-// repository of the test's own.
+// notesConfig is a config with a notes repository of the test's own, which
+// any host writes the notes files in.
 func notesConfig(t *testing.T) (c Config, repo string) {
 	t.Helper()
 	c = testConfig(t)
-	c.NotesHost = c.Host
 	return c, filepath.Dir(c.Dir)
 }
 
@@ -108,7 +107,6 @@ func TestWriteDigest(t *testing.T) {
 	refused := map[string]struct {
 		day        time.Time
 		text, want string
-		config     func(*Config)
 	}{
 		"not a Friday": {day: friday.AddDate(0, 0, -1), text: demo, want: "Thursday"},
 		"over 64 KiB":  {text: demo + strings.Repeat("x", 64<<10-len(demo)) + "\n", want: "64 KiB"},
@@ -122,15 +120,10 @@ func TestWriteDigest(t *testing.T) {
 		"a PR of no form":           {text: "* Loop\n:PROPERTIES:\n:PR: 243\n:PLAN: id:abc-1\n:END:\n", want: "PR"},
 		"a PLAN not an id link":     {text: "* Loop\n:PROPERTIES:\n:PR: o/r#1\n:PLAN: the loop\n:END:\n", want: "PLAN"},
 		"a NUL":                     {text: demo + "\x00\n", want: "NUL"},
-		"another host's":            {text: demo, want: "devbox", config: func(c *Config) { c.NotesHost = "devbox" }},
-		"no notes host":             {text: demo, want: "notesHost", config: func(c *Config) { c.NotesHost = "" }},
 	}
 	for name, tc := range refused {
 		t.Run(name, func(t *testing.T) {
 			c, repo := notesConfig(t)
-			if tc.config != nil {
-				tc.config(&c)
-			}
 			day := tc.day
 			if day.IsZero() {
 				day = friday
@@ -229,9 +222,8 @@ func TestWriteBrag(t *testing.T) {
 		}
 	})
 	refused := map[string]struct {
-		o      BragOptions
-		want   string
-		config func(*Config)
+		o    BragOptions
+		want string
 	}{
 		"a PR of no form":          {o: BragOptions{PR: "243"}, want: "PR"},
 		"no title":                 {o: BragOptions{Title: " "}, want: "title"},
@@ -239,15 +231,11 @@ func TestWriteBrag(t *testing.T) {
 		"a heading in the summary": {o: BragOptions{Summary: "Done.\n* Not a heading"}, want: "heading"},
 		"no summary":               {o: BragOptions{Summary: "\n"}, want: "summary"},
 		"no such plan":             {o: BragOptions{Plan: "20261014130500-gone.box.org"}, want: "gone"},
-		"another host's":           {want: "devbox", config: func(c *Config) { c.NotesHost = "devbox" }},
 	}
 	for name, tc := range refused {
 		t.Run(name, func(t *testing.T) {
 			c, repo := notesConfig(t)
 			p := newPlan(t, c, "loop")
-			if tc.config != nil {
-				tc.config(&c)
-			}
 			o := BragOptions{Day: merged, PR: "o/r#1", Plan: p.File(), Title: "Ran the loop", Summary: "Done."}
 			if tc.o.PR != "" {
 				o.PR = tc.o.PR

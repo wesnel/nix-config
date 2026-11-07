@@ -948,15 +948,4 @@ func TestLoad(t *testing.T) {
 			t.Errorf("a host with a dot: %+v", c)
 		}
 	})
-
-	t.Run("notes host", func(t *testing.T) {
-		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "notesHost": "devbox"}}`)
-		if c, err := Load(); err != nil || c.NotesHost != "devbox" || c.ownsNotes() {
-			t.Errorf("notes host: %+v, %v", c, err)
-		}
-		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "notesHost": "devbox.lan"}}`)
-		if c, err := Load(); err == nil {
-			t.Errorf("a notes host with a dot: %+v", c)
-		}
-	})
 }

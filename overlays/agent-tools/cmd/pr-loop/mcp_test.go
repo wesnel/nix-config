@@ -118,7 +118,7 @@ func newMCPFixture(t *testing.T) *mcpFixture {
 	os.WriteFile(filepath.Join(bin, "claude"), []byte(fakeClaude), 0o755)
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`), 0o644)
-	planConfig := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box", NotesHost: "box"}
+	planConfig := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 	created, err := planConfig.New(plans.NewOptions{Title: "Grow the code", Slug: "grow",
 		Goal: "Grow the code to three lines."}, time.Now())
 	if err != nil {
