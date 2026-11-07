@@ -14,12 +14,15 @@ disable-model-invocation: true
    can answer now, in order. Leave out those already waiting for an answer
    in this session. With none, say so if the operator asked, and stop.
 3. Present them in that order, as the harness allows below. Each one's
-   header is its `id`, then ` [#P]` when it has a `priority` P; its text
-   its `question`, then its `context` if any. Its options: the
-   `recommendation` first, labelled " (Recommended)", then its
-   `alternatives`, then "Drop it", dropping alternatives from the end to
-   fit the tool's option limit. The tools add a free-text answer
-   themselves.
+   header is its `id`, then ` [#P]` when it has a `priority` P, then
+   ` brag` when its `kind` is `brag`; its text its `question`, then its
+   `context` if any. Its options: the `recommendation` first, labelled
+   " (Recommended)", then its `alternatives`, then "Drop it", dropping
+   alternatives from the end to fit the tool's option limit. The tools add
+   a free-text answer themselves. A `brag` question is a brag item: its
+   question is an entry's title for the brag sheet and its recommendation
+   the drafted summary, so its text says that the answer is the summary
+   kept, and a free-text answer replaces it.
    - Claude Code: `AskUserQuestion`, at most four questions per call.
    - Codex: `request_user_input_async` where it is offered, within its
      limits; it queues the questions and returns, so go on with work that

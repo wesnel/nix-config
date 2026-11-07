@@ -855,6 +855,7 @@ in {
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
           diagnose-failure = ./skills/diagnose-failure/SKILL.md;
           retro = ./skills/retro/SKILL.md;
+          brag = ./skills/brag/SKILL.md;
           # A directory, so the agent reading it can read the templates
           # plans.templates gives agent-plan.
           playbooks = ./skills/playbooks;
