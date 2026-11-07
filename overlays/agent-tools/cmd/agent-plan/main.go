@@ -91,6 +91,17 @@ have (see status) is refused and writes nothing.
                      brief --resume; as its SessionEnd hook, hands the plan of
                      a session /clear ends to the session it starts in the
                      same directory, and prints nothing
+  worktrees --session HARNESS:ID
+                     the worktrees in WORKTREES (not OWNERS) of this host's
+                     plan files, parts' included, that name the session,
+                     kept where the newest plan file naming the worktree
+                     (as find --worktree matches it) names the session and
+                     the newest OWNERS pair naming it, by any spelling,
+                     gives it to main or there is none: one absolute path
+                     per line, newest plan first, each once; nothing when
+                     there are none. Main checkouts are included. A bare
+                     ID is refused. Reads the plan files as they are, never
+                     pulling first, for trash-scratch
   goal PLAN [--part P1]
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
@@ -777,6 +788,19 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			}
 		}
 		return report(c.Find(o))
+	case "worktrees":
+		if len(positional) != 0 || given["worktree"] || given["branch"] {
+			fmt.Fprint(stderr, "agent-plan worktrees: takes --session HARNESS:ID alone\n")
+			return 2
+		}
+		trees, err := c.SessionWorktrees(session)
+		if err != nil {
+			return report(nil, err)
+		}
+		for _, tree := range trees {
+			fmt.Fprintln(stdout, tree)
+		}
+		return 0
 	case "goal":
 		p, ok := wantPlan()
 		if !ok {

@@ -1570,6 +1570,17 @@
           touch $out
         '';
 
+      # trash-scratch-tests.sh against the ngrok Mac's trash-scratch, which
+      # asks agent-plan as the overlay builds it for the session's plan
+      # worktrees; the package's postCheck runs the same tests. devbox's
+      # Linux trash-scratch needs a builder this Mac lacks.
+      checks.${darwinOnly "trash-scratch"} = let
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+      in
+        (pkgs.lib.findFirst (p: (p.name or "") == "trash-scratch")
+          (throw "trash-scratch: not in the ngrok Mac's home.packages")
+          home.home.packages).passthru.tests;
+
       # The agent-tools config.json the ngrok Mac's home configuration writes
       # holds what agent-plan and emacs-config's plan views read from it:
       # plans.dir and plans.repo, absolute, the directory inside the
