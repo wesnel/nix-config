@@ -657,6 +657,66 @@ in {
       };
     };
 
+    demoDigest = {
+      enable = mkEnableOption ''
+        the weekly demo digest, Linux only, on the host
+        {option}`wgn.home.llm.plans.notesHost` names: a systemd user timer
+        runs `demo-digest.service` each Friday at {option}`at` in
+        {option}`timeZone`, which runs `claude -p '/demo-digest ZONE'` in
+        `demo-digest` under {option}`xdg.stateHome`, under the operator's
+        own Claude Code login, settings, sandbox and guard. It accepts
+        edits in that directory, runs sandboxed commands and `gh-read`,
+        refuses whatever else would prompt, and writes the digest through
+        `agent-plan digest` and approved brag items through `agent-plan
+        brag`, which the settings allow every session. Its journal (`journalctl --user -u
+        demo-digest`) ends with the run's JSON result, whose `session_id`
+        `claude --resume` opens. A run by hand is `systemctl --user start
+        demo-digest.service`. It runs only while the user manager does, so
+        the user needs lingering to get it while logged out
+      '';
+
+      at = mkOption {
+        type = types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
+        default = "07:00";
+        description = "When the digest is written each Friday, as HH:MM in {option}`timeZone`.";
+      };
+
+      timeZone = mkOption {
+        type = types.strMatching "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*";
+        default = "America/Los_Angeles";
+
+        description = ''
+          The operator's IANA zone: the timer's, the run's `TZ`, and the
+          zone the skill reads the week's Friday and the pull requests'
+          times in, whatever the host's own zone.
+        '';
+      };
+
+      timeLimit = mkOption {
+        type = types.strMatching "[1-9][0-9]*(min|h)";
+        default = "2h";
+
+        description = ''
+          How long a run may take, as a systemd time span: past it, systemd
+          stops the run and marks the service failed, and the digest is not
+          written.
+        '';
+      };
+
+      maxBudgetUsd = mkOption {
+        type = types.ints.positive;
+        default = 20;
+
+        description = ''
+          The run's `--max-budget-usd`: Claude Code stops the run once the
+          API cost it reckons from its tokens reaches this many dollars.
+          The quota stop ({option}`quotaStop`) holds the run as it holds
+          every session, on the quota windows a status line recorded in
+          the last five minutes.
+        '';
+      };
+    };
+
     quotaStop = mkOption {
       type = types.nullOr (types.ints.between 1 100);
       # A gateway sends no quota windows for the status line to record.
@@ -1125,6 +1185,74 @@ in {
           StandardOutput = "null";
         };
         Install.WantedBy = ["default.target"];
+      };
+    }))
+
+    (mkIf cfg.demoDigest.enable (let
+      inherit (cfg.demoDigest) at timeZone;
+      dir = "${config.xdg.stateHome}/demo-digest";
+      home = config.home.homeDirectory;
+      plans = config.wgn.home.llm.plans;
+      # The run's commands find agent-plan, gh-read and the sandbox's
+      # bubblewrap in the profile, and nix in Determinate's default profile;
+      # Claude Code installs itself under ~/.local/bin.
+      path = concatStringsSep ":" [
+        "${config.home.profileDirectory}/bin"
+        "/nix/var/nix/profiles/default/bin"
+        "${home}/.local/bin"
+        "/usr/local/bin:/usr/bin:/bin"
+      ];
+    in {
+      assertions = [
+        {
+          assertion = pkgs.stdenv.hostPlatform.isLinux;
+          message = "wgn.home.claude.demoDigest runs as systemd user units, so it needs Linux.";
+        }
+        {
+          assertion = plans.host == plans.notesHost;
+          message = "wgn.home.claude.demoDigest writes the digest through agent-plan digest, which only wgn.home.llm.plans.notesHost (${plans.notesHost}) may run; this is ${plans.host}.";
+        }
+        {
+          assertion = config.wgn.home.llm.gateway == "none";
+          message = "wgn.home.claude.demoDigest runs on the operator's Claude subscription, which a gateway (wgn.home.llm.gateway) replaces.";
+        }
+      ];
+
+      home.activation.demoDigestDir = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        run mkdir -p ${escapeShellArg dir}
+      '';
+
+      # The prompt and allowed tools are in single quotes, which systemd
+      # reads as one argument each. acceptEdits accepts the file tools in
+      # the working directory alone; headless, anything else that would
+      # prompt is refused.
+      systemd.user.services.demo-digest = {
+        Unit.Description = "Write the week's demo digest";
+        Service = {
+          Type = "oneshot";
+          ExecStart = concatStringsSep " " [
+            "${home}/.local/bin/claude -p '/demo-digest ${timeZone}'"
+            "--permission-mode acceptEdits"
+            "--allowedTools 'Bash(gh-read *)'"
+            "--max-budget-usd ${toString cfg.demoDigest.maxBudgetUsd}"
+            "--output-format json"
+          ];
+          WorkingDirectory = dir;
+          Environment = ["TZ=${timeZone}" "PATH=${path}"];
+          # A oneshot's run is its start, which RuntimeMaxSec leaves alone.
+          TimeoutStartSec = cfg.demoDigest.timeLimit;
+        };
+      };
+
+      # Persistent runs at boot one missed while the devbox was down; the
+      # skill then names the digest for the latest Friday.
+      systemd.user.timers.demo-digest = {
+        Unit.Description = "Write the week's demo digest each Friday";
+        Timer = {
+          OnCalendar = "Fri *-*-* ${at}:00 ${timeZone}";
+          Persistent = true;
+        };
+        Install.WantedBy = ["timers.target"];
       };
     }))
 
