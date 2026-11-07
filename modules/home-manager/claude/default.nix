@@ -414,9 +414,9 @@ with lib; let
 
   # trash-scratch's settings are shell words: scratchBase holds each
   # session's directory, under its project, named by the session's ID,
-  # protectedPaths are the paths the sandbox keeps from writes, and plansDir
-  # and plansHost are where agent-plan keeps this host's plans, as its
-  # config.json says.
+  # protectedPaths are the paths the sandbox keeps from writes, and
+  # agentPlanCommand is the agent-plan that lists the session's plan
+  # worktrees from its config.json.
   mkTrashScratch = {
     trashCommand,
     scratchBase ? ''"${
@@ -425,8 +425,7 @@ with lib; let
         else "/tmp"
       }/claude-$(id -u)"'',
     protectedPaths ? concatMapStringsSep " " escapeShellArg sandboxDeniedWrites,
-    plansDir ? escapeShellArg plans.dir,
-    plansHost ? escapeShellArg plans.host,
+    agentPlanCommand ? agentPlan,
     postCheck ? "",
   }:
     pkgs.writeShellApplication {
@@ -438,19 +437,19 @@ with lib; let
           trash_command=${escapeShellArg trashCommand}
           scratch_base=${scratchBase}
           protected_paths=(${protectedPaths})
-          plans_dir=${plansDir}
-          plans_host=${plansHost}
+          agent_plan=${escapeShellArg agentPlanCommand}
           case_insensitive=${boolToString darwin}
         ''
         + builtins.readFile ./trash-scratch.sh;
     };
-  trashScratch = mkTrashScratch {
+  # flake.nix's checks.trash-scratch reads its tests from passthru.tests.
+  trashScratch = (mkTrashScratch {
     trashCommand =
       if darwin
       then "/usr/bin/trash"
       else "${pkgs.trash-cli}/bin/trash";
     postCheck = ": ${trashScratchTests}";
-  };
+  }).overrideAttrs (old: {passthru = (old.passthru or {}) // {tests = trashScratchTests;};});
   trashScratchTests = let
     # A fake, since the real one moves to the operator's Trash: it moves
     # into the fixture's own directory instead, and reads every argument as
@@ -464,8 +463,10 @@ with lib; let
       trashCommand = getExe fakeTrash;
       scratchBase = ''"$TRASH_TEST_ROOT/scratch"'';
       protectedPaths = ''"$TRASH_TEST_ROOT/repo/protected"'';
-      plansDir = ''"$TRASH_TEST_ROOT/plans"'';
-      plansHost = "testhost";
+      # The overlay's build, which reads the config AGENT_TOOLS_CONFIG
+      # names; agentPlan reads only the operator's. Its tests are
+      # checks.agent-tools'.
+      agentPlanCommand = getExe' (pkgs.agent-tools.overrideAttrs {doCheck = false;}) "agent-plan";
     };
     run = pkgs.writeShellApplication {
       name = "trash-scratch-tests";
