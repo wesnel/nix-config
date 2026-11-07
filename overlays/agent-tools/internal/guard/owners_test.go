@@ -5,20 +5,26 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 func TestSessionEdits(t *testing.T) {
 	for _, tc := range []struct {
 		name, session, target, branch, command, association, file, reason string
-		noPlan, newer, sessionOnly, fixture, reclaim                      bool
-		deny                                                              bool
+		// rebase stops a rebase of the linked worktree onto base on a
+		// conflict in a.go: "merge" or "apply" names its backend; the
+		// branch field, applied first, says what it rebases.
+		rebase                                       string
+		noPlan, newer, sessionOnly, fixture, reclaim bool
+		deny                                         bool
 	}{
 		{name: "own task worktree", session: "s1"},
 		{name: "remove requires absolute worktree path", session: "s1", command: "git worktree remove linked", deny: true},
@@ -49,6 +55,21 @@ func TestSessionEdits(t *testing.T) {
 		{name: "default branch", session: "s1", branch: "main", deny: true},
 		{name: "remote default branch", session: "s1", branch: "trunk", deny: true},
 		{name: "detached head", session: "s1", branch: "detached", deny: true},
+		{name: "conflicted file mid-rebase of a task branch", session: "s1", rebase: "merge"},
+		{name: "conflicted file mid-apply-rebase of a task branch", session: "s1", rebase: "apply"},
+		{name: "mid-rebase of main", session: "s1", branch: "main", rebase: "merge", deny: true},
+		{name: "mid-rebase of a detached head", session: "s1", branch: "detached", rebase: "merge", deny: true},
+		{name: "mid-rebase of a task branch in another session", session: "s2", rebase: "merge", deny: true},
+		{name: "rebase abort while detached", session: "s1", branch: "detached", command: "git rebase --abort"},
+		{name: "rebase abort mid-rebase of main", session: "s1", branch: "main", rebase: "merge", command: "git rebase --abort"},
+		{name: "rebase continue mid-rebase of main", session: "s1", branch: "main", rebase: "merge", command: "git -c commit.gpgsign=false rebase --continue"},
+		{name: "rebase skip mid-rebase of main", session: "s1", branch: "main", rebase: "merge", command: "git -c commit.gpgsign=false rebase --skip"},
+		{name: "cherry-pick abort on a default branch", session: "s1", branch: "main", command: "git cherry-pick --abort"},
+		{name: "rebase abort in another session worktree", session: "s2", branch: "detached", command: "git rebase --abort"},
+		{name: "rebase abort in the main checkout", session: "s1", target: "MAIN", command: "git rebase --abort"},
+		{name: "abort does not allow what follows it", session: "s1", branch: "detached", command: "git rebase --abort && git add a.go", deny: true},
+		{name: "rebase onto while detached", session: "s1", branch: "detached", command: "git -c commit.gpgsign=false rebase base", deny: true},
+		{name: "rebase abort with another argument", session: "s1", branch: "detached", command: "git rebase --abort a.go", deny: true},
 		{name: "scratch linked worktree still needs a plan", session: "s1", target: "PARKED", noPlan: true, deny: true},
 		{name: "scratch repository fixture", target: "FIXTURE", fixture: true, noPlan: true},
 		{name: "scratch fixture with a plan is protected", session: "s2", target: "FIXTURE", fixture: true, deny: true},
@@ -97,6 +118,14 @@ func TestSessionEdits(t *testing.T) {
 				os.Mkdir(fixture, 0o755)
 				gitIn(t, fixture, "init", "-q", "-b", "main")
 			}
+			if tc.rebase != "" {
+				os.WriteFile(filepath.Join(linked, "a.go"), []byte("task\n"), 0o644)
+				gitIn(t, linked, "add", "a.go")
+				gitIn(t, linked, "commit", "-q", "-m", "task")
+				os.WriteFile(filepath.Join(main, "a.go"), []byte("base\n"), 0o644)
+				gitIn(t, main, "add", "a.go")
+				gitIn(t, main, "commit", "-q", "-m", "base change")
+			}
 			if tc.branch == "detached" {
 				gitIn(t, linked, "checkout", "--detach")
 			} else if tc.branch != "" {
@@ -104,6 +133,17 @@ func TestSessionEdits(t *testing.T) {
 				if tc.branch == "trunk" {
 					gitIn(t, main, "update-ref", "refs/remotes/upstream/trunk", "HEAD")
 					gitIn(t, main, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk")
+				}
+			}
+			if tc.rebase != "" {
+				cmd := exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
+					"rebase", "--"+tc.rebase, "base")
+				cmd.Dir, cmd.Env = linked, gitenv.Without(os.Environ())
+				if out, err := cmd.CombinedOutput(); err == nil {
+					t.Fatalf("the rebase did not stop on its conflict:\n%s", out)
+				}
+				if current := gitIn(t, linked, "branch", "--show-current"); current != "" {
+					t.Fatalf("mid-rebase HEAD is on %q, want it detached", current)
 				}
 			}
 			paths := strings.NewReplacer("MAIN", main, "LINKED", linked, "PARKED", parked, "FIXTURE", fixture, "SCRATCH", scratch)
