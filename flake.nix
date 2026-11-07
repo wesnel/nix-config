@@ -985,47 +985,33 @@
             touch $out
           '';
 
+      # The operator runs /demo-digest on either host, in Claude Code or
+      # Codex, and only by name.
       checks.${darwinOnly "demo-digest"} = let
-        username = darwinSystems.ngrok.username;
-        devbox = self.homeConfigurations.devbox.config;
-        timer = devbox.systemd.user.timers.demo-digest or {};
-        service = (devbox.systemd.user.services.demo-digest or {}).Service or {};
-        exec = pkgs.lib.concatStringsSep " " (pkgs.lib.toList (service.ExecStart or []));
-        # The skill /demo-digest finds: the run keeps Claude Code's own
-        # config, so it looks in ~/.claude/skills.
-        skill = devbox.home.file.".claude/skills/demo-digest".source or null;
-        skillText =
-          if skill == null
-          then ""
-          else builtins.readFile "${skill}/SKILL.md";
-        # The ngrok Mac with the digest turned on, through a gateway: off
-        # Linux, not the notes host, and not on the subscription.
-        refused =
-          (self.darwinConfigurations.ngrok.extendModules {
-            modules = [
-              {
-                home-manager.users.${username}.wgn.home = {
-                  claude.demoDigest.enable = true;
-                  llm.gateway = pkgs.lib.mkForce "ngrok-ai";
-                };
-              }
-            ];
-          }).config.home-manager.users.${
-            username
-          };
-        failed = home:
-          map (a: a.message) (builtins.filter (a: !a.assertion && pkgs.lib.hasPrefix "wgn.home.claude.demoDigest" a.message) home.assertions);
+        homes = {
+          ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+          devbox = self.homeConfigurations.devbox.config;
+        };
+        # What is missing from the skill each host links into each
+        # harness's skills, "" for nothing.
+        missing = host: dir: let
+          source = homes.${host}.home.file."${dir}/demo-digest".source or null;
+          read = file:
+            if source != null && builtins.pathExists "${source}/${file}"
+            then builtins.readFile "${source}/${file}"
+            else "";
+        in
+          pkgs.lib.concatStringsSep ", " (
+            pkgs.lib.optional (!pkgs.lib.hasInfix "\nname: demo-digest\n" (read "SKILL.md")) "${dir}/demo-digest/SKILL.md named demo-digest"
+            ++ pkgs.lib.optional (!pkgs.lib.hasInfix "\ndisable-model-invocation: true\n" (read "SKILL.md")) "disable-model-invocation"
+            ++ pkgs.lib.optional (!pkgs.lib.hasInfix "allow_implicit_invocation: false" (read "agents/openai.yaml")) "Codex's allow_implicit_invocation: false"
+          );
+        problems = pkgs.lib.concatMap (host:
+          pkgs.lib.concatMap (dir: pkgs.lib.optional (missing host dir != "") "${host} lacks ${missing host dir}")
+          [".claude/skills" ".codex/skills"]) (builtins.attrNames homes);
       in
-        assert pkgs.lib.assertMsg ((timer.Timer.OnCalendar or null) == "Fri *-*-* 07:00:00 America/Los_Angeles" && (timer.Timer.Persistent or false) && builtins.elem "timers.target" (timer.Install.WantedBy or []))
-        "The devbox's demo digest runs Fridays at 07:00 in America/Los_Angeles, catching up a run missed while the devbox was down";
-        assert pkgs.lib.assertMsg (exec == "/home/wesley/.local/bin/claude -p '/demo-digest America/Los_Angeles' --permission-mode acceptEdits --allowedTools 'Bash(gh-read *)' --max-budget-usd 20 --output-format json")
-        "The demo digest runs the skill headless in the timer's zone, within its budget, printing its session as JSON; it runs: ${exec}";
-        assert pkgs.lib.assertMsg (builtins.elem "TZ=America/Los_Angeles" (service.Environment or []) && (service.TimeoutStartSec or null) == "2h" && (service.WorkingDirectory or null) == "/home/wesley/.local/state/demo-digest")
-        "The demo digest reads dates in the timer's zone, stops after its time limit, and runs in its own directory";
-        assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "\nname: demo-digest\n" skillText && !builtins.any (pkgs.lib.hasPrefix "CLAUDE_CONFIG_DIR=") (service.Environment or []))
-        "The demo digest's run finds the demo-digest skill in ~/.claude/skills of the devbox, the config it runs with";
-        assert pkgs.lib.assertMsg (failed devbox == [] && builtins.length (failed refused) == 3)
-        "The demo digest is refused off Linux, off the notes host and through a gateway, and the devbox passes all three; refused on the ngrok Mac: ${builtins.toJSON (failed refused)}";
+        assert pkgs.lib.assertMsg (problems == [])
+        "The demo-digest skill must be installed, run only by name, on both hosts: ${pkgs.lib.concatStringsSep "; " problems}";
           pkgs.runCommand "demo-digest" {} "touch $out";
 
       checks.${darwinOnly "parallels-mcp"} = let
