@@ -253,11 +253,11 @@ have (see status) is refused and writes nothing.
                      writes nothing where that changes nothing. VID --url
                      gives entry VID its recording's URL
   digest --date YYYY-MM-DD (--text TEXT | --text-file F)
-                     write TEXT as the demo digest of that day, a Friday,
-                     at digests/YYYY/MM-DD-demo.org in the notes
-                     repository, replacing the one there. Refused for
-                     another day, over the 64 KiB the export reads, and
-                     for text without a level-1 heading per change whose
+                     write TEXT as the demo digest named for that day, the
+                     last of the range it covers, at
+                     digests/YYYY/MM-DD-demo.org in the notes repository,
+                     replacing the one there. Refused over the 64 KiB the
+                     export reads, and for text without a level-1 heading per change whose
                      property drawer holds PLAN, an id: link, and PR,
                      OWNER/NAME#N or its GitHub URL. The same text again
                      writes nothing

@@ -1556,7 +1556,7 @@ const planWrite = "This is a plan file, which agents change through agent-plan a
 
 const notesWrite = "This is a demo digest or a brag file in the notes repository, which agents write through agent-plan alone, " +
 	"which checks its format and keeps a re-run from changing it. " +
-	"Write a digest with `agent-plan digest --date FRIDAY --text-file FILE`, and add a merged change to the brag file with " +
+	"Write a digest with `agent-plan digest --date YYYY-MM-DD --text-file FILE`, and add a merged change to the brag file with " +
 	"`agent-plan brag PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T --text-file FILE`; " +
 	"a change neither makes goes in your report for the operator."
 

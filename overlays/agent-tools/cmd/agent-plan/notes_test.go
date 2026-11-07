@@ -32,8 +32,9 @@ func TestDigestCommand(t *testing.T) {
 	if err != nil || len(today.Digests) != 1 || !strings.Contains(today.Digests[0].Text, "SHOWN-IN-THE-EXPORT") || today.Date != "2026-11-06" {
 		t.Errorf("the export read %+v, %v", today, err)
 	}
-	if code, _, errs := agentPlan(t, "", "digest", "--date", "2026-11-05", "--text-file", file); code != 2 || !strings.Contains(errs, "Thursday") {
-		t.Errorf("a Thursday: %d %s", code, errs)
+	// The last day of the digest's range names it, whatever its weekday.
+	if code, out, errs := agentPlan(t, "", "digest", "--date", "2026-11-05", "--text-file", file); code != 0 || !strings.Contains(out, "11-05-demo.org") {
+		t.Errorf("a Thursday: %d %s %s", code, out, errs)
 	}
 	for _, args := range [][]string{{"digest", "--text-file", file}, {"digest", "--date", "2026-11-06"}, {"digest", "--date", "11/06", "--text-file", file}} {
 		if code, _, _ := agentPlan(t, "", args...); code != 2 {

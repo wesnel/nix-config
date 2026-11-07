@@ -131,7 +131,7 @@ func planTools() []mcpTool {
 			flag("branch"), p("range", text, false, "the reviewed range BASE..TIP, resolved in the worktree, with diagram"),
 			p("diagram", text, false, "the review record's diagram ID, as D1"), prose("caption"),
 			p("url", text, false, "an https GitHub attachment URL")),
-		makeTool("digest", nil, p("date", text, true, "the Friday the digest is named for, YYYY-MM-DD"),
+		makeTool("digest", nil, p("date", text, true, "the last day of the digest's range, which names it, YYYY-MM-DD"),
 			p("text", literal, true, "the digest's Org text: a level-1 heading per change, its drawer holding PLAN, an id: link, and PR, OWNER/NAME#N")),
 		makeTool("brag", []string{"plan"}, plan, p("pr", text, true, "the merged pull request, OWNER/NAME#N or its GitHub URL"),
 			p("date", text, true, "the day it merged, YYYY-MM-DD"), title, p("text", literal, true, "the summary the operator approved")),
