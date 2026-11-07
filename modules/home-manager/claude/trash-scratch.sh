@@ -80,10 +80,19 @@ for arg in "$@"; do
   if [[ -n "$tree" ]]; then
     [[ "$(fold "$path")" != "$(fold "$tree")" ]] || refuse 'the worktree root is not scratch'
     relative=${path:${#tree}+1}
-    ! within "$relative" .git || refuse 'Git metadata is not scratch'
+    [[ "/$(fold "$relative")/" != */.git/* ]] || refuse 'Git metadata is not scratch'
     ! within "$relative" .claude || refuse "$arg is Claude Code's project configuration, which the sandbox protects"
     tracked=$(git_read -C "$tree" ls-files -- ":($pathspec_magic)$relative") || refuse 'cannot inspect tracked paths'
     [[ -z "$tracked" ]] || refuse "$arg contains a tracked path"
+    # The worktree's index lists none of the files a worktree nested in it
+    # tracks, so no path in or holding a nested worktree is scratch, its
+    # untracked files included.
+    inner=$(git_read -C "${path%/*}" rev-parse --show-toplevel) || refuse 'cannot inspect the worktree holding the path'
+    [[ "$(fold "$(realpath -e -- "$inner")")" == "$(fold "$tree")" ]] || refuse "$arg is in a worktree nested in $tree"
+    if [[ -d "$path" ]]; then
+      nested=$(find "$path" -mindepth 1 -iname .git -print -quit) || refuse "cannot inspect $arg for nested worktrees"
+      [[ -z "$nested" ]] || refuse "$arg holds a nested worktree"
+    fi
     allowed=true
   elif [[ -n "$session" ]] && within "$path" "$session"; then
     [[ "$(fold "$path")" != "$(fold "$session")" ]] || refuse "the session's scratch directory itself is not scratch"
