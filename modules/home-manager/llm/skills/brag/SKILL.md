@@ -1,6 +1,6 @@
 ---
 name: brag
-description: Record brag-worthy work as it happens, as a brag item the operator approves for their brag sheet. Use when work solves a problem for others, measurably improves something, ships a tool others adopt or finds a hard bug; at the review-change hand-back; and when moving approved items into the brag file on the notes host.
+description: Record brag-worthy work as it happens, as a brag item the operator approves for their brag sheet. Use when work solves a problem for others, measurably improves something, ships a tool others adopt or finds a hard bug; at the review-change hand-back; and when moving approved items into the brag file.
 ---
 
 # Brag
@@ -62,7 +62,7 @@ the `questions` skill; their answer is the summary kept. Only
 
 ## Moving approved items into the brag file
 
-The weekly demo digest run on the notes host moves them, once each
+Each demo digest run moves them, on whichever host runs it, once each
 change has merged:
 
 1. `agent-plan brags` lists, as JSON, the approved items no brag file holds
@@ -71,6 +71,6 @@ change has merged:
 2. For each item whose change merged, run
    `agent-plan brag PLAN QID --pr OWNER/NAME#N --date YYYY-MM-DD`, with the
    item's merged pull request and the day it merged. An item whose change
-   has not merged stays listed for a later week.
+   has not merged stays listed for a later run.
 
 Done when `agent-plan brags` lists only items whose change has not merged.
