@@ -134,14 +134,20 @@ func (p Plan) Decisions(all bool) ([]Decision, error) {
 		if h.Keyword != kwDecided {
 			return
 		}
-		answer := h.Props["ANSWER"]
-		if answer == "" {
-			answer = newestNote(h.Notes)
-		}
-		out = append(out, Decision{ID: itemID(h), Part: partOf(f), File: f, Question: h.Title, Answer: answer,
+		out = append(out, Decision{ID: itemID(h), Part: partOf(f), File: f, Question: h.Title, Answer: answerOf(h),
 			DecidedBy: h.Props["DECIDED_BY"], Supersedes: h.Props["SUPERSEDES"]})
 	})
 	return out, err
+}
+
+// answerOf is a settled question's answer: its ANSWER property, else the
+// newest note in its LOGBOOK, which Org writes when the operator settles
+// it in Emacs.
+func answerOf(h heading) string {
+	if a := h.Props["ANSWER"]; a != "" {
+		return a
+	}
+	return newestNote(h.Notes)
 }
 
 // newestNote is the text of the first note in a LOGBOOK drawer's lines,

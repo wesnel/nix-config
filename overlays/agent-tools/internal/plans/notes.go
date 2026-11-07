@@ -240,16 +240,18 @@ func (c Config) WriteDigest(day time.Time, text string) (NotesWrite, error) {
 
 // BragOptions are a brag entry: the change merged on Day, whose year names
 // the brag file; its pull request PR, OWNER/NAME#N or its GitHub URL; its
-// plan, as Open reads it; and its title and summary, the operator's.
+// plan, as Open reads it; the ID of the brag item there it comes from, as
+// P1.Q1 for a part's; and its title and summary, the operator's.
 type BragOptions struct {
-	Day            time.Time
-	PR, Plan       string
-	Title, Summary string
+	Day                time.Time
+	PR, Plan, Question string
+	Title, Summary     string
 }
 
 // WriteBrag appends o's entry to the brag file of o.Day's year: a level-1
 // heading, the title, whose drawer holds PR, as its GitHub URL,
-// REPOSITORY and PLAN, an id: link to the plan, followed by the summary.
+// REPOSITORY, PLAN, an id: link to the plan, and QUESTION, the brag item's
+// ID when given, which PendingBrags matches on, followed by the summary.
 // An entry for the same pull request already there, the same, changes
 // nothing, and refuses o where it differs.
 func (c Config) WriteBrag(o BragOptions) (NotesWrite, error) {
@@ -285,7 +287,11 @@ func (c Config) WriteBrag(o BragOptions) (NotesWrite, error) {
 	}
 	planTitle := strings.NewReplacer("[", "(", "]", ")").Replace(orgTitle(string(data)))
 	entry := "* " + title + "\n:PROPERTIES:\n:PR: " + pr.url() + "\n:REPOSITORY: " + pr.repo +
-		"\n:PLAN: [[id:" + id + "][" + planTitle + "]]\n:END:\n" + strings.Join(summary, "\n") + "\n"
+		"\n:PLAN: [[id:" + id + "][" + planTitle + "]]\n"
+	if o.Question != "" {
+		entry += ":QUESTION: " + o.Question + "\n"
+	}
+	entry += ":END:\n" + strings.Join(summary, "\n") + "\n"
 	file := BragFile(o.Day.Year())
 	return c.writeNotesFile(file, func(old []byte) (string, error) {
 		text := string(old)

@@ -189,6 +189,12 @@ have (see status) is refused and writes nothing.
   decisions PLAN [--all] [--json]
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
+  brags              as JSON, the brag items the operator approved, of every
+                     host's plans and their parts, that no brag file holds
+                     yet (an entry whose PLAN and QUESTION name it), each
+                     with its plan file, ID, title, summary and the
+                     PULL_REQUESTS of the file that holds it: those brag
+                     writes once their change has merged
   ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
       [--context TEXT | --text-file F] [--alternative TEXT]... [--after ID]...
       [--part P1] [--kind QKIND]
@@ -262,13 +268,18 @@ have (see status) is refused and writes nothing.
                      property drawer holds PLAN, an id: link, and PR,
                      OWNER/NAME#N or its GitHub URL. The same text again
                      writes nothing
-  brag PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)
+  brag PLAN QID --pr OWNER/NAME#N --date YYYY-MM-DD
                      add the merged change's entry to brag/YYYY.org in the
                      notes repository, YYYY the year of --date, the day it
-                     merged: heading T, with PR, REPOSITORY and PLAN, an
-                     id: link to PLAN, and TEXT, the summary the operator
-                     approved. An entry for the same pull request again
-                     writes nothing, and is refused where it differs.
+                     merged, from brag item QID of PLAN or its parts, a
+                     question of kind brag: its title as the heading, with
+                     PR, REPOSITORY, PLAN, an id: link to PLAN, and
+                     QUESTION, QID, and its answer, the summary the
+                     operator approved. Refused unless the operator
+                     approved QID (DECIDED by decide, not ask --answer,
+                     which a brag item refuses). An entry for the same pull
+                     request again writes nothing, and is refused where it
+                     differs.
                      Any host writes them, and its sync sends them; a
                      digest or brag file changed on two hosts at once
                      leaves sync behind origin, saying so, rather than
@@ -700,8 +711,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runSection(*part, *text, c, positional, given, stderr, report, reportLinking)
 	case "visual":
 		return runVisual(plans.VisualOptions{Branch: branch, Caption: *caption, URL: *address}, *span, *drawing, *tape, c, positional, stderr, report)
+	case "brags":
+		return runBrags(c, positional, stderr, report)
 	case "digest", "brag":
-		return runNotes(command, *date, *pr, *title, *text, c, positional, given, stderr, report)
+		return runNotes(command, *date, *pr, *text, c, positional, given, stderr, report)
 	case "reference":
 		return runReference(*note, c, positional, stderr, report)
 	case "link":
@@ -1374,19 +1387,36 @@ func visualFlags(command string, given map[string]bool, stderr io.Writer) bool {
 	return true
 }
 
-func runNotes(command, date, pr, title, text string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int) int {
+func runBrags(c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, "agent-plan brags: takes no PLAN\n")
+		return 2
+	}
+	items, err := c.PendingBrags()
+	if items == nil {
+		return report(nil, err)
+	}
+	report(items, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runNotes(command, date, pr, text string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int) int {
 	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
 	switch {
 	case command == "digest" && (len(positional) != 0 || !given["text"] || err != nil):
 		fmt.Fprint(stderr, "agent-plan digest: takes --date YYYY-MM-DD (--text TEXT | --text-file F)\n")
 		return 2
-	case command == "brag" && (len(positional) != 1 || !given["text"] || err != nil):
-		fmt.Fprint(stderr, "agent-plan brag: takes PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)\n")
+	case command == "brag" && (len(positional) != 2 || given["title"] || err != nil):
+		fmt.Fprint(stderr, "agent-plan brag: takes PLAN QID --pr OWNER/NAME#N --date YYYY-MM-DD\n")
 		return 2
 	case command == "digest":
 		return report(c.WriteDigest(day, text))
 	}
-	return report(c.WriteBrag(plans.BragOptions{Day: day, PR: pr, Plan: positional[0], Title: title, Summary: text}))
+	return report(c.WriteBragItem(plans.BragItemOptions{Day: day, PR: pr, Plan: positional[0], Question: positional[1]}))
 }
 
 func notesFlags(command string, given map[string]bool, stderr io.Writer) bool {
@@ -1431,9 +1461,9 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
 		return nil, false
 	}
-	textual := map[string]bool{"step": true, "part": true, "edit": true, "section": true, "digest": true, "brag": true}
+	textual := map[string]bool{"step": true, "part": true, "edit": true, "section": true, "digest": true}
 	if given["text"] && !textual[command] {
-		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's, section's, digest's and brag's\n", command)
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's, section's and digest's\n", command)
 		return nil, false
 	}
 	return given, visualFlags(command, given, stderr) && notesFlags(command, given, stderr)
@@ -1450,12 +1480,12 @@ func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) 
 }
 
 func commandText(command, textFile string, text, context *string, given map[string]bool, stdout, stderr io.Writer) int {
-	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "digest": "text", "brag": "text", "ask": "context",
+	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "digest": "text", "ask": "context",
 		"followup": "context"}[command]
 	into := map[string]*string{"text": text, "context": context}[fills]
 	switch {
 	case !ok:
-		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's, section's, digest's and brag's, and ask's and followup's for the context\n", command)
+		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's, section's and digest's, and ask's and followup's for the context\n", command)
 		return 2
 	case given["text"] || given["context"]:
 		fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
