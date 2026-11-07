@@ -155,6 +155,11 @@ func planTools() []mcpTool {
 		makeTool("after", []string{"plan", "item", "after"}, plan, item, after, boolFlag("clear", "clear dependencies")),
 		makeTool("section", []string{"plan", "section"}, plan, enum("section", true, "Goal", "Verification"),
 			p("text", literal, true, "inline section text; a Goal holds a line starting Builds on: and one starting Likely next changes:"), part),
+		// A tape's source is read from a file, which these tools never take.
+		makeTool("visual", []string{"plan", "entry"}, plan, p("entry", text, false, "the visual's ID, as V1, to give it url alone"),
+			flag("branch"), p("range", text, false, "the reviewed range BASE..TIP, resolved in the worktree, with diagram"),
+			p("diagram", text, false, "the review record's diagram ID, as D1"), prose("caption"),
+			p("url", text, false, "an https GitHub attachment URL")),
 		makeTool("reference", []string{"plan", "url"}, plan, p("url", text, true, "the reference URL"), prose("note")),
 		makeTool("link", []string{"plan", "other"}, plan, p("other", text, true, "the related plan file or name"), p("why", literal, true, "why the plans are related")),
 		makeTool("postpone", []string{"plan", "item"}, plan, item, flag("until"), boolFlag("clear", "clear the postponement")),

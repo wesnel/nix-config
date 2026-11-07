@@ -493,6 +493,7 @@ with lib; let
     "edit"
     "after"
     "section"
+    "visual"
   ];
 
   # pr-loop's subcommands that need the operator's GitHub login, or write

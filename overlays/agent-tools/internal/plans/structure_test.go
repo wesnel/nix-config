@@ -108,6 +108,16 @@ func TestStructureOf(t *testing.T) {
 			"*** A link: a References entry without a URL",
 			"*** How: a heading under Verification, which holds text",
 			"* Plan: a second `* Plan`"}},
+		"visuals": {planOrg("** Follow-ups\n** Visuals\n" +
+			entry("", "How a plan is read", ":CUSTOM_ID: V1\n:BRANCH: loop\n:DIAGRAM: D1\n:RANGE: a..b\n:VERDICT: holds\n") +
+			"#+begin_src mermaid\nflowchart LR\n  n1[\"Open\"] --> n2[\"Read\"]\n#+end_src\n" +
+			entry("", "The demo", ":CUSTOM_ID: V2\n:BRANCH: loop\n:URL: https://github.com/user-attachments/assets/x\n") +
+			"#+begin_src tape\nType \"agent-plan status\"\n#+end_src\n** References\n"), nil},
+		"a malformed visual": {planOrg("** Visuals\n" + entry("", "No ID", ":BRANCH: loop\n") +
+			entry("", "A step's ID", ":CUSTOM_ID: S1\n:BRANCH: loop\n") + entry("", "No branch", ":CUSTOM_ID: V3\n")), []string{
+			"*** No ID: a Visuals entry without an ID V<n>",
+			"*** A step's ID: a Visuals entry without an ID V<n>",
+			"*** No branch: a Visuals entry without a BRANCH"}},
 		// Org reads a block with no end as text, and the headings after it
 		// as headings.
 		"headings in blocks": {planOrg("** Verification\n#+begin_example\n* Hand-off\n#+end_example\n#+begin_quote\n" +

@@ -13,6 +13,8 @@ var (
 	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
 	questionID  = regexp.MustCompile(`^(P[0-9]+\.)?Q[0-9]+$`)
 	followupID  = regexp.MustCompile(`^(P[0-9]+\.)?F[0-9]+$`)
+	// visualID is a Visuals entry's, which only a plan's own file holds.
+	visualID = regexp.MustCompile(`^V[0-9]+$`)
 )
 
 // The keywords agent-plan writes. Steps, parts and follow-ups take the first
