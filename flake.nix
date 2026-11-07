@@ -747,8 +747,9 @@
         '';
 
       # Every skill the skills, the playbooks skill's plan templates, agent
-      # files, AGENTS.md files and README name ("the `NAME` skill", "the `A`
-      # and `B` skills", "the =NAME= skill" in a template), and every one an
+      # files, AGENTS.md files, CHECKS.md and README name ("the `NAME`
+      # skill", "the `A` and `B` skills", "the =NAME= skill" in a
+      # template), and every one an
       # agent file's `skills:` lists, is one the ngrok Mac installs: Claude
       # Code skips a missing preload with only a debug-log warning. Each
       # principle skill, a directory under
@@ -763,6 +764,7 @@
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
             ./AGENTS.md
+            ./CHECKS.md
             ./README.md
             ./modules/home-manager/llm
             ./modules/home-manager/claude/agents
@@ -1429,8 +1431,8 @@
         '';
 
       # Every line of a shell code block, fenced or indented, and every
-      # inline code span in the skills and the AGENTS.md files, judged by
-      # the guard as a Claude Code Bash call with the ngrok Mac's excluded
+      # inline code span in the skills, the AGENTS files and CHECKS.md,
+      # judged by the guard as a Claude Code Bash call with the ngrok Mac's excluded
       # commands: none is refused for naming an excluded command anywhere
       # but alone, or with syntax that sends it sandboxed even inside
       # quotes, or for running a read of gh's that gh-read runs, so no
@@ -1444,7 +1446,9 @@
           fileset = pkgs.lib.fileset.unions [
             ./modules/home-manager/llm/skills
             ./modules/home-manager/llm/AGENTS.md
+            ./modules/home-manager/llm/AGENTS.codex.md
             ./AGENTS.md
+            ./CHECKS.md
           ];
         };
       in
@@ -1565,7 +1569,7 @@
                 failed=1
                 ;;
             esac
-          done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md AGENTS.md)
+          done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md modules/home-manager/llm/AGENTS.codex.md AGENTS.md CHECKS.md)
           [ -z "$failed" ]
           touch $out
         '';
