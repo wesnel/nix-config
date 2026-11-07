@@ -290,21 +290,28 @@ func TestRequest(t *testing.T) {
 	})
 }
 
-// Qodo can answer the trigger with a top-level comment and no review when it
-// finds nothing. The fixture is one such comment as Qodo posted it, with its
-// commit link pointing at o/r: it names the commit it reviewed in an HTML
-// comment near its end.
-func TestQodoCleanComment(t *testing.T) {
+// Qodo can answer the trigger with a top-level comment and no review: its
+// summary comment when its first review finds nothing, and a short comment
+// saying its review was updated up to the latest commit when it reviews again.
+// The fixtures are such comments as Qodo posted them, with their links
+// pointing at o/r and the commit they name at head.
+func TestQodoResultComment(t *testing.T) {
 	const (
-		config  = `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"}, "verdicts": {"approval": "Great, no issues found!"}}}}`
-		head    = "0fd032cfabad4fc7f2a8358556a192dcb00b1c5d" // the commit the fixture links
+		config = `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"},
+			"resultComments": ["Great, no issues found!", "was updated up to the latest commit"],
+			"verdicts": {"approval": "Great, no issues found!"}}}}`
+		head    = "0fd032cfabad4fc7f2a8358556a192dcb00b1c5d" // the commit the fixtures link
 		trigger = "2026-11-06T23:19:23Z"
 		answer  = "2026-11-06T23:20:24Z"
 	)
-	clean, err := os.ReadFile(filepath.Join("testdata", "qodo-no-issues.html"))
-	if err != nil {
-		t.Fatal(err)
+	read := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
 	}
+	clean, updated := read("qodo-no-issues.html"), read("qodo-updated.md")
 	// repo is PR 1 at headOid, with CI passing, the operator's trigger, and
 	// Qodo's comment with body at answer.
 	repo := func(t *testing.T, headOid, body, at string) *fakeReview {
@@ -340,7 +347,7 @@ func TestQodoCleanComment(t *testing.T) {
 	}
 
 	t.Run("no issues on the head", func(t *testing.T) {
-		repo(t, head, string(clean), answer)
+		repo(t, head, clean, answer)
 		got := standing(t)
 		if !got.ReviewedHead || got.Pending || got.Verdict != "approval" || got.At != answer {
 			t.Errorf("qodo %+v, want the head reviewed at %s, approval, not pending", *got, answer)
@@ -349,7 +356,7 @@ func TestQodoCleanComment(t *testing.T) {
 
 	// After a push, the comment on the earlier head says nothing of the new one.
 	t.Run("no issues on an earlier head", func(t *testing.T) {
-		repo(t, "b2", string(clean), answer)
+		repo(t, "b2", clean, answer)
 		if got := standing(t); got.ReviewedHead || !got.Pending {
 			t.Errorf("qodo %+v, want the new head pending", *got)
 		}
@@ -357,7 +364,7 @@ func TestQodoCleanComment(t *testing.T) {
 
 	// A comment older than the trigger answers an earlier request.
 	t.Run("no issues before the trigger", func(t *testing.T) {
-		repo(t, head, string(clean), "2026-11-06T23:18:00Z")
+		repo(t, head, clean, "2026-11-06T23:18:00Z")
 		if got := standing(t); got.ReviewedHead || !got.Pending {
 			t.Errorf("qodo %+v, want pending", *got)
 		}
@@ -365,7 +372,7 @@ func TestQodoCleanComment(t *testing.T) {
 
 	// A review submitted after the comment is the newer standing.
 	t.Run("a later review", func(t *testing.T) {
-		f := repo(t, head, string(clean), answer)
+		f := repo(t, head, clean, answer)
 		f.reviews = []fakeSubmitted{{login: qodoLogin, commit: head, at: "2026-11-06T23:25:00Z"}}
 		if got := standing(t); !got.ReviewedHead || got.Pending || got.At != "2026-11-06T23:25:00Z" {
 			t.Errorf("qodo %+v, want the review's standing", *got)
@@ -374,19 +381,36 @@ func TestQodoCleanComment(t *testing.T) {
 
 	// Someone else quoting Qodo's comment has not reviewed anything.
 	t.Run("not from qodo", func(t *testing.T) {
-		f := repo(t, head, string(clean), answer)
+		f := repo(t, head, clean, answer)
 		f.comments[1].login = "josh"
 		if got := standing(t); got.ReviewedHead || !got.Pending {
 			t.Errorf("qodo %+v, want pending", *got)
 		}
 	})
 
-	// A comment on the head without a verdict's text, such as a chat reply,
+	// A comment on the head without a result's text, such as a chat reply,
 	// is not a review.
-	t.Run("no verdict", func(t *testing.T) {
-		repo(t, head, strings.Replace(string(clean), "Great, no issues found!", "Looking into it", 1), answer)
+	t.Run("no result", func(t *testing.T) {
+		repo(t, head, strings.Replace(clean, "Great, no issues found!", "Looking into it", 1), answer)
 		if got := standing(t); got.ReviewedHead || !got.Pending {
 			t.Errorf("qodo %+v, want pending", *got)
+		}
+	})
+
+	// A review again, which edits the summary comment in place, ends with
+	// the link comment; it names no verdict.
+	t.Run("updated on the head", func(t *testing.T) {
+		repo(t, head, updated, answer)
+		got := standing(t)
+		if !got.ReviewedHead || got.Pending || got.Verdict != "unknown" || got.At != answer {
+			t.Errorf("qodo %+v, want the head reviewed at %s, verdict unknown, not pending", *got, answer)
+		}
+	})
+
+	t.Run("updated on an earlier head", func(t *testing.T) {
+		repo(t, "b2", updated, answer)
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want the new head pending", *got)
 		}
 	})
 }

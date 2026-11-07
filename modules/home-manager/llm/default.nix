@@ -739,9 +739,12 @@ in {
             reviewer, or `{ comment = "..."; }` to post a top-level trigger
             comment, which the loop deletes once superseded
           - `verdicts` (optional): verdict name to text found in the bot's
-            review body. A bot asked by comment has also reviewed the head
-            when, after the trigger, it posts a top-level comment that links
-            the head's commit (`/commit/SHA`) and holds one of these texts
+            review body or result comment
+          - `resultComments` (optional): for a bot asked by comment, texts
+            that mark a top-level comment as its review: the bot has
+            reviewed the head when, after the trigger, it posts a comment
+            that links the head's commit (`/commit/SHA`) and holds one of
+            them
           - `resolvesOwnThreads` (optional): the bot resolves its threads
             itself when it re-reviews, so the loop leaves fixed ones to it
           - `repos` (optional): `owner/name` globs it is limited to
@@ -761,11 +764,18 @@ in {
 
           # Reviews once on its own when a PR opens or leaves draft, and never
           # on push. A bare @-mention gets a chat reply rather than a review.
-          # Finding nothing, it answers the trigger with a top-level comment
-          # alone, which this verdict recognises.
+          # It may answer the trigger with a top-level comment and no review:
+          # its summary comment when its first review finds nothing, or a
+          # comment linking the commit once a later review has finished. It
+          # also edits its summary comment to link each new head after a
+          # push, reviewed or not, so the edit is not a result.
           qodo = {
             login = "^qodo-code-review";
             request.comment = "/agentic_review";
+            resultComments = [
+              "Great, no issues found!"
+              "was updated up to the latest commit"
+            ];
             verdicts.approval = "Great, no issues found!";
             resolvesOwnThreads = true;
           };
