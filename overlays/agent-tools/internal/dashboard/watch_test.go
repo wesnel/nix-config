@@ -241,7 +241,7 @@ func TestWatchStall(t *testing.T) {
 }
 
 // A demo digest committed to the notes repository after the first watch
-// is announced once; other files there are not.
+// is announced once; other files there are not, nor one named for no day.
 func TestWatchDigest(t *testing.T) {
 	c, _, p := watchFixture(t)
 	digests := filepath.Join(filepath.Dir(c.Dir), "digests", "2026")
@@ -255,8 +255,8 @@ func TestWatchDigest(t *testing.T) {
 	}
 	put("10-16-demo.org")()
 	s := newScript(t, c, p)
-	got := s.run(t, put("10-17-demo.org"), put("notes.org"), put("10-17-demo.html"), put("10-18-brag.org"), nothing)
-	want := []string{"", LineDemo + "\n", "", "", "", ""}
+	got := s.run(t, put("10-17-demo.org"), put("notes.org"), put("10-17-demo.html"), put("10-18-brag.org"), put("13-45-demo.org"), nothing)
+	want := []string{"", LineDemo + "\n", "", "", "", "", ""}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("printed %q, want %q", got, want)
 	}

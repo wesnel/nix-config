@@ -275,12 +275,9 @@ func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (
 	return e, errors.Join(errs[:]...)
 }
 
-// digestFile is a digest's name under digests/YYYY/ in the notes
-// repository.
-var digestFile = regexp.MustCompile(`^([0-9]{2})-([0-9]{2})-demo\.org$`)
-
-// maxDigestFile is the most of a digest file read.
-const maxDigestFile = 64 << 10
+// maxDigestFile is the most of a digest file read, and so the most
+// agent-plan digest writes.
+const maxDigestFile = plans.MaxDigest
 
 // digestCap caps a digest's text, in runes.
 const digestCap = 8000
@@ -312,12 +309,8 @@ func TodayOf(c plans.Config, now time.Time) (Today, error) {
 			return t, err
 		}
 		for _, entry := range entries {
-			m := digestFile.FindStringSubmatch(entry.Name())
-			if m == nil || !entry.Type().IsRegular() {
-				continue
-			}
-			day, err := time.ParseInLocation("2006-01-02", fmt.Sprintf("%d-%s-%s", year, m[1], m[2]), now.Location())
-			if err != nil || day.After(today) || day.Before(today.AddDate(0, 0, -7)) {
+			day, ok := plans.DigestDay(year, entry.Name(), now.Location())
+			if !ok || !entry.Type().IsRegular() || day.After(today) || day.Before(today.AddDate(0, 0, -7)) {
 				continue
 			}
 			all = append(all, found{day, "demo", filepath.Join(dir, entry.Name())})
