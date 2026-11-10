@@ -85,7 +85,13 @@ no command makes goes in your report for the operator.
   work runs under beyond this one, such as `coordinate-subagents` or
   `review-loop`), `WORKSTREAM` (an `id:` link to the plan's workstream,
   in the plan's file alone) and, once `agent-plan own` sets one,
-  `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  `OWNERS` (`worktree=agent`). For `own --agent`, use the literal `main`
+  for the session's main thread, or the ID returned by the harness when
+  spawning a sub-agent. This selects the thread allowed to edit the
+  worktree; `--harness` identifies the tool running the session, and
+  `--session` associates a conversation with the plan. Hand ownership
+  back to `main` only after the delegated agent has stopped.
+  Lists are separated by spaces.
   `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
   `CUSTOM_ID`, `HOST`, `PIPELINE`, `WORKSTREAM` and `OWNERS`, as `agent-plan set PLAN STATUS
   working` or `agent-plan set PLAN SKILLS coordinate-subagents`.

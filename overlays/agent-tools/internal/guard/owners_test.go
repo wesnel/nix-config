@@ -250,7 +250,7 @@ func TestOwners(t *testing.T) {
 		{"unowned agent's Write in scratch", false, `{"tool_name":"Write","agent_id":"a2","tool_input":{"file_path":"SCRATCH/notes.md"}}`, nil},
 		{"main thread's Edit in the main checkout", true, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, []string{"worktree"}},
 		{"main thread's shell write in the main checkout", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, []string{"worktree"}},
-		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own"}},
+		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own PLAN --worktree LINKED --agent main", "has stopped", "main thread"}},
 		{"main thread's removal of a delegated worktree", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"git worktree remove LINKED"}}`, []string{"a1", "agent-plan own"}},
 		// A worktree a plan names is judged by its owner wherever it is, and
 		// a path by where its links lead.

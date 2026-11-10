@@ -79,14 +79,20 @@ A review loop over a stack, which the operator starts with
   invents the branch name, so use it only for read-only investigation.
 - In Claude Code and Codex, once the harness gives a sub-agent its ID, make
   it the worktree's owner, and the guard denies every other agent's edits
-  there, yours included (`main`); hand a worktree back to yourself the same
-  way when the part is done:
+  there, yours included. The `plan-work` skill defines the owner identities.
+  Assign the worktree before the sub-agent starts writing:
 
   ```sh
   agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent <agent ID>
   ```
 
-  Run it before the part starts writing: the guard refuses a sub-agent's
+  Once the sub-agent has stopped, hand the worktree back to yourself:
+
+  ```sh
+  agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent main
+  ```
+
+  The guard refuses a sub-agent's
   edits outside the worktrees it owns, scratch and the plans directory, all
   of them until it owns one.
 
