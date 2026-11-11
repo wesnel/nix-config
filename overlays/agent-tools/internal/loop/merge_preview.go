@@ -56,51 +56,59 @@ func MergePreview(target string) (*MergePlan, error) {
 	if stack != nil {
 		plan.Stack = stack.Number
 	}
-	owner, name, _ := strings.Cut(repo.Slug, "/")
 	for _, member := range members {
 		if _, err := checkBranch(repo, prs, member.HeadRefName); err != nil {
 			return nil, err
 		}
-		var data struct {
-			Repository struct {
-				PullRequest struct {
-					Mergeable, MergeStateStatus, ReviewDecision string
-					Commits                                     struct {
-						Nodes []struct {
-							Commit struct{ StatusCheckRollup *struct{ State string } }
-						}
-					}
-				}
-			}
-		}
-		err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
-			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-				mergeable mergeStateStatus reviewDecision
-				commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-			} }
-		}`, map[string]any{"owner": owner, "name": name, "number": member.Number}, &data)
+		pr, err := mergeReadiness(repo.Slug, member)
 		if err != nil {
 			return nil, err
-		}
-		status := data.Repository.PullRequest
-		pr := MergePlanPR{PR: *member, Mergeable: status.Mergeable, MergeStateStatus: status.MergeStateStatus, ReviewDecision: status.ReviewDecision, CIState: "UNKNOWN"}
-		if pr.Mergeable == "" {
-			pr.Mergeable = "UNKNOWN"
-		}
-		if pr.MergeStateStatus == "" {
-			pr.MergeStateStatus = "UNKNOWN"
-		}
-		if pr.ReviewDecision == "" {
-			pr.ReviewDecision = "UNKNOWN"
-		}
-		if len(status.Commits.Nodes) == 1 {
-			if rollup := status.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil && rollup.State != "" {
-				pr.CIState = rollup.State
-			}
 		}
 		plan.PRs = append(plan.PRs, pr)
 	}
 	return plan, nil
+}
+
+func mergeReadiness(slug string, member *PR) (MergePlanPR, error) {
+	owner, name, _ := strings.Cut(slug, "/")
+	var data struct {
+		Repository struct {
+			PullRequest struct {
+				Mergeable, MergeStateStatus, ReviewDecision string
+				Commits                                     struct {
+					Nodes []struct {
+						Commit struct{ StatusCheckRollup *struct{ State string } }
+					}
+				}
+			}
+		}
+	}
+	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+			mergeable mergeStateStatus reviewDecision
+			commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+		} }
+	}`, map[string]any{"owner": owner, "name": name, "number": member.Number}, &data)
+	if err != nil {
+		return MergePlanPR{}, err
+	}
+	status := data.Repository.PullRequest
+	pr := MergePlanPR{PR: *member, Mergeable: status.Mergeable, MergeStateStatus: status.MergeStateStatus, ReviewDecision: status.ReviewDecision, CIState: "UNKNOWN"}
+	if pr.Mergeable == "" {
+		pr.Mergeable = "UNKNOWN"
+	}
+	if pr.MergeStateStatus == "" {
+		pr.MergeStateStatus = "UNKNOWN"
+	}
+	if pr.ReviewDecision == "" {
+		pr.ReviewDecision = "UNKNOWN"
+	}
+	if len(status.Commits.Nodes) == 1 {
+		if rollup := status.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil && rollup.State != "" {
+			pr.CIState = rollup.State
+		}
+	}
+	return pr, nil
 }
 
 func sameMergeSelection(before, after *MergePlan) bool {

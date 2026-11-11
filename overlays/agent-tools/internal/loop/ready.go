@@ -30,9 +30,37 @@ func Ready(target string) (any, error) {
 	if len(drafts) == 0 {
 		return result, nil
 	}
+	confirmed, err := confirmReady(drafts)
+	if err != nil {
+		return nil, err
+	}
+	if !confirmed {
+		result.Skipped = "not confirmed"
+		return result, nil
+	}
+	for i, pr := range plan.PRs {
+		if !pr.IsDraft {
+			continue
+		}
+		fresh, err := recheckMergePlan(plan)
+		if err != nil {
+			return result, err
+		}
+		if !fresh.PRs[i].IsDraft {
+			continue
+		}
+		if err := markReady(pr); err != nil {
+			return result, err
+		}
+		result.Ready = append(result.Ready, pr.Number)
+	}
+	return result, nil
+}
+
+func confirmReady(drafts []MergePlanPR) (bool, error) {
 	tty, err := openTTY()
 	if err != nil {
-		return nil, refuse("agent-pr ready needs /dev/tty (%v); run it from the operator's terminal", err)
+		return false, refuse("agent-pr ready needs /dev/tty (%v); run it from the operator's terminal", err)
 	}
 	defer tty.Close()
 	fmt.Fprintln(tty, "\n=== Mark these drafts ready for review, bottom first:")
@@ -42,41 +70,29 @@ func Ready(target string) (any, error) {
 	fmt.Fprint(tty, "=== Mark ready? [y/N] ")
 	answer, err := bufio.NewReader(tty).ReadString('\n')
 	if err != nil && answer == "" {
-		return nil, fmt.Errorf("reading the answer: %w", err)
+		return false, fmt.Errorf("reading the answer: %w", err)
 	}
-	if strings.TrimSpace(answer) != "y" {
-		result.Skipped = "not confirmed"
-		return result, nil
-	}
-	fresh, err := recheckMergePlan(plan)
-	if err != nil {
-		return nil, err
-	}
-	for _, pr := range drafts {
-		for _, current := range fresh.PRs {
-			if current.Number != pr.Number || !current.IsDraft {
-				continue
+	return strings.TrimSpace(answer) == "y", nil
+}
+
+func markReady(pr MergePlanPR) error {
+	var data struct {
+		MarkPullRequestReadyForReview struct {
+			PullRequest *struct {
+				ID      string
+				IsDraft bool
 			}
-			var data struct {
-				MarkPullRequestReadyForReview struct {
-					PullRequest *struct {
-						ID      string
-						IsDraft bool
-					}
-				}
-			}
-			err := graphQL(`mutation($id: ID!) {
-				markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id isDraft } }
-			}`, map[string]any{"id": pr.ID}, &data)
-			if err != nil {
-				return result, fmt.Errorf("marking #%d ready: %w", pr.Number, err)
-			}
-			changed := data.MarkPullRequestReadyForReview.PullRequest
-			if changed == nil || changed.ID != pr.ID || changed.IsDraft {
-				return result, fmt.Errorf("GitHub did not confirm #%d is ready", pr.Number)
-			}
-			result.Ready = append(result.Ready, pr.Number)
 		}
 	}
-	return result, nil
+	err := graphQL(`mutation($id: ID!) {
+		markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id isDraft } }
+	}`, map[string]any{"id": pr.ID}, &data)
+	if err != nil {
+		return fmt.Errorf("marking #%d ready: %w", pr.Number, err)
+	}
+	changed := data.MarkPullRequestReadyForReview.PullRequest
+	if changed == nil || changed.ID != pr.ID || changed.IsDraft {
+		return fmt.Errorf("GitHub did not confirm #%d is ready", pr.Number)
+	}
+	return nil
 }

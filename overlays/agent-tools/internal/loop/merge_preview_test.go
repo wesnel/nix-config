@@ -83,6 +83,28 @@ func TestMergeChangedSelection(t *testing.T) {
 }
 
 func TestReady(t *testing.T) {
+	for _, change := range []string{"head", "base"} {
+		t.Run("remaining draft changes "+change, func(t *testing.T) {
+			f, _ := mergeRepo(t, "y\n")
+			f.prs[1].draft, f.prs[3].draft = true, true
+			original := graphQL
+			graphQL = func(query string, vars map[string]any, out any) error {
+				err := original(query, vars, out)
+				if strings.Contains(query, "markPullRequestReadyForReview") && vars["id"] == "PR_1" {
+					if change == "head" {
+						f.prs[3].oid = "changed"
+					} else {
+						f.prs[3].base = "main"
+					}
+				}
+				return err
+			}
+			got, err := Ready("3")
+			if !refusedWell(err) || fmt.Sprint(got.(ReadyResult).Ready) != "[1]" || !f.prs[3].draft || fmt.Sprint(f.writes) != "[ready 1]" {
+				t.Fatalf("result %v, error %v, writes %v", got, err, f.writes)
+			}
+		})
+	}
 	t.Run("no terminal", func(t *testing.T) {
 		f, _ := mergeRepo(t, "")
 		f.prs[2].draft = true
