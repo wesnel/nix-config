@@ -378,7 +378,7 @@ func (r runOutput) review(reviewer string) output {
 	return output{}
 }
 
-// runDelegate runs `git delegate` with args.
+// runDelegate runs `agent-review` with args.
 func runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -392,7 +392,7 @@ func runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
 	return code, out, stderr.String()
 }
 
-// freshReview runs `git delegate` with args and returns Codex's part of
+// freshReview runs `agent-review` with args and returns Codex's part of
 // the review.
 func freshReview(t *testing.T, args ...string) (int, output, string) {
 	t.Helper()
@@ -661,7 +661,7 @@ func TestUnavailable(t *testing.T) {
 				t.Fatalf("exit %d, want %d\n%s", code, c.want, stderr)
 			}
 			if c.want == 4 {
-				reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: ")
+				reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review: ")
 				if !strings.Contains(reason, "--print-prompt") || !refusal.SaysInstead(reason) {
 					t.Errorf("does not say how to review instead: %q", stderr)
 				}
@@ -959,7 +959,7 @@ func TestGoalHint(t *testing.T) {
 	f.addPart(t)
 	t.Setenv("FAKE_CODEX", "unauthenticated")
 	code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
-	want := "`git delegate --print-prompt --reviewer codex --plan '" + f.plan + "' --part P1 " + f.base + "..HEAD`"
+	want := "`agent-review --print-prompt --reviewer codex --plan '" + f.plan + "' --part P1 " + f.base + "..HEAD`"
 	if code != 4 || !strings.Contains(stderr, want) {
 		t.Errorf("exit %d, want the hint %s\n%s", code, want, stderr)
 	}
@@ -1012,7 +1012,7 @@ func TestRefusals(t *testing.T) {
 			f := setUp(t, true)
 			args := c.args(t, f)
 			code, _, stderr := freshReview(t, args...)
-			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review: refused: ")
 			if code != 2 || !refusal.SaysInstead(reason) || !strings.Contains(reason, c.says) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)
 			}

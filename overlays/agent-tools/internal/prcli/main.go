@@ -1,7 +1,5 @@
-// Command pr-loop pushes, replies and requests reviews for a pull request
-// review loop, enforcing the loop's policy on every write to GitHub. See the
-// usage text for the commands.
-package main
+// Package prcli dispatches PR commands for agent-pr and agent-ops MCP tools.
+package prcli
 
 import (
 	"errors"
@@ -15,13 +13,12 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
-	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 )
 
-const usage = `pr-loop: a review loop's way to write to GitHub.
+const Usage = `agent-pr: pull request publication, CI, stacks and discussions.
 
 Policy: apart from open, every write is to the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
@@ -42,7 +39,7 @@ starting the session with review-loop --harness claude|codex
 mode, request and reply take bot threads, and push pushes the fixups. In
 people mode, draft writes the answers to people's threads into the PR's
 review record and push refuses: the operator reads the fixups and drafts,
-pushes with git sign-pass --push and posts with pr-loop post. request and
+pushes with git sign-pass --push and posts with agent-pr post. request and
 reply refuse outside a bots-mode loop, and draft outside a people-mode one.
 
 Each push, reply, resolve and wait ci's result is logged in the plan of the
@@ -69,8 +66,6 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               "github" (null when GitHub has it in none)
   link PR...                  put the PRs, by number or branch, bottom first, each based on
                               the one before, into one GitHub stack (see below)
-  setup [PATH]                run the setup command in the worktree at PATH (default: this one)
-  setup-command               the setup command configured for this repository
   push [--dry-run] [--lease BRANCH=SHA]... [BRANCH...]
                               push through the GitHub API, a branch at a time, bottom up
                               (default: HEAD's branch alone; see below)
@@ -105,32 +100,6 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               git sign-pass --push
   end [PR...]                 delete your trigger comments, those holding a bot's
                               request comment
-  guard --baseline            PreToolUse hook for Claude Code and Codex (reads stdin):
-                              every session's rules
-  guard --reviewer            PreToolUse hook a reviewer agent's definition adds beside
-                              --baseline (reads stdin): also keeps the agent to reading
-  guard --post                PostToolUse hook for Claude Code and Codex (reads stdin):
-                              records the shell call's commits, pushes (but push's,
-                              which push logs), new worktrees,
-                              branches and PRs in the plan of its session or worktree,
-                              each commit with the session, asking which step it
-                              completes (a commit no plan takes makes a plan
-                              naming both); after a push to GitHub, names the
-                              pr-loop wait ci to start
-  mcp                         serve the GitHub and review commands an agent runs (open,
-                              stack, link, push, threads, reply --from, draft, request,
-                              status, ci, logs, wait, sign-check, end; git delegate,
-                              ask, settle, show), routine agent-plan operations,
-                              and a GitHub user's name and pronouns
-                              as typed tools of a stdio MCP server, each run in the
-                              worktree its call names, for Codex, whose commands cannot
-                              reach the gh login. Codex prompts for non-plan tools
-                              outside a review-loop session
-  mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
-                              each with the command that connects it, probing each route
-                              without credentials; nothing when all are; --hook prints it
-                              as Claude Code's SessionStart hook output, as context for
-                              the agent and a message shown to the operator
 
 reply and resolve take only a thread whose every comment is a configured
 bot's (its login pattern, on an account GitHub types Bot) or the
@@ -180,7 +149,7 @@ GitHub, and never reports an earlier head's checks. Each failed check gives
 its state on the base (onBase) and, for a GitHub Actions job, the logs
 command that prints its log.
 
-pr-loop may run outside the sandbox, with the operator's login. open's
+agent-pr may run outside the sandbox, with the operator's login. open's
 title and body, each reply, draft and request's trigger comment are
 refused, before anything is posted, while redaction would change them: name
 a secret without its value. A placeholder such as $VAR, ${VAR}, <token> or
@@ -196,12 +165,7 @@ A review record that fails its structure check, which only a hand edit
 makes, refuses threads, draft and post with exit 5; the operator fixes or
 deletes it.
 
-A setup command prepares a fresh checkout, e.g. generating files the
-repository does not commit. It is taken from "setup" in the clone's agent
-settings, .git/info/agents.json in its common git directory, which the
-operator writes, and never from the repository. setup runs it with sh in this process, in the sandbox, printed on
-stderr before it runs and followed by its exit status; a failed setup makes
-the command exit 1. Nothing runs it on its own: run it in each new worktree.
+
 `
 
 type multi []string
@@ -209,25 +173,21 @@ type multi []string
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
-func main() {
-	args := os.Args[1:]
+// Main handles agent-pr arguments and streams, returning its exit status.
+func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		fmt.Fprint(stderr, Usage)
+		return 2
 	}
 	if cli.IsHelp(args[0]) {
-		fmt.Fprint(os.Stdout, usage)
-		os.Exit(0)
+		fmt.Fprint(stdout, Usage)
+		return 0
 	}
-	if args[0] == "mcp" {
-		// Not in run, which its tools call.
-		os.Exit(mcpMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
-	}
-	os.Exit(run(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
+	return Run(args[0], args[1:], stdin, stdout, stderr)
 }
 
-// run runs command with args and returns its exit status.
-func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// Run dispatches one PR command and returns its exit status.
+func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		dryRun   = flags.Bool("dry-run", false, "")
@@ -251,21 +211,15 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	flags.Var(&bots, "bot", "")
 	flags.Var(&accepted, "accept-failure", "")
 	flags.Var(&leases, "lease", "")
-	if command == "guard" {
-		return guard.Main(args, stdin, stdout, stderr)
-	}
-	if command == "mcp-status" {
-		return mcpStatus(args, stdout, stderr)
-	}
-	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
+	if code, ok := cli.Parse(flags, interleave(args), Usage, stdout, stderr); !ok {
 		return code
 	}
 	rest := flags.Args()
 	if err := git.CheckLocation(); err != nil {
-		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
+		return cli.Report("agent-pr", nil, err, 0, stdout, stderr)
 	}
 	if err := git.CheckConfig(""); err != nil {
-		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
+		return cli.Report("agent-pr", nil, err, 0, stdout, stderr)
 	}
 	need := func(n int) error { return needArgs(command, rest, n) }
 	body := func() (string, error) { return commandBody(command, *bodyFile, stdin) }
@@ -319,25 +273,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 	case "wait":
 		result, err, code = waitCommand(flags, rest, *sha, *timeout, *interval, *grace)
-	case "setup":
-		result, err, code = setupCommand(rest, stderr)
-	case "setup-command":
-		result, err = loop.SetupCommand()
 	case "sign-check":
 		result, err = loop.SignCheck()
 	case "end":
 		result, err = loop.End(rest)
 	default:
-		fmt.Fprint(stderr, usage)
+		fmt.Fprint(stderr, Usage)
 		return 2
 	}
 
 	var drift *record.DriftError
 	if errors.As(err, &drift) {
-		fmt.Fprintf(stderr, "pr-loop: refused: %s\n", drift)
+		fmt.Fprintf(stderr, "agent-pr: refused: %s\n", drift)
 		return record.DriftExit
 	}
-	return cli.Report("pr-loop", result, err, code, stdout, stderr)
+	return cli.Report("agent-pr", result, err, code, stdout, stderr)
 }
 
 func parsePRNumber(arg string) (int, error) {
@@ -350,7 +300,7 @@ func parsePRNumber(arg string) (int, error) {
 
 func openCommand(rest []string, base, title string, dryRun bool, body func() (string, error)) (any, error) {
 	if len(rest) > 1 {
-		return nil, errors.New("open takes at most one branch; see pr-loop --help")
+		return nil, errors.New("open takes at most one branch; see agent-pr --help")
 	}
 	branch := ""
 	if len(rest) == 1 {
@@ -369,7 +319,7 @@ func openCommand(rest []string, base, title string, dryRun bool, body func() (st
 
 func stackCommand(rest []string) (any, error) {
 	if len(rest) > 1 {
-		return nil, errors.New("stack takes at most one PR or branch; see pr-loop --help")
+		return nil, errors.New("stack takes at most one PR or branch; see agent-pr --help")
 	}
 	target := ""
 	if len(rest) == 1 {
@@ -380,7 +330,7 @@ func stackCommand(rest []string) (any, error) {
 
 func mergeCommand(rest []string, method string) (any, error) {
 	if len(rest) > 1 {
-		return nil, errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
+		return nil, errors.New("merge takes at most one PR or branch, the top of what to merge; see agent-pr --help")
 	}
 	target := ""
 	if len(rest) == 1 {
@@ -439,7 +389,7 @@ func draftCommand(rest []string, outcome string, body func() (string, error)) (a
 
 func postCommand(rest []string) (any, error) {
 	if len(rest) == 0 {
-		return nil, errors.New("post takes the PR, then any of its threads; see pr-loop --help")
+		return nil, errors.New("post takes the PR, then any of its threads; see agent-pr --help")
 	}
 	n, err := parsePRNumber(rest[0])
 	if err != nil {
@@ -480,40 +430,9 @@ func waitCommand(flags *flag.FlagSet, rest []string, sha string, timeout, interv
 	return result, err, code
 }
 
-func setupCommand(rest []string, stderr io.Writer) (any, error, int) {
-	var err error
-	if len(rest) > 1 {
-		return nil, errors.New("setup takes at most one path; see pr-loop --help"), 0
-	}
-	if len(rest) == 1 {
-		// The repository is identified from where the command runs.
-		if err = os.Chdir(rest[0]); err != nil {
-			return nil, err, 0
-		}
-		if err = git.CheckConfig(""); err != nil {
-			return nil, err, 0
-		}
-	}
-	var dir string
-	if dir, err = git.Toplevel(); err != nil {
-		return nil, err, 0
-	}
-	var setup *loop.Setup
-	if setup, err = loop.SetupCommand(); err != nil {
-		return nil, err, 0
-	}
-	runs := []loop.SetupRun{}
-	if setup.Command != "" {
-		runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
-	}
-	result := map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
-	code := setupFailures(runs, stderr)
-	return result, nil, code
-}
-
 func needArgs(command string, rest []string, n int) error {
 	if len(rest) != n {
-		return fmt.Errorf("%s takes %d argument(s); see pr-loop --help", command, n)
+		return fmt.Errorf("%s takes %d argument(s); see agent-pr --help", command, n)
 	}
 	return nil
 }
@@ -543,18 +462,6 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 		}
 	}
 	return loop.ReplyAll(plan)
-}
-
-// setupFailures names each failed run and returns 1 if there was one.
-func setupFailures(runs []loop.SetupRun, stderr io.Writer) int {
-	code := 0
-	for _, r := range runs {
-		if r.Exit != 0 {
-			fmt.Fprintf(stderr, "pr-loop: setup failed in %s (exit %d)\n", r.Dir, r.Exit)
-			code = 1
-		}
-	}
-	return code
 }
 
 // interleave moves flags ahead of positional arguments, since the standard

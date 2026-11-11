@@ -11,13 +11,13 @@ with lib; let
 
   # The role agents (llm.agentFiles): the sub-agents the
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
-  # headless reviewers git delegate runs from review-agents.json. A
+  # headless reviewers agent-review runs from review-agents.json. A
   # reviewer's file names its tools and the hook that keeps it to reading,
   # `@guard@ guard --reviewer`, with `onFailure: block`, which Claude Code's
   # frontmatter hooks take as its settings' hooks do.
   focusReviewers = llm.focusReviewers pkgs;
-  agents = llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "pr-loop");
-  reviewerHook = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --reviewer";
+  agents = llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "agent-ops");
+  reviewerHook = "${getExe' config.wgn.home.llm.agentTools "agent-ops"} guard --reviewer";
 
   agentFile = name: let
     a = agents.${name};
@@ -99,7 +99,7 @@ with lib; let
   in
     concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" text)));
 
-  # The reviewers git delegate runs headless, with `--agents` and this file,
+  # The reviewers agent-review runs headless, with `--agents` and this file,
   # which outranks a reviewed project's own agents. Each prompt ends with
   # the text of the supported skills its agent file's `skills:` lists, so a
   # reviewer run with `--setting-sources ""` has them whether or not it
@@ -132,7 +132,7 @@ with lib; let
     }));
   } ''jq -e . <<<"$json" > $out'';
 
-  # The headless reviewers' only settings, since git delegate passes
+  # The headless reviewers' only settings, since agent-review passes
   # `--setting-sources ""`: the host sandbox's credentials, denied reads and
   # allowed domains, but none of its Unix sockets, which on the ngrok Mac
   # include the operator's ngrok daemon; a sandbox no project can loosen,
@@ -515,10 +515,10 @@ with lib; let
     "section"
   ];
 
-  # pr-loop's subcommands that need the operator's GitHub login, or write
-  # the review records the sandbox denies (threads, draft and post). Never
-  # setup, which runs a command a checkout's tools decide, or setup-command
-  # and guard, which work in the sandbox. post is the operator's: the guard
+  # agent-pr's subcommands that need the operator's GitHub login, or write
+  # the review records the sandbox denies (threads, draft and post).
+  # agent-ops setup, setup-command and guard work in the sandbox.
+  # post is the operator's: the guard
   # refuses it to agents, and it asks on /dev/tty.
   prLoopGitHub = ["open" "next" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
     "sign-check" "end"];
@@ -555,7 +555,7 @@ with lib; let
     # operator can, and the daemon builds with the network on macOS), no
     # emacsclient (the daemon evaluates whatever it is sent, and a socket
     # path the session can write may be a link to the operator's), never
-    # `pr-loop *`.
+    # `agent-pr *`.
     #
     # - `gh-read` runs only gh's reads and refuses `--web`, so it reads with
     #   the operator's gh login and prints what it read: pull requests, their
@@ -564,21 +564,21 @@ with lib; let
     # - trash-scratch validates every path before moving untracked worktree
     #   files or files in this session's scratch directory to the system
     #   Trash, and refuses what the sandbox protects.
-    # - git delegate: Codex's own sandbox cannot start inside this one, a
+    # - agent-review: Codex's own sandbox cannot start inside this one, a
     #   pull request is fetched with the operator's login, and it writes the
     #   review records the sandbox denies. api.openai.com stays out of the
     #   allowed domains, since the command runs outside the sandbox anyway.
-    #   Every delegate subcommand is one an agent may run; an operator-only
+    #   Every agent-review subcommand is one an agent may run; an operator-only
     #   action must never become one, since this exclusion and its allow
     #   rule below take them all.
-    # - pr-loop's GitHub commands and agent-plan's writes: neither takes a
+    # - agent-pr's GitHub commands and agent-plan's writes: neither takes a
     #   program or a host from its arguments. The guard refuses a file
     #   argument that names a credential (wgn.home.llm.guard.credentialPaths,
-    #   which denyRead holds too), and pr-loop refuses to post text holding a
+    #   which denyRead holds too), and agent-pr refuses to post text holding a
     #   secret's shape.
     excludedCommands =
-      ["gh-read *" "git delegate *" "git-delegate *" "trash-scratch *"]
-      ++ map (sub "pr-loop") prLoopGitHub
+      ["gh-read *" "agent-review *" "trash-scratch *"]
+      ++ map (sub "agent-pr") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites;
 
     credentials.envVars =
@@ -688,7 +688,7 @@ in {
         operator, stopping sub-agents, handing back, `agent-plan` alone on
         its line, and a ScheduleWakeup or CronCreate that fires after the
         reset; its refusal gives the main session the exact call that
-        schedules its resume. `git delegate` meanwhile starts no headless
+        schedules its resume. `agent-review` meanwhile starts no headless
         Claude reviewer, whose settings carry no hooks. Nothing in a session
         lifts the stop; null turns it off at the next switch. Codex sessions
         spend another quota, whose stop is {option}`wgn.home.codex.quotaStop`.
@@ -753,11 +753,11 @@ in {
         # that only read, and every agent-plan write. A rule allows a call
         # only when every command in it matches.
         permissions.allow =
-          map (s: "Bash(${sub "pr-loop" s})") prLoopReads
-          # Every delegate subcommand is one an agent may run; an
+          map (s: "Bash(${sub "agent-pr" s})") prLoopReads
+          # Every agent-review subcommand is one an agent may run; an
           # operator-only action must never become one, since this rule
           # allows it.
-          ++ ["Bash(git delegate *)" "Bash(git-delegate *)" "Bash(trash-scratch *)"]
+          ++ ["Bash(agent-review *)" "Bash(trash-scratch *)"]
           ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
           ++ mcpRules.allow;
 
@@ -768,7 +768,7 @@ in {
         autoMode.hard_deny = [
           "$defaults"
           "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
-          "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `pr-loop`."
+          "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `agent-pr`."
           "Running anything as root: sudo, doas, su, or an administrator prompt."
           "Changing an agent's settings or hooks, or the guard's config: Claude Code's or Codex's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
           "Publishing a package, container image or release."
@@ -781,7 +781,7 @@ in {
         hooks.PostToolUse = [
           # Records commits, pushes, worktrees, branches and PRs in the plan
           # and asks which step a commit completes; after a push to GitHub,
-          # names the `pr-loop wait ci` to start; hands over the
+          # names the `agent-pr wait ci` to start; hands over the
           # pull-requests skill when a PR is opened or edited, and the
           # commit rules on the session's first commit.
           {
@@ -789,7 +789,7 @@ in {
             hooks = [
               {
                 type = "command";
-                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --post";
+                command = "${getExe' config.wgn.home.llm.agentTools "agent-ops"} guard --post";
               }
             ];
           }
@@ -862,7 +862,7 @@ in {
             hooks = [
               {
                 type = "command";
-                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} mcp-status --hook";
+                command = "${getExe' config.wgn.home.llm.agentTools "agent-ops"} mcp-status --hook";
               }
             ];
           };
@@ -921,7 +921,7 @@ in {
               hooks = [
                 {
                   type = "command";
-                  command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
+                  command = "${getExe' config.wgn.home.llm.agentTools "agent-ops"} guard --baseline";
                   onFailure = "block";
                 }
               ];
@@ -1090,7 +1090,7 @@ in {
                   hooks = [
                     {
                       type = "command";
-                      command = "${getExe' agentTools "pr-loop"} guard --baseline";
+                      command = "${getExe' agentTools "agent-ops"} guard --baseline";
                       onFailure = "block";
                     }
                   ];

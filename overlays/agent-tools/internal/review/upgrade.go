@@ -205,7 +205,7 @@ func (u *upgrades) printedSection(r *span) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n## Unread pins\n\nThis prompt was printed for a reviewer whose reply git delegate never sees, so nothing " +
+	b.WriteString("\n## Unread pins\n\nThis prompt was printed for a reviewer whose reply agent-review never sees, so nothing " +
 		"raises the unread-upgrade findings for you, and this section replaces what the Checks and the Upgrades section " +
 		"say of who reports them: report each " +
 		"pin below you cannot account for yourself, as a finding of kind `unread-upgrade` with the `id`, `path` and " +

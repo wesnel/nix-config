@@ -60,7 +60,7 @@ type Request struct {
 	Head      string    `json:"head"`
 	// CI is Head's check rollup, as PR's.
 	CI string `json:"ci"`
-	// Record is "yes" or "no" for whether a git delegate review record of
+	// Record is "yes" or "no" for whether a agent-review review record of
 	// Head exists, or "unknown" where Repo or Head cannot name one.
 	Record string `json:"-"`
 	// Parent is as PR's.
@@ -89,7 +89,7 @@ func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, 
 			if !record.ValidName(owner) || !record.ValidName(repo) || !headPattern.MatchString(r.Head) {
 				continue
 			}
-			// Any range a review took to this head: git delegate's of the
+			// Any range a review took to this head: agent-review's of the
 			// pull request is merge-base..head.
 			if found, err := filepath.Glob(filepath.Join(record.Dir(), owner, repo, "*.."+r.Head+".org")); err == nil {
 				r.Record = "no"

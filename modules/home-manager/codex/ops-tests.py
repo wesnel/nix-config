@@ -41,7 +41,7 @@ def main():
             config = tomllib.loads(config_file.read_text())
             assert config["model"] == "keep-me"
             check(config)
-        config["mcp_servers"]["agent_ops"]["tools"]["pr_loop_open"] = {"approval_mode": "approve"}
+        config["mcp_servers"]["agent_ops"]["tools"]["agent_pr_open"] = {"approval_mode": "approve"}
         try:
             check(config)
         except AssertionError:

@@ -89,16 +89,16 @@ var (
 				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
 				"Confirm the branch with `git branch --show-current` before the edit",
-			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
-				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+			"pushed": "agent-pr, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
+				"Watch the push's CI with `agent-pr wait ci` as the signing-pass skill says",
 			linkedKind: "agent-plan link logs `linked` for each link it writes under Related. " +
 				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
 			"referenced": "agent-plan reference logs `referenced` for each URL it writes under References, and status reads its summary as that URL. " +
 				"Add one with `agent-plan reference PLAN URL`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
-			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +
-				"Run the `pr-loop` command that does it"
+			kinds[k] = "agent-pr logs what it did, from begin on, in the plan of the session that ran it. " +
+				"Run the `agent-pr` command that does it"
 		}
 		for _, k := range signKinds {
 			kinds[k] = "a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +

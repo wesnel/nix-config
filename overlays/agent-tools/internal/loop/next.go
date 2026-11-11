@@ -9,7 +9,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/signpass"
 )
 
-// NextStep is a branch's single next step, as pr-loop next reports it. Its
+// NextStep is a branch's single next step, as agent-pr next reports it. Its
 // type is the branch's state: Done, ToOpen, ToSign, ToPush or Blocked, each
 // with Kind naming it in the JSON.
 type NextStep interface {
@@ -78,7 +78,7 @@ func (s ToPush) text() string {
 	return fmt.Sprintf("%s: push: %s; mint the ID, then hand the operator the pass:\n  %s\n  %s\n", s.Branch, s.Why, s.Notify, s.Command)
 }
 
-// FormatNext is steps as pr-loop next prints them without --json.
+// FormatNext is steps as agent-pr next prints them without --json.
 func FormatNext(steps []NextStep) string {
 	var b strings.Builder
 	for _, s := range steps {
@@ -193,7 +193,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 }
 
 func nextDestination(branch, onGitHub, tip string) (signpass.Destination, error) {
-	retry := "run `pr-loop next` again"
+	retry := "run `agent-pr next` again"
 	dest, err := signpass.DestinationOf(branch, retry)
 	if err != nil {
 		return dest, err
@@ -220,5 +220,5 @@ func nextOpen(repo *Repo, view *remoteView, branch string) (NextStep, error) {
 		why = "GitHub has it at its tip, with no pull request"
 	}
 	return ToOpen{Kind: "open", Branch: branch, Why: why, OnGitHub: o.onGitHub,
-		Command: "pr-loop open --title TITLE --body-file FILE " + shellQuote(branch)}, nil
+		Command: "agent-pr open --title TITLE --body-file FILE " + shellQuote(branch)}, nil
 }

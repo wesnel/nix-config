@@ -115,7 +115,7 @@
     home-manager-x86_64-darwin,
     sops-nix,
   }: let
-    # The full fingerprint: pr-loop open and git sign-pass prove signatures
+    # The full fingerprint: agent-pr open and git sign-pass prove signatures
     # against it, which a key ID is too short to do.
     key = "F84480B20CA9D6CCC7F52479A776D2AD099E8BC0";
 
@@ -683,8 +683,8 @@
 
       # Every sub-agent type the skills, agent bodies, README and agent-tools'
       # messages name ("`NAME` agent", "`NAME` sub-agent") is one that is
-      # defined, and every `pr-loop SUBCOMMAND` they name is in pr-loop's
-      # usage, so a rename on one side fails here until the other follows.
+      # defined, and every agent-pr or agent-ops subcommand they name is in
+      # its usage, so a rename on one side fails until the other follows.
       # Defined are the agent files' names (the `name:` line of each in
       # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
@@ -733,15 +733,17 @@
                 ;;
             esac
           done
-          subcommands=" $(pr-loop -h 2>&1 | grep -oP '^  \K[a-z][a-z-]*(?= |$)' | sort -u | tr '\n' ' ') "
-          for sub in $(names '(?:^\s*|`)pr-loop \K[a-z][a-z-]*' '`pr-loop \K[a-z][a-z-]*'); do
-            case "$subcommands" in
-              *" $sub "*) ;;
-              *)
-                echo "pr-loop has no subcommand $sub, but $(files "(?:^\s*|\`)pr-loop $sub(?![\w-])" "\`pr-loop $sub(?![\w-])")name it" >&2
-                failed=1
-                ;;
-            esac
+          for command in agent-pr agent-ops; do
+            subcommands=" $($command -h 2>&1 | grep -oP '^  \K[a-z][a-z-]*(?= |$)' | sort -u | tr '\n' ' ') "
+            for sub in $(names "(?:^\s*|\`)$command \K[a-z][a-z-]*" "\`$command \K[a-z][a-z-]*"); do
+              case "$subcommands" in
+                *" $sub "*) ;;
+                *)
+                  echo "$command has no subcommand $sub, but $(files "(?:^\s*|\`)$command $sub(?![\w-])" "\`$command $sub(?![\w-])")name it" >&2
+                  failed=1
+                  ;;
+              esac
+            done
           done
           [ -z "$failed" ]
           touch $out
@@ -1647,7 +1649,7 @@
           failed=
           while IFS=$'\t' read -r where line; do
             reason=$(jq -cn --arg c "$line" '{tool_name: "Bash", cwd: "/", tool_input: {command: $c}}' |
-              pr-loop guard --baseline | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+              agent-ops guard --baseline | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
             case "$reason" in
               *"only as a command line of its own"* | *"only when Claude Code reads its line as that command alone"* | \
               '`gh` runs in the sandbox'*)

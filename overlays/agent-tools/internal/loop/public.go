@@ -35,7 +35,7 @@ func checkReplies(slug string, plan []PlannedReply, checks []*threadCheck) error
 	}
 	var reasons []string
 	for i, r := range plan {
-		if err := checkPublic("the reply to "+r.Thread, r.Body, threads[checks[i].pr], "run `pr-loop reply --from` again"); err != nil {
+		if err := checkPublic("the reply to "+r.Thread, r.Body, threads[checks[i].pr], "run `agent-pr reply --from` again"); err != nil {
 			reasons = append(reasons, err.Error())
 		}
 	}

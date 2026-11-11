@@ -36,6 +36,21 @@ func caseName(deny bool, what string) string {
 }
 
 func TestCheck(t *testing.T) {
+	t.Run("obsolete commands", func(t *testing.T) {
+		for _, command := range []string{
+			"pr-loop post 12", "/nix/store/old-agent-tools/bin/pr-loop merge 12",
+			"command pr-loop post 12", "env git-delegate a..b",
+			"/nix/store/old-agent-tools/bin/git-delegate a..b", "git delegate a..b",
+			"git -C /tmp delegate a..b",
+		} {
+			t.Run(command, func(t *testing.T) {
+				input, _ := json.Marshal(map[string]string{"command": command})
+				if reason := CheckBaseline("Bash", input); !strings.Contains(reason, "agent-review") || !strings.Contains(reason, "agent-pr") {
+					t.Fatalf("obsolete command refusal = %q", reason)
+				}
+			})
+		}
+	})
 	t.Run("commands", testCheckCommands)
 	t.Run("wrapped commands", testCheckWrappedCommands)
 	t.Run("GraphQL query sources", testCheckGraphQLQuerySources)
@@ -113,24 +128,24 @@ func testCheckCommands(t *testing.T) {
 		{false, "Bash", "gh api repos/o/r/pulls/1/reviews --paginate"},
 		{false, "Bash", "gh pr view 123 --json title"},
 		{false, "Bash", "git log --oneline -5 && git status"},
-		{false, "Bash", "pr-loop push"},
-		{false, "Bash", "pr-loop open --title T --body-file - x"},
+		{false, "Bash", "agent-pr push"},
+		{false, "Bash", "agent-pr open --title T --body-file - x"},
 		{false, "Bash", "git rebase --onto a b c"},
 		{false, "Bash", "# git push in a comment"},
 		{false, "Bash", "git config alias.p push"},
 		{true, "Bash", "git config --global alias.p '!git push'"},
 		{false, "Bash", "git -c alias.x=push x origin HEAD"},
 		{false, "Bash", "git config --get-regexp alias"},
-		{true, "Bash", "pr-loop request --accept-failure windows-tuntap 663"},
-		{true, "Bash", "pr-loop request 663 --accept-failure=ci"},
-		{false, "Bash", "pr-loop request 663"},
-		{true, "Bash", "pr-loop post 12"},
-		{true, "Bash", "pr-loop merge 14"},
-		{true, "Bash", "pr-loop merge --method squash stack-top"},
-		{false, "Bash", "pr-loop stack 14"},
+		{true, "Bash", "agent-pr request --accept-failure windows-tuntap 663"},
+		{true, "Bash", "agent-pr request 663 --accept-failure=ci"},
+		{false, "Bash", "agent-pr request 663"},
+		{true, "Bash", "agent-pr post 12"},
+		{true, "Bash", "agent-pr merge 14"},
+		{true, "Bash", "agent-pr merge --method squash stack-top"},
+		{false, "Bash", "agent-pr stack 14"},
 		{true, "Bash", "claude-review-loop --bots 12"},
-		{true, "Bash", "PR_LOOP_MODE=bots pr-loop reply T --body-file -"},
-		{false, "Bash", "pr-loop end 12"},
+		{true, "Bash", "PR_LOOP_MODE=bots agent-pr reply T --body-file -"},
+		{false, "Bash", "agent-pr end 12"},
 		{true, "Bash", "git sign-pass --push"},
 		{true, "Bash", "git-sign-pass"},
 		{true, "mcp__claude_ai_Linear__save_issue", ""},
@@ -474,7 +489,7 @@ func testBaselineCommands(t *testing.T) {
 		{true, "wget --post-data=x https://api.github.com/repos/o/r/issues"},
 		{true, "http POST https://api.github.com/repos/o/r/issues title=x"},
 		{true, "curl -T f https://uploads.github.com/repos/o/r/releases/1/assets"},
-		{true, "pr-loop request --accept-failure ci 1"},
+		{true, "agent-pr request --accept-failure ci 1"},
 		{true, "gh api -X POST repos/o/r/stacks -H 'X-GitHub-Api-Version: 2026-03-10' --input stack.json"},
 		{true, "gh api repos/o/r/stacks/7/unstack -X POST"},
 		{true, "git commit --no-verify -m x"},
@@ -520,12 +535,12 @@ func testBaselineCommands(t *testing.T) {
 		{false, "cd ~/git/github.com/wesnel/emacs-config && git status"},
 		{false, "nix build .#emacs"},
 		{false, "gh api -H 'X-GitHub-Api-Version: 2026-03-10' 'repos/o/r/stacks?pull_request=3'"},
-		{false, "pr-loop link 3 4"},
+		{false, "agent-pr link 3 4"},
 		{false, "gh pr view 1"},
 		{false, "gh pr create --draft --title t --body-file b"},
 		{false, "gh pr create -d --title t --body b"},
-		{false, "pr-loop open --title T --body-file - x"},
-		{false, "pr-loop push"},
+		{false, "agent-pr open --title T --body-file - x"},
+		{false, "agent-pr push"},
 		{false, "gh pr edit 1 --title t --body-file b"},
 		{false, "gh pr edit 1 -B main"},
 		{false, "gh pr ready 1 --undo"},
@@ -585,16 +600,16 @@ func testBaselineRoles(t *testing.T) {
 		{true, "--baseline", "git push origin x"},
 		{true, "--baseline", "gh pr merge 1"},
 		{false, "--baseline", "git commit -m x"},
-		{false, "--baseline", "pr-loop push"},
-		{false, "--baseline", "pr-loop link 3 4"},
+		{false, "--baseline", "agent-pr push"},
+		{false, "--baseline", "agent-pr link 3 4"},
 		{true, "--reviewer", "git commit --fixup=abc"},
-		{true, "--reviewer", "pr-loop link 3 4"},
-		{false, "--reviewer", "pr-loop stack 3"},
+		{true, "--reviewer", "agent-pr link 3 4"},
+		{false, "--reviewer", "agent-pr stack 3"},
 		{true, "--reviewer", "git commit -m x"},
 		{true, "--reviewer", "agent-plan log p --kind done"},
 		{false, "--reviewer", "agent-plan status p"},
 		{true, "--reviewer", "git stash"},
-		{true, "--reviewer", "git delegate a..b"},
+		{true, "--reviewer", "agent-review a..b"},
 		{true, "--reviewer", "gh pr create --draft --title t --body-file b"},
 		{false, "--reviewer", "gh pr view 1"},
 	} {
@@ -1132,7 +1147,7 @@ func hookRefusesWithin(t *testing.T, event map[string]any, limit time.Duration) 
 // it should do instead, wherever the rule it broke comes from.
 func TestReviewerReasons(t *testing.T) {
 	for _, command := range []string{"git push origin x", "git commit -m x", "gh pr comment 1 -b hi",
-		"git sign-pass", "pr-loop reply T --body-file -"} {
+		"git sign-pass", "agent-pr reply T --body-file -"} {
 		t.Run(command, func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": command})
 			if reason := CheckReviewer("Bash", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
@@ -1149,7 +1164,7 @@ func TestFormats(t *testing.T) {
 	}{
 		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
 		{"a sub-agent's fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
-		{"pr-loop push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
+		{"agent-pr push", `{"tool_name":"Bash","tool_input":{"command":"agent-pr push"}}`, ""},
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
