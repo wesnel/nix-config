@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: Drive the operator's open pull requests, or a stack of them, draft or ready, through CI and review, in the mode the operator started the session in. Bots mode answers the review bots (Copilot, Qodo and any others configured) and pushes; people mode drafts answers to people's threads for the operator to post. Hand back for a signing pass.
+description: Run explicitly launched review automation in the operator's bots or people mode, then hand back for signing.
 disable-model-invocation: true
 ---
 
@@ -21,8 +21,9 @@ as any other of its harness, and
   and the drafts, pushes with `git sign-pass --push` and posts the drafts
   with `agent-pr post PR` from a terminal of their own.
 
-If `PR_LOOP_MODE` is unset, this is not a loop session: tell the operator
-to start one with `review-loop`, and stop.
+If `PR_LOOP_MODE` is unset, continue ordinary PR assistance with the
+`pull-requests` skill. The operator selects review automation by launching
+`review-loop`; ordinary inspection and publication need no loop session.
 
 Commit as the `signing-pass` skill says. Every write to GitHub goes through
 `agent-pr`; when it stops a command, that is a decision for the operator, so
@@ -66,8 +67,7 @@ measured as the `review-change` skill's goal statement says.
    which runs the setup command the operator configured for the repository,
    such as generating files it does not commit. If a setup fails, stop and
    hand back its output.
-4. `agent-pr threads <number>` for each PR, which also writes the PR's
-   review record.
+4. Read each PR's discussion with `agent-pr threads <number>`.
 
 ## Bots mode: each round
 

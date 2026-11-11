@@ -13,6 +13,15 @@ import (
 )
 
 func TestRun(t *testing.T) {
+	for _, command := range []string{"merge-preview", "ready"} {
+		t.Run(command+" rejects extra targets", func(t *testing.T) {
+			posting(t)
+			var stdout, stderr bytes.Buffer
+			if code := Run(command, []string{"3", "4"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), command+" takes at most one PR") {
+				t.Fatalf("exit %d: %s", code, stderr.String())
+			}
+		})
+	}
 	// A command run from a worktree that GIT_DIR, set by a git hook or
 	// `rebase --exec` elsewhere, does not name is refused before it reads or
 	// writes either repository.

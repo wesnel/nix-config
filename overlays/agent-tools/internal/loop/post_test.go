@@ -37,9 +37,6 @@ func draftedRepo(t *testing.T) (*fakeGitHub, *[]string) {
 	t.Helper()
 	f := fakeRepo(t)
 	t.Setenv(ModeEnv, "people")
-	if _, err := Threads(2, true); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := Draft("human2", "Fixed in \"Check the input\".", "fix"); err != nil {
 		t.Fatal(err)
 	}
@@ -84,11 +81,10 @@ func TestDraft(t *testing.T) {
 	})
 
 	for name, args := range map[string][3]string{
-		"an unknown outcome":     {"human2", "x", "propose"},
-		"an empty draft":         {"human2", " ", "fix"},
-		"a secret":               {"human2", "token ghp_" + strings.Repeat("a", 36), "fix"},
-		"someone else's PR":      {"theirs", "x", "fix"},
-		"a thread not in record": {"human1", "x", "fix"},
+		"an unknown outcome": {"human2", "x", "propose"},
+		"an empty draft":     {"human2", " ", "fix"},
+		"a secret":           {"human2", "token ghp_" + strings.Repeat("a", 36), "fix"},
+		"someone else's PR":  {"theirs", "x", "fix"},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
 			fakeRepo(t)

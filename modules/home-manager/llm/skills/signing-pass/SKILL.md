@@ -1,6 +1,6 @@
 ---
 name: signing-pass
-description: Use before creating, amending or rewriting commits, before handing a change back, or after a signing failure. Commit unsigned, use agent-pr next to open a fresh branch as an unsigned draft PR, then hand over the operator's hardware-key signing pass.
+description: Use before creating, amending or rewriting commits, before handing a change back, or after a signing failure. Commit unsigned, use agent-pr publication-status to open a fresh branch as an unsigned draft PR, then hand over the operator's hardware-key signing pass.
 ---
 
 # Unsigned work, one signing pass
@@ -72,16 +72,16 @@ branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
 not matter. For a branch that starts from somewhere else, put that ref in the
 range, hand over `--base REF`, and sign that branch in a pass of its own.
 
-Then ask `agent-pr next` for each branch's next step, and take that step:
+Then ask `agent-pr publication-status` for each branch's publication step, and take it:
 
 ```sh
-agent-pr next <branch> ...
+agent-pr publication-status <branch> ...
 ```
 
 It only reads, and prints one step per branch:
 
 - `open`: the branch's draft pull request, yours to open as the
-  `pull-requests` skill's Opening says; run `agent-pr next` again afterwards.
+  `pull-requests` skill's Opening says; run `agent-pr publication-status` again afterwards.
   A branch GitHub lacks can open unsigned; one already on GitHub needs
   verified signatures by the protected operator key.
 - `sign` or `push`: the operator's command, a `git sign-pass -C WORKTREE`
@@ -90,7 +90,9 @@ It only reads, and prints one step per branch:
 - `blocked`: what to fix first, such as an upstream of another name or a
   remote-tracking ref behind GitHub. If GitHub has history the local branch
   lacks, fetch and reconcile it by hand; fix it and ask again.
-- `nothing`: GitHub has the signed tip.
+- `complete`: publication is complete; its reason distinguishes a published
+  signed tip from a branch with no commits of its own. Use the
+  `pull-requests` skill for a readiness or merge handoff.
 
 The forms of the pass:
 
@@ -103,7 +105,7 @@ git sign-pass -C WORKTREE --set-upstream   # the same, and publish those that ha
 Every `git sign-pass` you hand over carries `-C WORKTREE`, the absolute path
 of the worktree the branch is checked out in, which the plan records. The
 operator's terminal is not in that worktree, and `-C` runs the pass there as
-git's own `-C` does, so they need no `cd`. `agent-pr next` prints it; add it
+git's own `-C` does, so they need no `cd`. `agent-pr publication-status` prints it; add it
 to a command you write yourself.
 
 Each push first checks protected operator signatures outside the destination's

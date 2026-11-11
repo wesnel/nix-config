@@ -129,10 +129,10 @@ GitHub, and puts a pull request based on another into that one's GitHub
 stack.
 `agent-pr link BOTTOM ... TOP` stacks pull requests whose bases already
 chain, such as those opened after a signed push, and `agent-pr stack PR`
-shows GitHub's stack beside the chain of bases. `agent-pr next [BRANCH...]`
-prints each branch's single next step, which is what an agent hands you:
-nothing, opening its pull request, a signing pass or a push, or what blocks
-it. A branch GitHub already has needs verified signatures by the operator's
+shows GitHub's stack beside the chain of bases.
+`agent-pr publication-status [BRANCH...]` prints each branch's publication
+step: complete, opening its pull request, a signing pass or a push, or what
+blocks it. A branch GitHub already has needs verified signatures by the operator's
 configured key before its pull request can open. The installed tool reads
 that identity from protected global signing configuration, and verifies
 locally using protected public key material. It supports the installed
@@ -146,7 +146,7 @@ or changing the source keyring. Homes containing both legacy rings and a
 keyboxd database are refused as ambiguous. Unprovable authority or other
 unsupported layouts refuse the operation. The sandbox must
 protect those authority locations from writes and link creation. If GitHub
-has history the local branch lacks, `next` asks for a fetch and manual
+has history the local branch lacks, `publication-status` asks for a fetch and manual
 reconciliation. When the work is done, see what will be signed and sign it,
 in a terminal of your own:
 
@@ -264,7 +264,8 @@ names what it found:
 - `agent-review`, whose Codex sandbox cannot start inside this one, which
   fetches pull requests with your login and writes the review records the
   sandbox denies. Every one of its subcommands is one an agent may run.
-- `agent-pr`'s GitHub commands (`open`, `stack`, `link`, `push`, `threads`,
+- `agent-pr`'s GitHub commands (`list`, `publication-status`, `merge-preview`,
+  `ready`, `merge`, `open`, `stack`, `link`, `push`, `threads`,
   `reply`, `resolve`, `draft`, `post`, `request`, `status`, `ci`, `logs`,
   `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
@@ -393,7 +394,7 @@ to GitHub.
 
 The record of a range is `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/BASE..HEAD.org`,
 a round per reviewer per run, and a pull request's threads and drafted
-replies are `pr-N.org` beside it, which `agent-pr threads` writes too. Only
+replies are `pr-N.org` beside it, refreshed by a review or `agent-pr draft`. Only
 agent-review and agent-pr write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
 reads them. agent-review prints JSON and exits 0 with no open findings, 3 with
@@ -814,6 +815,24 @@ and on a ready PR it takes only fixups of the PR's own commits. `agent-pr
 reply` and `resolve` take only threads whose every comment is a configured
 bot's or yours.
 
+### inspecting and merging pull requests
+
+`agent-pr list --repo OWNER/NAME` lists every open PR, including drafts and
+fork branches, without a checkout. From a checkout of that repository,
+`agent-pr threads PR` reads its discussion without changing review records.
+`agent-pr merge-preview PR` shows the PR and its open downstack PRs, heads,
+destination, draft, CI and review state. Missing states remain `UNKNOWN`.
+These reads and publication commands work in an ordinary agent session;
+`review-loop` is optional automation you explicitly launch.
+
+`agent-pr ready PR` shows the drafts in the same selection and marks them
+ready after you confirm on your terminal, leaving already-ready PRs alone.
+For both individual PRs and stacks, `agent-pr merge PR` confirms the
+selection, rechecks its heads and bases, and submits the merge with the top
+head pinned. GitHub does not atomically pin every lower head: one can still
+change after that final read. The result reports GitHub's asynchronous
+status; `pending` or `enqueued` is not a completed merge.
+
 ### after the loop
 
 In a terminal of your own, in the repository:
@@ -829,10 +848,7 @@ fixups unsigned in a throwaway worktree and stops unless every PR would end
 with exactly its own commits and the files the loop left. `agent-pr post`
 shows each draft on your terminal and posts exactly what it showed once you
 answer `y`; it resolves the threads answered fix or rebut, and once every
-person's thread has an answer, asks those people to review again. `gh pr
-merge` refuses a PR in a GitHub stack; `agent-pr merge` lists the PRs
-GitHub's merge-async endpoint would merge and asks GitHub to merge them
-once you answer `y`, refusing if the top PR's head has moved since. A bots
+person's thread has an answer, asks those people to review again. A bots
 loop deletes its trigger comments with `agent-pr end` as it hands back.
 
 These stay yours: waiving a CI failure (`agent-pr request --accept-failure

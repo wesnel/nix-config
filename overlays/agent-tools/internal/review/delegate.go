@@ -47,8 +47,8 @@ the next round (git update-ref -d removes them). Anywhere else it is
 fetched into a bare clone of its own there, which has no agent settings,
 as stderr says. Its range is merge-base(base,
 head)..head, its author's title, description and closing issues go in as
-claims, and its threads, written to its pr-N.org record as agent-pr threads
-writes them, as items. Every reviewer reads a checkout of TIP of its own,
+claims, and its threads, refreshed in its pr-N.org record, as items.
+Every reviewer reads a checkout of TIP of its own,
 made the same way under that cache directory and removed after it.
 Reviewers run one at a time, and nothing here runs the change's code.
 

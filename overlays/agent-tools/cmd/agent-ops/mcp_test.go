@@ -52,6 +52,12 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		switch {
 		case strings.Contains(req.Query, "viewer { login }"):
 			data = `{"viewer": {"login": "me"}, "repository": {"id": "R", "nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}}}`
+		case strings.Contains(req.Query, "search(query"):
+			data = `{"search":{"nodes":[{"id":"PR_123","number":123,"headRefName":"feature","headRefOid":"abc","baseRefName":"main","author":{"login":"me"},"isDraft":true}]}}`
+		case strings.Contains(req.Query, "stack {"):
+			data = `{"repository":{"pullRequest":{"stack":null}}}`
+		case strings.Contains(req.Query, "mergeable mergeStateStatus reviewDecision"):
+			data = `{"repository":{"pullRequest":{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED"}}}`
 		case strings.Contains(req.Query, "reviewThreads(first: 50"):
 			data = `{"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": [
 				{"id": "T1", "isResolved": false, "isOutdated": false, "path": "a.go", "line": 3, "comments": {
@@ -310,13 +316,13 @@ func TestMCP(t *testing.T) {
 			if s.Type != "object" || s.AdditionalProperties == nil || *s.AdditionalProperties {
 				t.Errorf("%s: schema takes properties it does not name: %+v", tool.Name, s)
 			}
-			if wantWorktree := !strings.HasPrefix(tool.Name, "github_"); slices.Contains(s.Required, "worktree") != wantWorktree {
+			if wantWorktree := !strings.HasPrefix(tool.Name, "github_") && tool.Name != "agent_pr_list"; slices.Contains(s.Required, "worktree") != wantWorktree {
 				t.Errorf("%s: requires worktree: %v, want %v", tool.Name, !wantWorktree, wantWorktree)
 			}
 		}
 		slices.Sort(names)
 		want := []string{"agent_review", "agent_review_ask", "agent_review_settle", "agent_review_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
-			"agent_pr_ci", "agent_pr_draft", "agent_pr_end", "agent_pr_link", "agent_pr_logs", "agent_pr_next", "agent_pr_open", "agent_pr_push",
+			"agent_pr_ci", "agent_pr_draft", "agent_pr_end", "agent_pr_link", "agent_pr_list", "agent_pr_logs", "agent_pr_merge_preview", "agent_pr_publication_status", "agent_pr_open", "agent_pr_push",
 			"agent_pr_reply", "agent_pr_request", "agent_pr_sign_check", "agent_pr_stack", "agent_pr_status", "agent_pr_threads",
 			"agent_pr_wait"}
 		want = append(want, strings.Fields("agent_plan_new agent_plan_log agent_plan_set agent_plan_unfile agent_plan_ask agent_plan_decide agent_plan_followup agent_plan_step agent_plan_part agent_plan_edit agent_plan_after agent_plan_section agent_plan_reference agent_plan_link agent_plan_postpone agent_plan_sign_id agent_plan_workstream_new agent_plan_workstream_list agent_plan_find agent_plan_status")...)
@@ -326,10 +332,10 @@ func TestMCP(t *testing.T) {
 		}
 	})
 
-	t.Run("agent_pr_next returns a decision for each branch", func(t *testing.T) {
+	t.Run("publication status returns a decision for each branch", func(t *testing.T) {
 		f := newMCPFixture(t)
 		c := f.start(t)
-		r := c.tool(t, "agent_pr_next", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
+		r := c.tool(t, "agent_pr_publication_status", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
 		var steps []struct{ Kind, Branch, Why string }
 		if err := json.Unmarshal([]byte(r.out), &steps); err != nil || r.isError || len(steps) != 2 {
 			t.Fatalf("result %+v: %v", r, err)
@@ -338,6 +344,24 @@ func TestMCP(t *testing.T) {
 			if step := steps[i]; step.Kind != "blocked" || step.Branch != branch || !strings.Contains(step.Why, "no local branch") {
 				t.Errorf("decision for %s: %+v", branch, step)
 			}
+		}
+	})
+
+	t.Run("merge preview routes the target to GitHub", func(t *testing.T) {
+		f := newMCPFixture(t)
+		c := f.start(t)
+		r := c.tool(t, "agent_pr_merge_preview", map[string]any{"worktree": f.repo, "target": "123"})
+		var plan struct {
+			PR                      int
+			Repository, Destination string
+			PRs                     []struct {
+				Number             int
+				IsDraft            bool
+				Mergeable, CIState string
+			}
+		}
+		if err := json.Unmarshal([]byte(r.out), &plan); err != nil || r.isError || plan.PR != 123 || plan.Repository != "o/r" || plan.Destination != "main" || len(plan.PRs) != 1 || !plan.PRs[0].IsDraft || plan.PRs[0].Mergeable != "MERGEABLE" || plan.PRs[0].CIState != "UNKNOWN" {
+			t.Fatalf("preview %+v: result %+v, error %v", plan, r, err)
 		}
 	})
 
