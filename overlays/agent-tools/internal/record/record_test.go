@@ -231,6 +231,9 @@ func TestDriftRefused(t *testing.T) {
 			if drift.Path != path || drift.Part != tc.part {
 				t.Errorf("drift in %q at %s, want %q at %s: %v", drift.Part, drift.Path, tc.part, path, err)
 			}
+			if !strings.Contains(err.Error(), "agent-review OWNER/NAME#N") || strings.Contains(err.Error(), "agent-pr threads") {
+				t.Errorf("record repair must name an operation that refreshes it: %v", err)
+			}
 			if now, _ := os.ReadFile(path); string(now) != edited {
 				t.Error("the drifted file was written")
 			}
