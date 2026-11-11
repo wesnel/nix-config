@@ -21,7 +21,7 @@ import (
 // Fields are only ever added, each addition raising it, and never renamed
 // or given another meaning: a reader takes any version and uses a field
 // only where it is present.
-const Schema = 5
+const Schema = 6
 
 // Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
 func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
@@ -35,7 +35,8 @@ func Out() string { return filepath.Join(Dir(), "out") }
 // page's database, or from a snapshot export.Snapshot embeds at its
 // `<!-- snapshot -->` marker, and writes nothing. Its script renders every document's text as text, never as markup, and
 // its schema block names each field it reads; export's page test holds
-// both to the documents' types. A review record's diagram source is also
+// both to the documents' types. A review record's diagram source, and a
+// demo digest's, is also
 // given, where it is in the grammar the page's grammar block gives, to
 // Mermaid, loaded by its hash in a sandboxed frame with no access to the
 // page, whose SVG the page shows only as an image; where it is not drawn,

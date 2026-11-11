@@ -566,7 +566,13 @@ since, when the repository last fetched, how many plans could not be
 read) and `today/digest.json` (the page's Today: the demo digest of the
 newest day of the last week that has one, read whole from
 `digests/YYYY/MM-DD-demo.org` in the notes repository, never through a
-link; where it cannot be read, the last document written stays). `gh` is
+link; where it cannot be read, the last document written stays). A digest
+whose level-1 headings carry `PR` or `PLAN` properties is also parsed, as
+`internal/export/digest.go` describes its format, into each change's
+title, pull request, steps (an `sh` block and the `example` block of its
+result), captioned diagrams whose Mermaid is in the one grammar the page
+draws, and https links; what does not fit, such as a block never closed,
+is dropped with its line and why. `gh` is
 asked at most once a minute; the answer is cached as
 `$XDG_STATE_HOME/plan-dash/github.json`, which holds pull request titles,
 and when a fetch fails the last good answer is written, marked stale.
@@ -673,7 +679,12 @@ reviewed shows its review record's counts (findings by outcome, threads,
 drafts to post) and up to five of its diagrams, never its titles or other
 model text; a diagram's labels are redacted, and Mermaid, loaded by its
 hash, draws it in a sandboxed frame with no access to the page, which shows
-the drawing only as an image. Every status mark has a word as well as a colour,
+the drawing only as an image. A parsed demo digest shows each change with
+its pull request linked, its steps and their results as code, its
+diagrams drawn the same way under their captions, its https links, and
+what the parse dropped; one with no changes shows its text. The digest is
+drawn from its own document alone, so it carries no plan text or pull
+request status from the rest of the page. Every status mark has a word as well as a colour,
 and all text from the documents is set as text, never parsed as markup,
 and looked up in the page's tables by own key only, so a STATUS such as
 `constructor` falls back to its own label; its page test holds it to
