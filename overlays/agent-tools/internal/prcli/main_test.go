@@ -16,16 +16,32 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-func TestReadyReport(t *testing.T) {
+func TestReadyDispatch(t *testing.T) {
 	for _, cause := range []error{errors.New("GitHub unavailable"), refusal.New("head changed")} {
 		t.Run(cause.Error(), func(t *testing.T) {
+			posting(t)
+			old := runReady
+			t.Cleanup(func() { runReady = old })
+			called := false
+			runReady = func(target string) (any, error) {
+				called = true
+				if target != "3" {
+					t.Errorf("ready target %q, want 3", target)
+				}
+				return loop.ReadyResult{PR: 3, Ready: []int{1}}, cause
+			}
 			var stdout, stderr bytes.Buffer
-			code := reportReady(loop.ReadyResult{PR: 3, Ready: []int{1}}, cause, &stdout, &stderr)
+			code := Main([]string{"ready", "3"}, strings.NewReader(""), &stdout, &stderr)
 			var got loop.ReadyResult
 			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.PR != 3 || len(got.Ready) != 1 || got.Ready[0] != 1 {
 				t.Fatalf("partial progress missing: stdout %q, error %v", stdout.String(), err)
 			}
-			if code == 0 || !strings.Contains(stderr.String(), cause.Error()) {
+			var refused refusal.Refusal
+			wantCode := 1
+			if errors.As(cause, &refused) {
+				wantCode = 2
+			}
+			if !called || code != wantCode || !strings.Contains(stderr.String(), cause.Error()) {
 				t.Fatalf("exit %d, stderr %q", code, stderr.String())
 			}
 		})

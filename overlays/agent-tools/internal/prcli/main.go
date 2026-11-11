@@ -374,6 +374,8 @@ func mergeCommand(rest []string, method string) (any, error) {
 	return loop.Merge(target, method)
 }
 
+var runReady = loop.Ready
+
 func mergeInspectionCommand(command string, rest []string) (any, error) {
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("%s takes at most one PR or branch; see agent-pr --help", command)
@@ -383,7 +385,7 @@ func mergeInspectionCommand(command string, rest []string) (any, error) {
 		target = rest[0]
 	}
 	if command == "ready" {
-		return loop.Ready(target)
+		return runReady(target)
 	}
 	return loop.MergePreview(target)
 }
