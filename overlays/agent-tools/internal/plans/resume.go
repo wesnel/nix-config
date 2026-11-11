@@ -69,127 +69,12 @@ func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 		p.File(), s.Title, orNone(s.State))
 	head.WriteString("Goal:\n" + clip(strings.TrimRight(goal, "\n"), limit/4) + "\n")
 
-	askable := Askable(qs)
-	head.WriteString("Open questions for the operator:")
-	if len(askable) == 0 {
-		head.WriteString(" none\n")
-	} else {
-		head.WriteString("\n")
-		var lines []string
-		for _, q := range askable {
-			lines = append(lines, clip(strings.TrimSuffix(QuestionsOrg([]Question{q}), "\n"), 300))
-		}
-		head.WriteString(fitLines(lines, limit/5, func(rest []string) string {
-			return fmt.Sprintf("- and %d more: `agent-plan questions %s --all`", len(rest), p.File())
-		}))
-	}
+	p.resumeQuestions(&head, qs, limit)
 
-	started := map[string]bool{}
-	for _, e := range events {
-		if e.Kind == "started" {
-			started[e.Item] = true
-		}
-	}
-	var inProgress []string
-	for _, st := range s.Steps {
-		if started[st.ID] && !st.Done && !st.Abandoned {
-			inProgress = append(inProgress, st.ID)
-		}
-	}
-	ready := slices.DeleteFunc(slices.Clone(s.ReadySteps), func(id string) bool { return started[id] })
-	var waiting []string
-	for _, w := range s.Waiting {
-		waiting = append(waiting, w.ID+" on "+strings.Join(w.On, ", "))
-	}
-	for _, e := range pendingSigns(events) {
-		on := "sign-pass " + e.Sign + " on the operator"
-		if e.Branch != "" {
-			on += " (" + e.Branch + ")"
-		}
-		waiting = append(waiting, on)
-	}
-	for _, line := range []string{
-		"In progress: " + list(inProgress),
-		"Done, not verified: " + list(s.DoneNotVerified),
-		"Steps ready: " + list(ready),
-		"Parts ready to start: " + list(s.Ready),
-		"Waiting: " + strings.Join(orNoneList(waiting), "; "),
-		"Branches: " + orNone(props["BRANCHES"]),
-		"Pull requests: " + orNone(props["PULL_REQUESTS"]),
-		fmt.Sprintf("Follow-ups open: %d", len(s.Followups)),
-		s.structureLine(),
-	} {
-		if line != "" {
-			head.WriteString(clip(line, 600) + "\n")
-		}
-	}
+	resumeProgress(&head, s, events, props)
 
-	// Decisions: those decided after the last checkpoint, by their decided
-	// events; with none logged, every decision is recent.
-	cp := lastCheckpoint(events)
-	decidedAt := map[string]int{}
-	for i, e := range events {
-		if e.Kind == "decided" {
-			decidedAt[e.Item] = i
-		}
-	}
-	var recent, older []Decision
-	for _, d := range ds {
-		if i, ok := decidedAt[d.ID]; cp < 0 || (ok && i > cp) {
-			recent = append(recent, d)
-		} else {
-			older = append(older, d)
-		}
-	}
-	var tail strings.Builder
-	if cp >= 0 {
-		what := events[cp].Kind
-		if events[cp].Summary != "" {
-			what += ": " + events[cp].Summary
-		}
-		fmt.Fprintf(&tail, "Decided since the last checkpoint (%s):\n", clip(what, 200))
-	} else {
-		tail.WriteString("Decided:\n")
-	}
-	if len(recent) == 0 {
-		tail.WriteString("none\n")
-	}
-	pointer := func(cut []Decision) string {
-		var b strings.Builder
-		if len(cut) > 0 {
-			fmt.Fprintf(&b, "Decided earlier, not shown: %s.\n", idRanges(decidedIDs(cut)))
-		}
-		if len(older) > 0 {
-			fmt.Fprintf(&b, "Decided before it: %s; ", idRanges(decidedIDs(older)))
-		}
-		if len(older) > 0 || len(cut) > 0 {
-			fmt.Fprintf(&b, "`agent-plan decisions %s` lists every decision.\n", p.File())
-		}
-		return b.String()
-	}
-	// Newest first into what is left, then printed in the file's order.
-	budget := limit - head.Len() - tail.Len()
-	keep := map[string]bool{}
-	used := 0
-	var cut []Decision
-	for i := len(recent) - 1; i >= 0; i-- {
-		d := recent[i]
-		line := clip(fmt.Sprintf("- %s :: %s %s", d.ID, d.Question, d.Answer), 500) + "\n"
-		rest := recent[:i]
-		if used+len(line)+len(pointer(rest)) > budget {
-			cut = append([]Decision{}, recent[:i+1]...)
-			break
-		}
-		keep[d.ID] = true
-		used += len(line)
-	}
-	for _, d := range recent {
-		if keep[d.ID] {
-			tail.WriteString(clip(fmt.Sprintf("- %s :: %s %s", d.ID, d.Question, d.Answer), 500) + "\n")
-		}
-	}
-	tail.WriteString(pointer(cut))
-	out := head.String() + tail.String()
+	tail := p.resumeDecisions(ds, events, limit-head.Len())
+	out := head.String() + tail
 	if len(out) > limit {
 		out = clip(out, limit)
 	}
@@ -272,4 +157,140 @@ func idRanges(ids []string) string {
 		i = j
 	}
 	return strings.Join(out, ", ")
+}
+
+func (p Plan) resumeQuestions(head *strings.Builder, qs []Question, limit int) {
+	askable := Askable(qs)
+	head.WriteString("Open questions for the operator:")
+	if len(askable) == 0 {
+		head.WriteString(" none\n")
+	} else {
+		head.WriteString("\n")
+		var lines []string
+		for _, q := range askable {
+			lines = append(lines, clip(strings.TrimSuffix(QuestionsOrg([]Question{q}), "\n"), 300))
+		}
+		head.WriteString(fitLines(lines, limit/5, func(rest []string) string {
+			return fmt.Sprintf("- and %d more: `agent-plan questions %s --all`", len(rest), p.File())
+		}))
+	}
+
+}
+
+func resumeProgress(head *strings.Builder, s Status, events []Event, props map[string]string) {
+	started := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "started" {
+			started[e.Item] = true
+		}
+	}
+	var inProgress []string
+	for _, st := range s.Steps {
+		if started[st.ID] && !st.Done && !st.Abandoned {
+			inProgress = append(inProgress, st.ID)
+		}
+	}
+	ready := slices.DeleteFunc(slices.Clone(s.ReadySteps), func(id string) bool { return started[id] })
+	var waiting []string
+	for _, w := range s.Waiting {
+		waiting = append(waiting, w.ID+" on "+strings.Join(w.On, ", "))
+	}
+	for _, e := range pendingSigns(events) {
+		on := "sign-pass " + e.Sign + " on the operator"
+		if e.Branch != "" {
+			on += " (" + e.Branch + ")"
+		}
+		waiting = append(waiting, on)
+	}
+	for _, line := range []string{
+		"In progress: " + list(inProgress),
+		"Done, not verified: " + list(s.DoneNotVerified),
+		"Steps ready: " + list(ready),
+		"Parts ready to start: " + list(s.Ready),
+		"Waiting: " + strings.Join(orNoneList(waiting), "; "),
+		"Branches: " + orNone(props["BRANCHES"]),
+		"Pull requests: " + orNone(props["PULL_REQUESTS"]),
+		fmt.Sprintf("Follow-ups open: %d", len(s.Followups)),
+		s.structureLine(),
+	} {
+		if line != "" {
+			head.WriteString(clip(line, 600) + "\n")
+		}
+	}
+
+}
+
+func (p Plan) resumeDecisions(ds []Decision, events []Event, budget int) string {
+	// Decisions: those decided after the last checkpoint, by their decided
+	// events; with none logged, every decision is recent.
+	cp := lastCheckpoint(events)
+	recent, older := decisionsSince(ds, events, cp)
+	var tail strings.Builder
+	if cp >= 0 {
+		what := events[cp].Kind
+		if events[cp].Summary != "" {
+			what += ": " + events[cp].Summary
+		}
+		fmt.Fprintf(&tail, "Decided since the last checkpoint (%s):\n", clip(what, 200))
+	} else {
+		tail.WriteString("Decided:\n")
+	}
+	if len(recent) == 0 {
+		tail.WriteString("none\n")
+	}
+	pointer := func(cut []Decision) string { return p.decisionPointer(cut, older) }
+	// Newest first into what is left, then printed in the file's order.
+	budget -= tail.Len()
+	keep := map[string]bool{}
+	used := 0
+	var cut []Decision
+	for i := len(recent) - 1; i >= 0; i-- {
+		d := recent[i]
+		line := clip(fmt.Sprintf("- %s :: %s %s", d.ID, d.Question, d.Answer), 500) + "\n"
+		rest := recent[:i]
+		if used+len(line)+len(pointer(rest)) > budget {
+			cut = append([]Decision{}, recent[:i+1]...)
+			break
+		}
+		keep[d.ID] = true
+		used += len(line)
+	}
+	for _, d := range recent {
+		if keep[d.ID] {
+			tail.WriteString(clip(fmt.Sprintf("- %s :: %s %s", d.ID, d.Question, d.Answer), 500) + "\n")
+		}
+	}
+	tail.WriteString(pointer(cut))
+	return tail.String()
+}
+
+func decisionsSince(ds []Decision, events []Event, cp int) (recent, older []Decision) {
+	decidedAt := map[string]int{}
+	for i, e := range events {
+		if e.Kind == "decided" {
+			decidedAt[e.Item] = i
+		}
+	}
+	for _, d := range ds {
+		if i, ok := decidedAt[d.ID]; cp < 0 || (ok && i > cp) {
+			recent = append(recent, d)
+		} else {
+			older = append(older, d)
+		}
+	}
+	return recent, older
+}
+
+func (p Plan) decisionPointer(cut, older []Decision) string {
+	var b strings.Builder
+	if len(cut) > 0 {
+		fmt.Fprintf(&b, "Decided earlier, not shown: %s.\n", idRanges(decidedIDs(cut)))
+	}
+	if len(older) > 0 {
+		fmt.Fprintf(&b, "Decided before it: %s; ", idRanges(decidedIDs(older)))
+	}
+	if len(older) > 0 || len(cut) > 0 {
+		fmt.Fprintf(&b, "`agent-plan decisions %s` lists every decision.\n", p.File())
+	}
+	return b.String()
 }

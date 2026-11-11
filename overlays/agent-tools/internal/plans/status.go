@@ -229,30 +229,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.DanglingLinks, err = p.danglingLinks(); err != nil {
 		return Status{}, err
 	}
-	index := map[string]int{}
-	for _, it := range list {
-		if it.ID == p.Name {
-			s.State = it.Props["STATUS"]
-		}
-		if partPattern.MatchString(it.ID) && !isSettled(it.ID) || isOpen[it.ID] {
-			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
-				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
-			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) && !scheduledLater(it.heading, now) {
-				s.Ready = append(s.Ready, it.ID)
-			}
-		}
-		if state := stepState(events, it.ID); projected(it.ID) && it.Keyword != state {
-			s.KeywordDrift = append(s.KeywordDrift, Drift{ID: it.ID, File: it.Keyword, Log: state})
-		}
-		if followupID.MatchString(it.ID) && !isSettled(it.ID) {
-			s.Followups = append(s.Followups, it.ID)
-		}
-		if !stepPattern.MatchString(it.ID) {
-			continue
-		}
-		index[it.ID] = len(s.Steps)
-		s.Steps = append(s.Steps, Step{ID: it.ID, Title: it.Title, Part: it.Part, Keyword: stepState(events, it.ID)})
-	}
+	index := s.indexItems(p.Name, list, events, isOpen, isSettled, now)
 	for _, e := range events {
 		i, ok := index[e.Item]
 		if !ok {
@@ -354,6 +331,39 @@ func (s Status) Org() string {
 		}
 		fmt.Fprintf(&b, "- Waiting: %s\n", strings.Join(waits, "; "))
 	}
+	s.writeDrift(&b)
+	return b.String()
+}
+
+func (s *Status) indexItems(name string, list []item, events []Event, isOpen map[string]bool, isSettled func(string) bool, now time.Time) map[string]int {
+	index := map[string]int{}
+	for _, it := range list {
+		if it.ID == name {
+			s.State = it.Props["STATUS"]
+		}
+		if partPattern.MatchString(it.ID) && !isSettled(it.ID) || isOpen[it.ID] {
+			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
+				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
+			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) && !scheduledLater(it.heading, now) {
+				s.Ready = append(s.Ready, it.ID)
+			}
+		}
+		if state := stepState(events, it.ID); projected(it.ID) && it.Keyword != state {
+			s.KeywordDrift = append(s.KeywordDrift, Drift{ID: it.ID, File: it.Keyword, Log: state})
+		}
+		if followupID.MatchString(it.ID) && !isSettled(it.ID) {
+			s.Followups = append(s.Followups, it.ID)
+		}
+		if !stepPattern.MatchString(it.ID) {
+			continue
+		}
+		index[it.ID] = len(s.Steps)
+		s.Steps = append(s.Steps, Step{ID: it.ID, Title: it.Title, Part: it.Part, Keyword: stepState(events, it.ID)})
+	}
+	return index
+}
+
+func (s Status) writeDrift(b *strings.Builder) {
 	if len(s.KeywordDrift) > 0 {
 		var drifts []string
 		for _, d := range s.KeywordDrift {
@@ -363,24 +373,23 @@ func (s Status) Org() string {
 			}
 			drifts = append(drifts, fmt.Sprintf("%s (file %s, log %s)", d.ID, file, d.Log))
 		}
-		fmt.Fprintf(&b, "- Keyword drift: %s\n", strings.Join(drifts, "; "))
+		fmt.Fprintf(b, "- Keyword drift: %s\n", strings.Join(drifts, "; "))
 	}
 	if len(s.PropertyDrift) > 0 {
 		var drifts []string
 		for _, d := range s.PropertyDrift {
 			drifts = append(drifts, fmt.Sprintf("%s %s (file %s, log %s)", d.ID, d.Property, orNone(d.File), orNone(d.Log)))
 		}
-		fmt.Fprintf(&b, "- Property drift: %s\n", strings.Join(drifts, "; "))
+		fmt.Fprintf(b, "- Property drift: %s\n", strings.Join(drifts, "; "))
 	}
 	if len(s.DanglingLinks) > 0 {
-		fmt.Fprintf(&b, "- Related links to nothing: %s\n", strings.Join(s.DanglingLinks, ", "))
+		fmt.Fprintf(b, "- Related links to nothing: %s\n", strings.Join(s.DanglingLinks, ", "))
 	}
 	if len(s.StructureDrift) > 0 {
 		var drifts []string
 		for _, d := range s.StructureDrift {
 			drifts = append(drifts, fmt.Sprintf("%s `%s` (%s)", filepath.Base(d.File), clip(d.Heading, headingShown), d.Problem))
 		}
-		fmt.Fprintf(&b, "- Structure drift: %s\n", strings.Join(drifts, "; "))
+		fmt.Fprintf(b, "- Structure drift: %s\n", strings.Join(drifts, "; "))
 	}
-	return b.String()
 }

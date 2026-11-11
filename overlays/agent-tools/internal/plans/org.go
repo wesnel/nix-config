@@ -107,14 +107,7 @@ func parseOrg(text string) []heading {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case at == top && len(h.Body) == 0 && planningLine.MatchString(line):
-			if m := scheduledStamp.FindStringSubmatch(line); m != nil {
-				if m[2] == "" {
-					h.Scheduled, _ = time.ParseInLocation("2006-01-02", m[1], time.Local)
-				} else {
-					h.Scheduled, _ = time.ParseInLocation("2006-01-02 15:04", m[1]+" "+m[2], time.Local)
-					h.ScheduledHasTime = true
-				}
-			}
+			h.readSchedule(line)
 			continue
 		case at == top && len(h.Body) == 0 && trimmed == ":PROPERTIES:":
 			at = properties
@@ -229,4 +222,15 @@ func cutFold(s, prefix string) (string, bool) {
 		return s[len(prefix):], true
 	}
 	return "", false
+}
+
+func (h *heading) readSchedule(line string) {
+	if m := scheduledStamp.FindStringSubmatch(line); m != nil {
+		if m[2] == "" {
+			h.Scheduled, _ = time.ParseInLocation("2006-01-02", m[1], time.Local)
+		} else {
+			h.Scheduled, _ = time.ParseInLocation("2006-01-02 15:04", m[1]+" "+m[2], time.Local)
+			h.ScheduledHasTime = true
+		}
+	}
 }

@@ -129,30 +129,11 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 	if err := p.checkOwn(); err != nil {
 		return Recorded{}, err
 	}
-	letter, ok := entryLetters[o.Section]
-	switch {
-	case !ok:
-		return Recorded{}, refusal.New("agent-plan adds steps and parts, not %s entries. Ask with `agent-plan ask`, record follow-ups with `agent-plan followup`, references with `agent-plan reference`", o.Section)
-	case o.Section == "Distribution" && o.Part != "":
-		return Recorded{}, refusal.New("a part's file has no Distribution; its parts are the plan's. Add the part to the plan with `agent-plan part PLAN --title T`, without `--part`")
-	case o.Section == "Steps" && o.Repo+o.Branch+o.Worktree != "":
-		return Recorded{}, refusal.New("a step has no repository, branch or worktree of its own; a part does. Add a part with `agent-plan part`, or pass the step without them")
-	}
-	if err := checkTitle("title", o.Title); err != nil {
-		return Recorded{}, err
-	}
-	o.Title = strings.TrimSpace(o.Title)
-	body, err := textLines(o.Text)
+	letter, body, err := o.validate()
 	if err != nil {
 		return Recorded{}, err
 	}
-	if o.Repo+o.Branch+o.Worktree != "" {
-		where, err := partWhere(o.Repo, o.Branch, o.Worktree)
-		if err != nil {
-			return Recorded{}, err
-		}
-		body = append([]string{where}, body...)
-	}
+	o.Title = strings.TrimSpace(o.Title)
 	file, err := p.partFile(o.Part)
 	if err != nil {
 		return Recorded{}, err
@@ -180,15 +161,7 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 		}
 		block = append(append(block, ":END:"), body...)
 		err = l.edit(file, func(lines []string) ([]string, error) {
-			_, end, ok := section(lines, o.Section)
-			if !ok {
-				return nil, refusal.New("%s has no `** %s` heading. Ask the operator to restore it as the plan-work skill describes, then run the command again", file, o.Section)
-			}
-			// A section ending the file ends at its final empty line.
-			if end == len(lines) && lines[end-1] == "" {
-				end--
-			}
-			return slices.Insert(slices.Clone(lines), end, block...), nil
+			return insertEntry(lines, block, file, o.Section)
 		})
 		if err != nil {
 			return err
@@ -307,18 +280,7 @@ func (p Plan) EditEntry(id string, o EditOptions, now time.Time) (Recorded, erro
 			return refusal.New("%q is not an item of %s. Use an ID `agent-plan status %s` lists", id, p.Name, p.file(""))
 		}
 		err = l.edit(it.File, func(lines []string) ([]string, error) {
-			at := headingWithID(lines, id)
-			if at < 0 {
-				return nil, fmt.Errorf("%s is no longer in %s", id, it.File)
-			}
-			ks := fileKeywords(strings.Join(lines, "\n"))
-			if o.Text != nil {
-				lines = setBody(lines, at, body)
-			}
-			if o.Title != nil {
-				lines = setTitle(lines, at, strings.TrimSpace(*o.Title), ks)
-			}
-			return lines, nil
+			return o.edit(lines, id, it.File, body)
 		})
 		if err != nil {
 			return err
@@ -442,6 +404,61 @@ func (p Plan) SetAfter(id string, after []string, now time.Time) (Event, error) 
 		return err
 	})
 	return e, err
+}
+
+func insertEntry(lines, block []string, file, sectionName string) ([]string, error) {
+	_, end, ok := section(lines, sectionName)
+	if !ok {
+		return nil, refusal.New("%s has no `** %s` heading. Ask the operator to restore it as the plan-work skill describes, then run the command again", file, sectionName)
+	}
+	// A section ending the file ends at its final empty line.
+	if end == len(lines) && lines[end-1] == "" {
+		end--
+	}
+	return slices.Insert(slices.Clone(lines), end, block...), nil
+}
+
+func (o EntryOptions) validate() (string, []string, error) {
+	letter, ok := entryLetters[o.Section]
+	switch {
+	case !ok:
+		return "", nil, refusal.New("agent-plan adds steps and parts, not %s entries. Ask with `agent-plan ask`, record follow-ups with `agent-plan followup`, references with `agent-plan reference`", o.Section)
+	case o.Section == "Distribution" && o.Part != "":
+		return "", nil, refusal.New("a part's file has no Distribution; its parts are the plan's. Add the part to the plan with `agent-plan part PLAN --title T`, without `--part`")
+	case o.Section == "Steps" && o.Repo+o.Branch+o.Worktree != "":
+		return "", nil, refusal.New("a step has no repository, branch or worktree of its own; a part does. Add a part with `agent-plan part`, or pass the step without them")
+	}
+	if err := checkTitle("title", o.Title); err != nil {
+		return "", nil, err
+	}
+	o.Title = strings.TrimSpace(o.Title)
+	body, err := textLines(o.Text)
+	if err != nil {
+		return "", nil, err
+	}
+	if o.Repo+o.Branch+o.Worktree != "" {
+		where, err := partWhere(o.Repo, o.Branch, o.Worktree)
+		if err != nil {
+			return "", nil, err
+		}
+		body = append([]string{where}, body...)
+	}
+	return letter, body, nil
+}
+
+func (o EditOptions) edit(lines []string, id, file string, body []string) ([]string, error) {
+	at := headingWithID(lines, id)
+	if at < 0 {
+		return nil, fmt.Errorf("%s is no longer in %s", id, file)
+	}
+	ks := fileKeywords(strings.Join(lines, "\n"))
+	if o.Text != nil {
+		lines = setBody(lines, at, body)
+	}
+	if o.Title != nil {
+		lines = setTitle(lines, at, strings.TrimSpace(*o.Title), ks)
+	}
+	return lines, nil
 }
 
 // SetSection writes text as the whole of section name, Goal or

@@ -378,17 +378,7 @@ func (c Config) forward(ctx context.Context, branch, tip string) (string, error)
 func (c Config) catchUp(ctx context.Context, branch, tip string) (bool, error) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
-	defer func() {
-		signal.Stop(stop)
-		select {
-		case s := <-stop:
-			// Nothing relays it now, so it takes its default action.
-			if s, ok := s.(syscall.Signal); ok {
-				_ = syscall.Kill(os.Getpid(), s)
-			}
-		default:
-		}
-	}()
+	defer relayCatchUpSignal(stop)
 	index, err := c.git(ctx, "rev-parse", "--git-path", "index")
 	if err != nil {
 		return false, err
@@ -412,56 +402,12 @@ func (c Config) catchUp(ctx context.Context, branch, tip string) (bool, error) {
 			os.Remove(lock)
 		}
 	}()
-	data, err := os.ReadFile(index)
-	if err == nil {
-		_, err = f.Write(data)
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
+	if err := copyIndex(f, index); err != nil {
 		return false, err
 	}
-	if head, err := c.git(ctx, "symbolic-ref", "-q", "--short", "HEAD"); err != nil || head != branch {
-		return false, nil
-	}
-	at, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}")
-	if err != nil || at == tip {
-		return false, nil
-	}
-	if _, err := c.git(ctx, "merge-base", "--is-ancestor", at, tip); err != nil {
-		return false, nil
-	}
-	if op, err := c.inProgress(ctx); err != nil || op != "" {
+	at, ready, err := c.prepareCatchUp(ctx, branch, tip, lock)
+	if err != nil || !ready {
 		return false, err
-	}
-	rel, err := filepath.Rel(c.repo(), c.Dir)
-	if err != nil {
-		return false, err
-	}
-	// Each merge against each of its parents, whatever log.diffMerges
-	// says, so that no change a merge brings goes unlisted.
-	incoming, err := c.gitRaw(ctx, "log", "--format=", "--name-only", "--no-renames", "--diff-merges=separate", "-z", at+".."+tip)
-	if err != nil {
-		return false, err
-	}
-	for _, f := range strings.Split(incoming, "\x00") {
-		if f != "" && (filepath.Dir(f) != rel || !c.ownName(filepath.Base(f))) {
-			return false, nil
-		}
-	}
-	env := []string{"GIT_INDEX_FILE=" + lock, "GIT_LITERAL_PATHSPECS=1"}
-	if _, err := c.gitAs(ctx, env, "diff-index", "--cached", "--quiet", at, "--"); err != nil {
-		return false, nil
-	}
-	differ, err := c.gitRaw(ctx, "diff", "--name-only", "--no-renames", "-z", at, tip)
-	if err != nil {
-		return false, err
-	}
-	if files := strings.FieldsFunc(differ, func(r rune) bool { return r == 0 }); len(files) > 0 {
-		if _, err := c.gitAs(ctx, env, append([]string{"reset", "-q", tip, "--"}, files...)...); err != nil {
-			return false, err
-		}
 	}
 	select {
 	case s := <-stop:
@@ -577,37 +523,12 @@ func (c Config) bringForward(ctx context.Context, branch, tip string) (string, e
 	} else if staged {
 		return "changes to plan files are staged", nil
 	}
-	files, err := c.ownFiles(ctx, at, tip)
+	add, drop, err := c.matchingPlanFiles(ctx, at, tip)
 	if err != nil {
 		return "", err
 	}
-	want, err := c.treeBlobs(ctx, tip, files)
-	if err != nil {
+	if err := c.stageMatchingPlans(ctx, tip, add, drop); err != nil {
 		return "", err
-	}
-	now, err := c.dirBlobs(ctx, files, false)
-	if err != nil {
-		return "", err
-	}
-	var add, drop []string
-	for _, f := range files {
-		switch {
-		case now[f] != "" && now[f] == want[f]:
-			add = append(add, f)
-		case now[f] == "" && want[f] == "":
-			drop = append(drop, f)
-		}
-	}
-	if len(add) > 0 {
-		// Stage the checked snapshot: a newer working edit must stay unstaged.
-		if _, err := c.git(ctx, append([]string{"reset", "-q", tip, "--"}, add...)...); err != nil {
-			return "", err
-		}
-	}
-	if len(drop) > 0 {
-		if _, err := c.git(ctx, append([]string{"rm", "-q", "--cached", "--ignore-unmatch", "--"}, drop...)...); err != nil {
-			return "", err
-		}
 	}
 	if _, err := c.git(ctx, "merge", "-q", "--ff-only", "--no-autostash", tip); err != nil {
 		if staged := append(add, drop...); len(staged) > 0 {
@@ -952,6 +873,120 @@ func (c Config) configure() error {
 	if _, err := c.git(ctx, "config", "--local", "--get-all", "remote.origin.pushurl"); err == nil {
 		_, err = c.git(ctx, "config", "--local", "--unset-all", "remote.origin.pushurl")
 		return err
+	}
+	return nil
+}
+
+func relayCatchUpSignal(stop chan os.Signal) {
+	signal.Stop(stop)
+	select {
+	case s := <-stop:
+		// Nothing relays it now, so it takes its default action.
+		if s, ok := s.(syscall.Signal); ok {
+			_ = syscall.Kill(os.Getpid(), s)
+		}
+	default:
+	}
+}
+
+// prepareCatchUp stages the incoming plan versions in the caller's locked
+// index. The caller still owns that lock and commits the branch/index move.
+func (c Config) prepareCatchUp(ctx context.Context, branch, tip, lock string) (string, bool, error) {
+	if head, err := c.git(ctx, "symbolic-ref", "-q", "--short", "HEAD"); err != nil || head != branch {
+		return "", false, nil
+	}
+	at, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}")
+	if err != nil || at == tip {
+		return "", false, nil
+	}
+	if _, err := c.git(ctx, "merge-base", "--is-ancestor", at, tip); err != nil {
+		return "", false, nil
+	}
+	if op, err := c.inProgress(ctx); err != nil || op != "" {
+		return "", false, err
+	}
+	rel, err := filepath.Rel(c.repo(), c.Dir)
+	if err != nil {
+		return "", false, err
+	}
+	// Each merge against each of its parents, whatever log.diffMerges
+	// says, so that no change a merge brings goes unlisted.
+	incoming, err := c.gitRaw(ctx, "log", "--format=", "--name-only", "--no-renames", "--diff-merges=separate", "-z", at+".."+tip)
+	if err != nil {
+		return "", false, err
+	}
+	for _, f := range strings.Split(incoming, "\x00") {
+		if f != "" && (filepath.Dir(f) != rel || !c.ownName(filepath.Base(f))) {
+			return "", false, nil
+		}
+	}
+	env := []string{"GIT_INDEX_FILE=" + lock, "GIT_LITERAL_PATHSPECS=1"}
+	if _, err := c.gitAs(ctx, env, "diff-index", "--cached", "--quiet", at, "--"); err != nil {
+		return "", false, nil
+	}
+	differ, err := c.gitRaw(ctx, "diff", "--name-only", "--no-renames", "-z", at, tip)
+	if err != nil {
+		return "", false, err
+	}
+	if files := strings.FieldsFunc(differ, func(r rune) bool { return r == 0 }); len(files) > 0 {
+		if _, err := c.gitAs(ctx, env, append([]string{"reset", "-q", tip, "--"}, files...)...); err != nil {
+			return "", false, err
+		}
+	}
+	return at, true, nil
+}
+
+func (c Config) matchingPlanFiles(ctx context.Context, at, tip string) ([]string, []string, error) {
+	files, err := c.ownFiles(ctx, at, tip)
+	if err != nil {
+		return nil, nil, err
+	}
+	want, err := c.treeBlobs(ctx, tip, files)
+	if err != nil {
+		return nil, nil, err
+	}
+	now, err := c.dirBlobs(ctx, files, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	var add, drop []string
+	for _, f := range files {
+		switch {
+		case now[f] != "" && now[f] == want[f]:
+			add = append(add, f)
+		case now[f] == "" && want[f] == "":
+			drop = append(drop, f)
+		}
+	}
+	return add, drop, nil
+}
+
+// copyIndex closes f even when reading or copying the index fails.
+func copyIndex(f *os.File, index string) error {
+	data, err := os.ReadFile(index)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c Config) stageMatchingPlans(ctx context.Context, tip string, add, drop []string) error {
+	if len(add) > 0 {
+		// Stage the checked snapshot: a newer working edit must stay unstaged.
+		if _, err := c.git(ctx, append([]string{"reset", "-q", tip, "--"}, add...)...); err != nil {
+			return err
+		}
+	}
+	if len(drop) > 0 {
+		if _, err := c.git(ctx, append([]string{"rm", "-q", "--cached", "--ignore-unmatch", "--"}, drop...)...); err != nil {
+			return err
+		}
 	}
 	return nil
 }

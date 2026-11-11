@@ -2,10 +2,8 @@ package plans
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,24 +33,9 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		return Recorded{}, err
 	}
 	o.Title, o.Context = strings.TrimSpace(o.Title), strings.TrimSpace(o.Context)
-	if o.Title == "" || o.FoundIn == "" {
-		return Recorded{}, refusal.New("a follow-up needs its title and the item it was found in. Pass both, as `--title 'one line' --found-in S1`")
-	}
-	if err := checkTitle("title", o.Title); err != nil {
-		return Recorded{}, err
-	}
-	if err := checkLine("found-in", o.FoundIn); err != nil {
-		return Recorded{}, err
-	}
-	if o.Context != "" && strings.ContainsAny(o.Context[:1], "*#-+|:") {
-		return Recorded{}, refusal.New("context %q starts with a character Org reads as structure. Pass it starting with a word, as `--context 'Found while ...'`", o.Context)
-	}
-	context, err := textLines(o.Context)
+	context, err := o.validate()
 	if err != nil {
 		return Recorded{}, err
-	}
-	if o.Part != "" && !partPattern.MatchString(o.Part) {
-		return Recorded{}, refusal.New("%q is not a part ID. Pass one such as `--part P1`", o.Part)
 	}
 	file := p.file(o.Part)
 	if _, err := os.Stat(file); errors.Is(err, fs.ErrNotExist) {
@@ -67,20 +50,7 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		if _, ok := items[o.FoundIn]; !ok {
 			return refusal.New("%q is not an item of %s. Pass the ID of the item the work was found in, as `agent-plan status %s` lists it", o.FoundIn, p.Name, p.file(""))
 		}
-		prefix := ""
-		if o.Part != "" {
-			prefix = o.Part + "."
-		}
-		next := 1
-		followup := idOf(prefix, "F")
-		for id := range items {
-			if m := followup.FindStringSubmatch(id); m != nil {
-				if n, _ := strconv.Atoi(m[1]); n >= next {
-					next = n + 1
-				}
-			}
-		}
-		id := fmt.Sprintf("%sF%d", prefix, next)
+		id := nextListedID(o.Part, "F", items)
 		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":CUSTOM_ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
 			context...)
 		err = l.edit(file, func(lines []string) ([]string, error) {
@@ -102,4 +72,27 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		return err
 	})
 	return r, err
+}
+
+func (o FollowupOptions) validate() ([]string, error) {
+	if o.Title == "" || o.FoundIn == "" {
+		return nil, refusal.New("a follow-up needs its title and the item it was found in. Pass both, as `--title 'one line' --found-in S1`")
+	}
+	if err := checkTitle("title", o.Title); err != nil {
+		return nil, err
+	}
+	if err := checkLine("found-in", o.FoundIn); err != nil {
+		return nil, err
+	}
+	if o.Context != "" && strings.ContainsAny(o.Context[:1], "*#-+|:") {
+		return nil, refusal.New("context %q starts with a character Org reads as structure. Pass it starting with a word, as `--context 'Found while ...'`", o.Context)
+	}
+	context, err := textLines(o.Context)
+	if err != nil {
+		return nil, err
+	}
+	if o.Part != "" && !partPattern.MatchString(o.Part) {
+		return nil, refusal.New("%q is not a part ID. Pass one such as `--part P1`", o.Part)
+	}
+	return context, nil
 }
