@@ -2,6 +2,7 @@ package prcli
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,13 +17,17 @@ func TestInventoryCommand(t *testing.T) {
 	t.Setenv("GH_TOKEN", "test-token")
 	// GitHub is represented by a local server; this command must not need a checkout.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/owner/repo/pulls" || r.URL.Query().Get("state") != "all" {
+		var request struct {
+			Query     string
+			Variables struct{ Owner, Name string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || r.Method != http.MethodPost || r.URL.Path != "/graphql" || request.Variables.Owner != "owner" || request.Variables.Name != "repo" || !strings.Contains(request.Query, "states: [OPEN]") {
 			t.Errorf("unexpected inventory request: %s", r.URL)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
+		_, _ = w.Write([]byte(`{"data":{"repository":{"nameWithOwner":"owner/repo","pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}`))
 	}))
 	t.Cleanup(server.Close)
 	restore := gh.SetAPI(server.URL)
