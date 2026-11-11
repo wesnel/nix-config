@@ -149,10 +149,8 @@ func defaultAdvertisement(listed string) (string, error) {
 			if ref != "HEAD" || branch != "" || !upstreamBranch.MatchString(symbolic) || strings.Contains(symbolic, "..") || strings.HasSuffix(symbolic, ".") {
 				return "", refuse("GitHub HEAD is not one symbolic default branch")
 			}
-			for _, part := range strings.Split(symbolic, "/") {
-				if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
-					return "", refuse("invalid GitHub default branch")
-				}
+			if err := checkDefaultBranch(symbolic); err != nil {
+				return "", err
 			}
 			branch = symbolic
 			continue
@@ -198,50 +196,73 @@ func completeAncestry(cmd *exec.Cmd, tip string) error {
 		if _, err := fmt.Fprintln(in, oid); err != nil {
 			return err
 		}
-		line, err := reader.ReadString('\n')
+		parents, err := readUpstreamCommit(reader, oid, len(tip))
 		if err != nil {
 			return err
 		}
-		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[0] != oid || fields[1] != "commit" {
-			return refuse("upstream commit %.12s is unavailable", oid)
-		}
-		size, err := strconv.Atoi(fields[2])
-		if err != nil || size < 0 || size > 64<<20 {
-			return refuse("invalid upstream commit size")
-		}
-		raw := make([]byte, size)
-		if _, err := io.ReadFull(reader, raw); err != nil {
-			return err
-		}
-		if newline, err := reader.ReadByte(); err != nil || newline != '\n' {
-			return refuse("invalid upstream commit framing")
-		}
-		object := append([]byte(fmt.Sprintf("commit %d\x00", size)), raw...)
-		var named string
-		if len(oid) == 40 {
-			named = fmt.Sprintf("%x", sha1.Sum(object)) //nolint:gosec // Git object identity
-		} else {
-			named = fmt.Sprintf("%x", sha256.Sum256(object))
-		}
-		if named != oid {
-			return refuse("hash mismatch for upstream commit %.12s", oid)
-		}
-		headers, _, ok := strings.Cut(string(raw), "\n\n")
-		if !ok {
-			return refuse("malformed upstream commit")
-		}
-		for _, line := range strings.Split(headers, "\n") {
-			if parent, ok := strings.CutPrefix(line, "parent "); ok {
-				if !upstreamOID.MatchString(parent) || len(parent) != len(tip) {
-					return refuse("invalid upstream parent")
-				}
-				pending = append(pending, parent)
-			}
-		}
+		pending = append(pending, parents...)
 	}
 	if err := in.Close(); err != nil {
 		return err
 	}
 	return cmd.Wait()
+}
+
+func checkDefaultBranch(symbolic string) error {
+	for _, part := range strings.Split(symbolic, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return refuse("invalid GitHub default branch")
+		}
+	}
+	return nil
+}
+
+func readUpstreamCommit(reader *bufio.Reader, oid string, oidLength int) ([]string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(line)
+	if len(fields) != 3 || fields[0] != oid || fields[1] != "commit" {
+		return nil, refuse("upstream commit %.12s is unavailable", oid)
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil || size < 0 || size > 64<<20 {
+		return nil, refuse("invalid upstream commit size")
+	}
+	raw := make([]byte, size)
+	if _, err := io.ReadFull(reader, raw); err != nil {
+		return nil, err
+	}
+	if newline, err := reader.ReadByte(); err != nil || newline != '\n' {
+		return nil, refuse("invalid upstream commit framing")
+	}
+	object := append([]byte(fmt.Sprintf("commit %d\x00", size)), raw...)
+	var named string
+	if len(oid) == 40 {
+		named = fmt.Sprintf("%x", sha1.Sum(object)) //nolint:gosec // Git object identity
+	} else {
+		named = fmt.Sprintf("%x", sha256.Sum256(object))
+	}
+	if named != oid {
+		return nil, refuse("hash mismatch for upstream commit %.12s", oid)
+	}
+	return upstreamParents(raw, oidLength)
+}
+
+func upstreamParents(raw []byte, oidLength int) ([]string, error) {
+	var pending []string
+	headers, _, ok := strings.Cut(string(raw), "\n\n")
+	if !ok {
+		return nil, refuse("malformed upstream commit")
+	}
+	for _, line := range strings.Split(headers, "\n") {
+		if parent, ok := strings.CutPrefix(line, "parent "); ok {
+			if !upstreamOID.MatchString(parent) || len(parent) != oidLength {
+				return nil, refuse("invalid upstream parent")
+			}
+			pending = append(pending, parent)
+		}
+	}
+	return pending, nil
 }
