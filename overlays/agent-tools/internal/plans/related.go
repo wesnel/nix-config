@@ -106,36 +106,7 @@ func factsOf(p Plan) (planFacts, error) {
 		if err != nil {
 			return f, err
 		}
-		text := string(data)
-		lines := strings.Split(text, "\n")
-		f.lines = append(f.lines, lines...)
-		var props map[string]string
-		for _, h := range parseOrg(text) {
-			if h.Level == 1 && sectionTitle(h) == "Plan" {
-				props = h.Props
-				break
-			}
-		}
-		if i == 0 {
-			f.id, f.title = fileID(text), orgTitle(text)
-			f.workstream = refOf(props["WORKSTREAM"])
-			f.related = relatedIDs(lines)
-		}
-		addAll(&f.repos, strings.Fields(props["REPOSITORIES"])...)
-		f.addBranches(strings.Fields(props["BRANCHES"]))
-		addAll(&f.prs, strings.Fields(props["PULL_REQUESTS"])...)
-		addAll(&f.sessions, strings.Fields(props["SESSIONS"])...)
-		trees := strings.Fields(props["WORKTREES"])
-		for _, pair := range strings.Fields(props["OWNERS"]) {
-			if wt, _, ok := strings.Cut(pair, "="); ok {
-				trees = append(trees, wt)
-			}
-		}
-		for _, wt := range trees {
-			if linkedWorktree(wt) {
-				addAll(&f.worktrees, filepath.Clean(wt))
-			}
-		}
+		f.addFile(string(data), i == 0)
 	}
 	list, err := p.itemList()
 	if err != nil {
@@ -225,25 +196,7 @@ func shared(a, b []string) []string {
 // evidence is why plan a is related to plan b, as sentences seen from a:
 // the hard evidence and the softer signs.
 func evidence(a, b planFacts) (hard, soft []string) {
-	if sameRepository(a, b) {
-		for _, br := range shared(a.tips(), b.tips()) {
-			hard = append(hard, "Both work on branch "+br+".")
-		}
-		for _, x := range a.branches {
-			if x.base != "" && slices.Contains(b.tips(), x.base) && !slices.Contains(a.tips(), x.base) {
-				hard = append(hard, "Stacks on its branch "+x.base+".")
-			}
-		}
-		for _, x := range b.branches {
-			if x.base != "" && slices.Contains(a.tips(), x.base) && !slices.Contains(b.tips(), x.base) {
-				hard = append(hard, "Its branch "+x.tip+" stacks on this plan's "+x.base+".")
-			}
-		}
-		for _, c := range shared(a.commits, b.commits) {
-			branch, subject, _ := strings.Cut(c, "\x00")
-			hard = append(hard, "Both log the commit '"+subject+"' on "+branch+".")
-		}
-	}
+	hard = repositoryEvidence(a, b)
 	for _, pr := range shared(a.prs, b.prs) {
 		hard = append(hard, "Both name pull request "+pr+".")
 	}
@@ -359,4 +312,59 @@ func (c Config) LinkEvidence(plan string, now time.Time) ([]Relation, error) {
 		}
 	}
 	return out, errors.Join(errs...)
+}
+
+func (f *planFacts) addFile(text string, main bool) {
+	lines := strings.Split(text, "\n")
+	f.lines = append(f.lines, lines...)
+	var props map[string]string
+	for _, h := range parseOrg(text) {
+		if h.Level == 1 && sectionTitle(h) == "Plan" {
+			props = h.Props
+			break
+		}
+	}
+	if main {
+		f.id, f.title = fileID(text), orgTitle(text)
+		f.workstream = refOf(props["WORKSTREAM"])
+		f.related = relatedIDs(lines)
+	}
+	addAll(&f.repos, strings.Fields(props["REPOSITORIES"])...)
+	f.addBranches(strings.Fields(props["BRANCHES"]))
+	addAll(&f.prs, strings.Fields(props["PULL_REQUESTS"])...)
+	addAll(&f.sessions, strings.Fields(props["SESSIONS"])...)
+	trees := strings.Fields(props["WORKTREES"])
+	for _, pair := range strings.Fields(props["OWNERS"]) {
+		if wt, _, ok := strings.Cut(pair, "="); ok {
+			trees = append(trees, wt)
+		}
+	}
+	for _, wt := range trees {
+		if linkedWorktree(wt) {
+			addAll(&f.worktrees, filepath.Clean(wt))
+		}
+	}
+}
+
+func repositoryEvidence(a, b planFacts) (hard []string) {
+	if sameRepository(a, b) {
+		for _, br := range shared(a.tips(), b.tips()) {
+			hard = append(hard, "Both work on branch "+br+".")
+		}
+		for _, x := range a.branches {
+			if x.base != "" && slices.Contains(b.tips(), x.base) && !slices.Contains(a.tips(), x.base) {
+				hard = append(hard, "Stacks on its branch "+x.base+".")
+			}
+		}
+		for _, x := range b.branches {
+			if x.base != "" && slices.Contains(a.tips(), x.base) && !slices.Contains(b.tips(), x.base) {
+				hard = append(hard, "Its branch "+x.tip+" stacks on this plan's "+x.base+".")
+			}
+		}
+		for _, c := range shared(a.commits, b.commits) {
+			branch, subject, _ := strings.Cut(c, "\x00")
+			hard = append(hard, "Both log the commit '"+subject+"' on "+branch+".")
+		}
+	}
+	return hard
 }

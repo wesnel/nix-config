@@ -64,47 +64,56 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 		for _, rd := range rec.Rounds {
 			rounds = append(rounds, rd.ID)
 		}
-		for _, run := range runs {
-			n := numbered("R", rounds)
-			round := record.Round{ID: "R" + strconv.Itoa(n), Reviewer: run.name, Model: run.model, At: now, RedCheck: "absent"}
-			rounds = append(rounds, round.ID)
-			if run.redCheck {
-				round.RedCheck = "session"
-			}
-			if out := run.out; out != nil {
-				if out.Walkthrough != nil {
-					rec.Walkthrough = walkthroughOf(out.Walkthrough)
-				}
-				if len(out.diagrams) > 0 {
-					rec.Diagrams = replaceDiagrams(rec.Diagrams, out.diagrams)
-				}
-				round.Unverified = out.Unverified
-				for _, d := range out.Dropped {
-					round.Dropped = append(round.Dropped, string(d.Finding)+"\n"+d.Reason)
-				}
-				for _, f := range out.Findings {
-					id := f.ID
-					if !isOwn(id) {
-						id = "F" + strconv.Itoa(numbered("F", findings))
-					} else if contains(findings, id) {
-						f.Finding = id
-						continue
-					}
-					findings = append(findings, id)
-					f.Finding = id
-					rec.Findings = append(rec.Findings, findingOf(f, id, run.name, n))
-				}
-			}
-			round.Dropped = append(round.Dropped, run.failures...)
-			if run.why != "" {
-				round.Dropped = append(round.Dropped, "The review could not run: "+run.why)
-			}
-			rec.Rounds = append(rec.Rounds, round)
-		}
+		appendRuns(rec, runs, now, findings, rounds)
 		kept = *rec
 		return nil
 	})
 	return &kept, err
+}
+
+func appendRuns(rec *record.Range, runs []*typeRun, now time.Time, findings, rounds []string) {
+	for _, run := range runs {
+		n := numbered("R", rounds)
+		round := record.Round{ID: "R" + strconv.Itoa(n), Reviewer: run.name, Model: run.model, At: now, RedCheck: "absent"}
+		rounds = append(rounds, round.ID)
+		if run.redCheck {
+			round.RedCheck = "session"
+		}
+		findings = addRunOutput(rec, &round, run, n, findings)
+		round.Dropped = append(round.Dropped, run.failures...)
+		if run.why != "" {
+			round.Dropped = append(round.Dropped, "The review could not run: "+run.why)
+		}
+		rec.Rounds = append(rec.Rounds, round)
+	}
+}
+
+func addRunOutput(rec *record.Range, round *record.Round, run *typeRun, n int, findings []string) []string {
+	if out := run.out; out != nil {
+		if out.Walkthrough != nil {
+			rec.Walkthrough = walkthroughOf(out.Walkthrough)
+		}
+		if len(out.diagrams) > 0 {
+			rec.Diagrams = replaceDiagrams(rec.Diagrams, out.diagrams)
+		}
+		round.Unverified = out.Unverified
+		for _, d := range out.Dropped {
+			round.Dropped = append(round.Dropped, string(d.Finding)+"\n"+d.Reason)
+		}
+		for _, f := range out.Findings {
+			id := f.ID
+			if !isOwn(id) {
+				id = "F" + strconv.Itoa(numbered("F", findings))
+			} else if contains(findings, id) {
+				f.Finding = id
+				continue
+			}
+			findings = append(findings, id)
+			f.Finding = id
+			rec.Findings = append(rec.Findings, findingOf(f, id, run.name, n))
+		}
+	}
+	return findings
 }
 
 func contains(list []string, s string) bool {
@@ -421,24 +430,29 @@ func showDoc(s *source) (*ShowDoc, error) {
 		case err != nil:
 			return nil, err
 		default:
-			doc.PR = &ShowPR{File: prPath, Repo: p.Repo, Number: p.Number, Updated: stamp(p.Updated),
-				Threads: []ShowThread{}, Counts: p.Counts()}
-			for _, t := range p.Threads {
-				st := ShowThread{Thread: t.ID, Resolved: t.Resolved, Path: t.Path, Line: t.Line, Comments: []ShowComment{}}
-				for _, c := range t.Comments {
-					st.Comments = append(st.Comments, ShowComment{Author: c.Author, Type: c.Type, Body: c.Body})
-				}
-				if d := t.Draft; d != nil {
-					st.Draft = &ShowDraft{Outcome: d.Outcome, Posted: stamp(d.Posted), Body: d.Body}
-				}
-				doc.PR.Threads = append(doc.PR.Threads, st)
-			}
+			doc.PR = showPR(prPath, p)
 		}
 	}
 	if doc.Range == nil && doc.PR == nil {
 		return nil, refusal.New("there is no review of %s; run `git delegate %s` to make one", s.given, s.given)
 	}
 	return doc, nil
+}
+
+func showPR(prPath string, p *record.PR) *ShowPR {
+	shown := &ShowPR{File: prPath, Repo: p.Repo, Number: p.Number, Updated: stamp(p.Updated),
+		Threads: []ShowThread{}, Counts: p.Counts()}
+	for _, t := range p.Threads {
+		st := ShowThread{Thread: t.ID, Resolved: t.Resolved, Path: t.Path, Line: t.Line, Comments: []ShowComment{}}
+		for _, c := range t.Comments {
+			st.Comments = append(st.Comments, ShowComment{Author: c.Author, Type: c.Type, Body: c.Body})
+		}
+		if d := t.Draft; d != nil {
+			st.Draft = &ShowDraft{Outcome: d.Outcome, Posted: stamp(d.Posted), Body: d.Body}
+		}
+		shown.Threads = append(shown.Threads, st)
+	}
+	return shown
 }
 
 // reportRecord reports as cli.Report does, and a record that fails its
@@ -523,28 +537,33 @@ func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var settled *ShowFinding
 	err = record.Update(path, func(rec *record.Range) error {
-		for i := range rec.Findings {
-			f := &rec.Findings[i]
-			if f.ID != id {
-				continue
-			}
-			if state == record.Duplicate && (*target == id || !hasFinding(rec, *target)) {
-				return refusal.New("duplicate-of names the finding %s repeats, and %q is no other finding of the record; "+
-					"pass `--target` with one of its finding IDs", id, *target)
-			}
-			f.State, f.OutcomeTarget, f.Reason = state, *target, reason
-			rec.Updated = time.Now()
-			sf := showFinding(*f)
-			settled = &sf
-			return nil
-		}
-		return refusal.New("the review of %s has no finding %s; pass a finding ID that `git delegate show %s` prints",
-			s.given, id, s.given)
+		var err error
+		settled, err = settleFinding(rec, s.given, id, state, *target, reason)
+		return err
 	})
 	if err != nil {
 		return report(nil, err)
 	}
 	return report(settled, nil)
+}
+
+func settleFinding(rec *record.Range, source, id string, state record.State, target, reason string) (*ShowFinding, error) {
+	for i := range rec.Findings {
+		f := &rec.Findings[i]
+		if f.ID != id {
+			continue
+		}
+		if state == record.Duplicate && (target == id || !hasFinding(rec, target)) {
+			return nil, refusal.New("duplicate-of names the finding %s repeats, and %q is no other finding of the record; "+
+				"pass `--target` with one of its finding IDs", id, target)
+		}
+		f.State, f.OutcomeTarget, f.Reason = state, target, reason
+		rec.Updated = time.Now()
+		sf := showFinding(*f)
+		return &sf, nil
+	}
+	return nil, refusal.New("the review of %s has no finding %s; pass a finding ID that `git delegate show %s` prints",
+		source, id, source)
 }
 
 // noReviewToSettle is settle's refusal for a source with no record at

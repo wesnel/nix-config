@@ -115,30 +115,8 @@ func pushers(text string, depth int) map[string]bool {
 			return ""
 		},
 		call: func(c call) string {
-			c = c.named()
-			w := c.words
-			if len(w) == 0 || c.expands[0] {
-				return ""
-			}
-			flag := func(names ...string) bool {
-				for _, a := range w[1:] {
-					for _, n := range names {
-						if a == n || strings.HasPrefix(a, n+"=") {
-							return true
-						}
-					}
-				}
-				return false
-			}
-			switch name := base(w[0]); {
-			case name == "pr-loop" && len(w) > 1 && (w[1] == "open" || w[1] == "push"):
-				if !flag("--dry-run", "-dry-run") {
-					found["pr-loop "+w[1]] = true
-				}
-			case name == "git-sign-pass", name == "git" && contains(w[1:], "sign-pass"):
-				if flag("--push", "--set-upstream") {
-					found["git sign-pass"] = true
-				}
+			if name := pushingCommand(c); name != "" {
+				found[name] = true
 			}
 			return ""
 		},
@@ -149,6 +127,25 @@ func pushers(text string, depth int) map[string]bool {
 		}
 	}
 	return found
+}
+
+func pushingCommand(c call) string {
+	c = c.named()
+	w := c.words
+	if len(w) == 0 || c.expands[0] {
+		return ""
+	}
+	switch name := base(w[0]); {
+	case name == "pr-loop" && len(w) > 1 && (w[1] == "open" || w[1] == "push"):
+		if !hasFlag(w[1:], "--dry-run", "-dry-run") {
+			return "pr-loop " + w[1]
+		}
+	case name == "git-sign-pass", name == "git" && contains(w[1:], "sign-pass"):
+		if hasFlag(w[1:], "--push", "--set-upstream") {
+			return "git sign-pass"
+		}
+	}
+	return ""
 }
 
 // pushedTo reads a tool's output texts (responseTexts) for what pr-loop or

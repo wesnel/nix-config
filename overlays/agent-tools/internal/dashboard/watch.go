@@ -107,14 +107,8 @@ func (w Watch) Run(ctx context.Context) error {
 		return err
 	}
 	defer l.Close()
-	var st watchState
-	if data, err := os.ReadFile(w.stateFile()); err == nil {
-		// A state that does not parse starts again, printing nothing for
-		// what it finds.
-		if json.Unmarshal(data, &st) != nil {
-			st = watchState{}
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	st, err := w.loadState()
+	if err != nil {
 		return err
 	}
 	var pulled time.Time
@@ -124,40 +118,9 @@ func (w Watch) Run(ctx context.Context) error {
 			w.Pull()
 			pulled = now
 		}
-		var lines []string
-		next := st
-		hash, err := w.hash(now)
-		if err == nil && hash != st.Hash && (!st.Started || now.Sub(st.Printed) >= quiet) {
-			next.Hash = hash
-			if st.Started {
-				lines, next.Printed = append(lines, LineChanged), now
-			}
-		}
-		if s, err := w.Sync(); err == nil {
-			stalled := s.Repo && (s.Staged || s.Unsynced && !s.Pushed.IsZero() && now.Sub(s.Pushed) > stallAfter)
-			if stalled && !st.Stalled {
-				lines = append(lines, LineStalled)
-			}
-			next.Stalled = stalled
-		}
-		digests := w.digests(now)
-		for _, d := range digests {
-			if st.Started && !slices.Contains(st.Digests, d.name) {
-				lines = append(lines, d.line)
-			}
-		}
-		next.Digests = next.Digests[:0:0]
-		for _, d := range digests {
-			next.Digests = append(next.Digests, d.name)
-		}
-		lines = append(lines, w.reviews(now, st, &next)...)
-		next.Started = true
+		next, lines := w.observe(now, st)
 		if !sameState(st, next) {
-			data, err := json.Marshal(next)
-			if err != nil {
-				return err
-			}
-			if err := writeFile(w.stateFile(), data); err != nil {
+			if err := w.saveState(next); err != nil {
 				return err
 			}
 		}
@@ -171,6 +134,58 @@ func (w Watch) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (w Watch) saveState(st watchState) error {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return writeFile(w.stateFile(), data)
+}
+
+func (w Watch) loadState() (watchState, error) {
+	var st watchState
+	data, err := os.ReadFile(w.stateFile())
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return st, err
+	}
+	// A state that does not parse starts again, printing nothing for
+	// what it finds.
+	if err == nil && json.Unmarshal(data, &st) != nil {
+		st = watchState{}
+	}
+	return st, nil
+}
+
+func (w Watch) observe(now time.Time, st watchState) (watchState, []string) {
+	var lines []string
+	next := st
+	hash, err := w.hash(now)
+	if err == nil && hash != st.Hash && (!st.Started || now.Sub(st.Printed) >= quiet) {
+		next.Hash = hash
+		if st.Started {
+			lines, next.Printed = append(lines, LineChanged), now
+		}
+	}
+	if s, err := w.Sync(); err == nil {
+		stalled := s.Repo && (s.Staged || s.Unsynced && !s.Pushed.IsZero() && now.Sub(s.Pushed) > stallAfter)
+		if stalled && !st.Stalled {
+			lines = append(lines, LineStalled)
+		}
+		next.Stalled = stalled
+	}
+	digests := w.digests(now)
+	next.Digests = next.Digests[:0:0]
+	for _, d := range digests {
+		if st.Started && !slices.Contains(st.Digests, d.name) {
+			lines = append(lines, d.line)
+		}
+		next.Digests = append(next.Digests, d.name)
+	}
+	lines = append(lines, w.reviews(now, st, &next)...)
+	next.Started = true
+	return next, lines
 }
 
 // sameState reports whether a and b are the same state.
@@ -193,35 +208,10 @@ func (w Watch) reviews(now time.Time, st watchState, next *watchState) []string 
 	if st.Read.IsZero() || now.Sub(st.Read) >= githubEvery || now.Before(st.Read) {
 		next.Read = now
 		if g, err := w.GitHub(now); err == nil && g.At != "" {
-			watched := map[string]string{}
-			for _, p := range g.Mine {
-				watched[fmt.Sprintf("%s#%d", p.Repo, p.Number)] = ""
-			}
-			for _, r := range g.Requests {
-				watched[fmt.Sprintf("%s#%d", r.Repo, r.Number)] = ""
-			}
-			// Records are LineRecord's, so the pull requests' hash leaves
-			// out what their records say.
-			for i := range g.Mine {
-				p := &g.Mine[i]
-				p.RecordExists, p.RecordFindings, p.RecordThreads, p.RecordUnanswered, p.RecordDrafted, p.RecordDiagrams =
-					false, nil, 0, 0, 0, nil
-			}
-			for i := range g.Requests {
-				r := &g.Requests[i]
-				r.RecordExists, r.RecordFindings, r.RecordThreads, r.RecordUnanswered, r.RecordDrafted, r.RecordDiagrams =
-					false, nil, 0, 0, 0, nil
-			}
-			data, _ := json.Marshal(struct {
-				Mine     []export.PR
-				Requests []export.Request
-			}{g.Mine, g.Requests})
-			sum := sha256.Sum256(data)
-			next.Reviews = hex.EncodeToString(sum[:])
+			next.Reviews, next.Records = reviewSnapshot(g)
 			if st.Started && st.Reviews != "" && next.Reviews != st.Reviews {
 				lines = append(lines, LineReviews)
 			}
-			next.Records = watched
 		}
 	}
 	records := map[string]string{}
@@ -238,6 +228,30 @@ func (w Watch) reviews(now time.Time, st watchState, next *watchState) []string 
 		lines = append(lines, LineRecord)
 	}
 	return lines
+}
+
+func reviewSnapshot(g export.GitHub) (string, map[string]string) {
+	watched := map[string]string{}
+	// Records are LineRecord's, so the pull requests' hash leaves
+	// out what their records say.
+	for i := range g.Mine {
+		p := &g.Mine[i]
+		watched[fmt.Sprintf("%s#%d", p.Repo, p.Number)] = ""
+		p.RecordExists, p.RecordFindings, p.RecordThreads, p.RecordUnanswered, p.RecordDrafted, p.RecordDiagrams =
+			false, nil, 0, 0, 0, nil
+	}
+	for i := range g.Requests {
+		r := &g.Requests[i]
+		watched[fmt.Sprintf("%s#%d", r.Repo, r.Number)] = ""
+		r.RecordExists, r.RecordFindings, r.RecordThreads, r.RecordUnanswered, r.RecordDrafted, r.RecordDiagrams =
+			false, nil, 0, 0, 0, nil
+	}
+	data, _ := json.Marshal(struct {
+		Mine     []export.PR
+		Requests []export.Request
+	}{g.Mine, g.Requests})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), watched
 }
 
 // recordsHash is the hash of pr's review records, OWNER/NAME#N: its range

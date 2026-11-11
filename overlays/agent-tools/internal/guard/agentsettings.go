@@ -137,30 +137,36 @@ func linkFiles(from string) []string {
 			out = append(out, dotGit)
 		}
 		if gitDir := gitDirOf(d); gitDir != "" {
-			admins := []string{gitDir}
-			for _, g := range []string{gitDir, commonOf(gitDir)} {
-				entries, _ := os.ReadDir(filepath.Join(g, "worktrees"))
-				for i, e := range entries {
-					if i == 1000 {
-						break
-					}
-					if e.IsDir() {
-						admins = append(admins, filepath.Join(g, "worktrees", e.Name()))
-					}
-				}
-			}
-			for _, a := range admins {
-				for _, f := range []string{filepath.Join(a, "commondir"), filepath.Join(a, "gitdir")} {
-					if _, err := os.Lstat(f); err == nil {
-						out = append(out, f)
-					}
-				}
-			}
+			out = append(out, adminLinkFiles(gitDir)...)
 		}
 		if d == filepath.Dir(d) {
 			return out
 		}
 	}
+}
+
+func adminLinkFiles(gitDir string) []string {
+	var out []string
+	admins := []string{gitDir}
+	for _, g := range []string{gitDir, commonOf(gitDir)} {
+		entries, _ := os.ReadDir(filepath.Join(g, "worktrees"))
+		for i, e := range entries {
+			if i == 1000 {
+				break
+			}
+			if e.IsDir() {
+				admins = append(admins, filepath.Join(g, "worktrees", e.Name()))
+			}
+		}
+	}
+	for _, a := range admins {
+		for _, f := range []string{filepath.Join(a, "commondir"), filepath.Join(a, "gitdir")} {
+			if _, err := os.Lstat(f); err == nil {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 // commonGitDir is the common git directory of the repository d is the

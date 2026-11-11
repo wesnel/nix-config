@@ -578,65 +578,15 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &pending{}
+	var p *pending
+	var early any
 	if resume {
-		found, err := readJSON(path, p)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return retryPush(branch, setUpstream)
-		}
-		p.push, p.setUpstream = push, setUpstream
-		// A pass whose first signature the key refused rewrote nothing.
-		if tip, _ := git.Run("rev-parse", "refs/heads/"+p.Branch); tip == p.Before[p.Branch] {
-			if Brief {
-				announceTouch()
-			}
-			if err := rebase(p); err != nil {
-				return nil, err
-			}
-		}
+		p, early, err = resumePass(branch, path, push, setUpstream)
 	} else {
-		if exists(path) {
-			return nil, refuse("a signing pass on %s is already in progress; finish it with --resume, or remove %s", branch, path)
-		}
-		if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
-			return nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
-		}
-		var early map[string]string
-		if p, early, err = prepare(branch, base); err != nil {
-			return nil, err
-		}
-		if early != nil {
-			if !push && !setUpstream {
-				return early, nil
-			}
-			return pushUnmoved(branch, base, early, setUpstream)
-		}
-		p.push, p.setUpstream = push, setUpstream
-		pushBranches, urls := 0, 0
-		if push || setUpstream {
-			byRemote, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again")
-			if err != nil {
-				return nil, err
-			}
-			if err := sshmux.Check("run the pass again"); err != nil {
-				return nil, err
-			}
-			pushBranches, urls = pushShare(byRemote)
-		}
-		announceGains(p.gains)
-		if Brief {
-			commits := len(p.Shape)
-			if p.Squash {
-				commits = len(p.Kept)
-			}
-			announce(commits, 1+len(p.Stacked), pushBranches, urls, signatures(p.Start, "refs/heads/"+branch)+urls)
-		}
-		if err := sign(p, path); err != nil {
-			return nil, err
-		}
+		p, early, err = startPass(branch, base, path, push, setUpstream)
+	}
+	if err != nil || p == nil {
+		return early, err
 	}
 
 	result, moved, err := finish(p, path)
@@ -889,19 +839,7 @@ func signatures(from, tip string) int {
 // returns an error that says how to carry on.
 func rebase(p *pending) error {
 	defer marking(p)()
-	upstream := []string{p.Start}
-	if p.Onto != "" {
-		upstream = []string{"--onto", p.Onto, p.Fork}
-	}
-	if !Brief {
-		count, _ := git.Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
-		fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
-	}
-	args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
-	if p.Fixups {
-		args = append(args, "-i", "--autosquash")
-	}
-	args = append(append(args, upstream...), p.Branch)
+	args := p.rebaseArgs()
 	// The first attempt must not be bounded: the operator may take any time
 	// to reach the key, and a key waiting on its PIN is theirs to answer.
 	ctx := context.Background()
@@ -920,11 +858,7 @@ func rebase(p *pending) error {
 			aborted = true
 			break
 		}
-		what := "signing " + p.Branch
-		if folded {
-			what = fmt.Sprintf("signing %s again from the start, up to %s, as a refusal in a fold of fixup!, "+
-				"amend! or squash! commits is not retried in place", p.Branch, touches(rangeSignatures(p)))
-		}
+		what := p.retryDescription(folded)
 		rctx, done, again := retry.next(ctx, what, step, stderr)
 		if !again {
 			aborted = restart
@@ -947,28 +881,7 @@ func rebase(p *pending) error {
 	if code == 0 {
 		return nil
 	}
-	// Whatever kept git from writing a commit, the `git rebase --continue`
-	// this prints makes it again.
-	if rm := rebaseMerge(); !aborted && unwritten.MatchString(stderr) && exists(rm) {
-		if _, err := putBackPick(rm); err != nil {
-			return err
-		}
-	}
-	unlock := retry.locked()
-	cont, also := carryOn(p)
-	if aborted {
-		what := "the key refused the first signature, usually at a missed touch, so nothing is signed yet"
-		if folded {
-			what = "the key refused a signature in a fold of fixup!, amend! or squash! commits, which the pass " +
-				"does not retry in place, so it undid the rebase: nothing on " + p.Branch + " is signed yet"
-		}
-		return fmt.Errorf("%s. Run `%s`, touching the key when it blinks (up to %s), to sign from the start%s. "+
-			"The unsigned branch is kept as %s%s%s", what, p.resume(), touches(rangeSignatures(p)), also, BackupRef,
-			p.Branch, unlock)
-	}
-	return fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `%s` "+
-		"(touching the key when it blinks, up to %s), then `%s`%s. The unsigned branch is kept as "+
-		"%s%s%s", cont, touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch, unlock)
+	return rebaseStopped(p, retry, stderr, aborted, folded)
 }
 
 func touches(n int) string {
@@ -1417,58 +1330,8 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 // with every stacked branch moved to where it belongs (Lands). It lists the
 // branches below the tip that gained fixups.
 func verify(p *pending) ([]string, error) {
-	if p.Squash {
-		if err := history.Match(p.Kept, p.Start, "refs/heads/"+p.Branch, p.Branch); err != nil {
-			return nil, err
-		}
-	} else {
-		shape, err := fullShape(p.Start, "refs/heads/"+p.Branch)
-		if err != nil {
-			return nil, err
-		}
-		if strings.Join(shape, "\x02") != strings.Join(p.Shape, "\x02") {
-			return nil, refuse("re-signing changed a commit's files, author or message; the unsigned branch is %s%s",
-				BackupRef, p.Branch)
-		}
-	}
-	marks, err := git.Run("log", "--format=%h %G?", p.Start+"..refs/heads/"+p.Branch)
-	if err != nil {
+	if err := verifyHistory(p); err != nil {
 		return nil, err
-	}
-	for _, line := range strings.Split(marks, "\n") {
-		if f := strings.Fields(line); len(f) == 2 && f[1] != "G" && f[1] != "U" {
-			return nil, refuse("commit %s has no good signature", f[0])
-		}
-	}
-	var stale []string
-	for _, b := range p.Stacked {
-		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid == p.Before[b] {
-			stale = append(stale, b)
-		}
-	}
-	if len(stale) > 0 {
-		return nil, refuse("these branches still point at unsigned commits the pass replaced: %s; point each at its signed copy on %s "+
-			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run "+
-			"`%s`", strings.Join(stale, ", "), p.Branch, p.resume())
-	}
-	var misplaced []string
-	for _, b := range p.Stacked {
-		k, ok := p.Lands[b]
-		if !ok {
-			continue
-		}
-		want, err := landing(p.Start, "refs/heads/"+p.Branch, k)
-		if err != nil {
-			return nil, err
-		}
-		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid != want {
-			misplaced = append(misplaced, b+" belongs at "+want)
-		}
-	}
-	if len(misplaced) > 0 {
-		return nil, refuse("these branches are not on the signed copy of the last commit they keep: %s; point each there "+
-			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run `%s`",
-			strings.Join(misplaced, ", "), p.resume())
 	}
 	// A branch below the tip gains whatever folds it does not contain fold
 	// into its commits, which is the point of folding; only the tip of a
@@ -1529,56 +1392,13 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	}
 	defer mux.Close()
 	for i := range todo.URLs {
-		u := &todo.URLs[i]
-		if u.NeedsSnapshot && !u.Done {
-			// %v, as for a failed push: a refusal wrapped here would be
-			// reported without the command that resumes the push.
-			if err := u.snapshot(ctx, mux.Env(i)); err != nil {
-				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
-			}
-			if err := writeJSON(path, todo); err != nil {
-				return nil, err
-			}
+		if err := pushURL(ctx, &todo, i, path, retry, mux.Env(i)); err != nil {
+			return nil, err
 		}
-		for j := range u.Refs {
-			if u.Done || u.Refs[j].Done {
-				continue
-			}
-			if err := pushRef(ctx, u.Remote, u.URL, u.Refs[j], mux.Env(i)); err != nil {
-				var r refusal.Refusal
-				if errors.As(err, &r) {
-					return nil, refuse("%v%s; fix the cause and %s", err, pushedTo(todo.URLs), retry)
-				}
-				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
-			}
-			u.Refs[j].Done = true
-			if err := writeJSON(path, todo); err != nil {
-				return nil, err
-			}
-		}
-		u.Done = true
 	}
-	pushed = maps.Clone(todo.Skipped)
-	if pushed == nil {
-		pushed = map[string]string{}
-	}
-	for _, u := range todo.URLs {
-		for _, r := range u.Refs {
-			if _, err := git.Run("update-ref", "refs/remotes/"+u.Remote+"/"+r.Branch, r.New); err != nil {
-				return nil, err
-			}
-			pushed[r.Branch] = u.Remote + " refs/heads/" + r.Branch
-			if !r.Publish {
-				continue
-			}
-			if _, err := git.Run("config", "branch."+r.Branch+".remote", u.Remote); err != nil {
-				return nil, err
-			}
-			if _, err := git.Run("config", "branch."+r.Branch+".merge", "refs/heads/"+r.Branch); err != nil {
-				return nil, err
-			}
-			pushed[r.Branch] += ", now its upstream"
-		}
+	pushed, err = finishPush(todo)
+	if err != nil {
+		return nil, err
 	}
 	return pushed, os.Remove(path)
 }
@@ -1685,40 +1505,11 @@ func (u *urlPush) snapshot(ctx context.Context, env []string) error {
 		}
 		defer done()
 	}
-	observed := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
-		}
-		oid := fields[0]
-		validOID := (len(oid) == 40 || len(oid) == 64) && strings.Trim(oid, "0123456789abcdef") == ""
-		if !wanted[fields[1]] || !validOID || observed[fields[1]] != "" {
-			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
-		}
-		observed[fields[1]] = fields[0]
+	observed, err := advertisedRefs(out, wanted, what)
+	if err != nil {
+		return err
 	}
-	for _, r := range u.Refs {
-		if r.Done {
-			continue
-		}
-		// A URL may already hold New: another URL of the same repository
-		// pushed it, or another client did. A published branch must still
-		// be absent.
-		if old := observed["refs/heads/"+r.Branch]; old != "" && old != r.Old && (r.Publish || old != r.New) {
-			return refuse("%s at %s changed from the expected %.12s to %.12s; fetch and review that destination before pushing", r.Branch, u.URL, r.Old, old)
-		}
-	}
-	for i := range u.Refs {
-		if !u.Refs[i].Done {
-			u.Refs[i].Old = observed["refs/heads/"+u.Refs[i].Branch]
-		}
-	}
-	u.NeedsSnapshot = false
-	return nil
+	return u.acceptSnapshot(observed)
 }
 
 // bottomUp orders refs so that each comes before every ref whose commit
@@ -1874,12 +1665,7 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 				"`git branch --set-upstream-to=%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), quote(b), quote("REMOTE/"+b), quote(b), retry)
 		case remote != "" && merge != "":
 			if merge != "refs/heads/"+b {
-				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", quote(b))
-				if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
-					fix = fmt.Sprintf("`git branch --set-upstream-to=%s %s`", quote(remote+"/"+b), quote(b))
-				}
-				return nil, nil, refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
-					"name; point it at its own with %s, then %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix, retry)
+				return nil, nil, wrongPushBranch(b, remote, merge, retry)
 			}
 			t.lease, _ = git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b)
 		case !setUpstream:
@@ -2050,4 +1836,304 @@ func pushRemote(branch, retry string) (string, error) {
 	}
 	return "", refuse("%s has no upstream and it is not clear which of the remotes %s to publish it to; "+
 		"choose with `git config remote.pushDefault REMOTE`, then %s", branch, strings.Join(remotes, ", "), retry)
+}
+
+func verifyHistory(p *pending) error {
+	if p.Squash {
+		if err := history.Match(p.Kept, p.Start, "refs/heads/"+p.Branch, p.Branch); err != nil {
+			return err
+		}
+	} else {
+		shape, err := fullShape(p.Start, "refs/heads/"+p.Branch)
+		if err != nil {
+			return err
+		}
+		if strings.Join(shape, "\x02") != strings.Join(p.Shape, "\x02") {
+			return refuse("re-signing changed a commit's files, author or message; the unsigned branch is %s%s",
+				BackupRef, p.Branch)
+		}
+	}
+	marks, err := git.Run("log", "--format=%h %G?", p.Start+"..refs/heads/"+p.Branch)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(marks, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] != "G" && f[1] != "U" {
+			return refuse("commit %s has no good signature", f[0])
+		}
+	}
+	return verifyLandings(p)
+}
+
+func verifyLandings(p *pending) error {
+	var stale []string
+	for _, b := range p.Stacked {
+		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid == p.Before[b] {
+			stale = append(stale, b)
+		}
+	}
+	if len(stale) > 0 {
+		return refuse("these branches still point at unsigned commits the pass replaced: %s; point each at its signed copy on %s "+
+			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run "+
+			"`%s`", strings.Join(stale, ", "), p.Branch, p.resume())
+	}
+	var misplaced []string
+	for _, b := range p.Stacked {
+		k, ok := p.Lands[b]
+		if !ok {
+			continue
+		}
+		want, err := landing(p.Start, "refs/heads/"+p.Branch, k)
+		if err != nil {
+			return err
+		}
+		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid != want {
+			misplaced = append(misplaced, b+" belongs at "+want)
+		}
+	}
+	if len(misplaced) > 0 {
+		return refuse("these branches are not on the signed copy of the last commit they keep: %s; point each there "+
+			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run `%s`",
+			strings.Join(misplaced, ", "), p.resume())
+	}
+	return nil
+}
+
+func finishPush(todo pushes) (map[string]string, error) {
+	pushed := maps.Clone(todo.Skipped)
+	if pushed == nil {
+		pushed = map[string]string{}
+	}
+	for _, u := range todo.URLs {
+		for _, r := range u.Refs {
+			if _, err := git.Run("update-ref", "refs/remotes/"+u.Remote+"/"+r.Branch, r.New); err != nil {
+				return nil, err
+			}
+			pushed[r.Branch] = u.Remote + " refs/heads/" + r.Branch
+			if !r.Publish {
+				continue
+			}
+			if _, err := git.Run("config", "branch."+r.Branch+".remote", u.Remote); err != nil {
+				return nil, err
+			}
+			if _, err := git.Run("config", "branch."+r.Branch+".merge", "refs/heads/"+r.Branch); err != nil {
+				return nil, err
+			}
+			pushed[r.Branch] += ", now its upstream"
+		}
+	}
+	return pushed, nil
+}
+
+// pushURL updates todo in place and saves the complete checkpoint after
+// taking its snapshot and after each successful ref push.
+func pushURL(ctx context.Context, todo *pushes, i int, path, retry string, env []string) error {
+	u := &todo.URLs[i]
+	if u.NeedsSnapshot && !u.Done {
+		// %v, as for a failed push: a refusal wrapped here would be
+		// reported without the command that resumes the push.
+		if err := u.snapshot(ctx, env); err != nil {
+			return fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
+		}
+		if err := writeJSON(path, todo); err != nil {
+			return err
+		}
+	}
+	for j := range u.Refs {
+		if u.Done || u.Refs[j].Done {
+			continue
+		}
+		if err := pushRef(ctx, u.Remote, u.URL, u.Refs[j], env); err != nil {
+			var r refusal.Refusal
+			if errors.As(err, &r) {
+				return refuse("%v%s; fix the cause and %s", err, pushedTo(todo.URLs), retry)
+			}
+			return fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
+		}
+		u.Refs[j].Done = true
+		if err := writeJSON(path, todo); err != nil {
+			return err
+		}
+	}
+	u.Done = true
+	return nil
+}
+
+func advertisedRefs(out []byte, wanted map[string]bool, what string) (map[string]string, error) {
+	observed := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		oid := fields[0]
+		validOID := (len(oid) == 40 || len(oid) == 64) && strings.Trim(oid, "0123456789abcdef") == ""
+		if !wanted[fields[1]] || !validOID || observed[fields[1]] != "" {
+			return nil, fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		observed[fields[1]] = fields[0]
+	}
+	return observed, nil
+}
+
+func rebaseStopped(p *pending, retry *retrier, stderr string, aborted, folded bool) error {
+	// Whatever kept git from writing a commit, the `git rebase --continue`
+	// this prints makes it again.
+	if rm := rebaseMerge(); !aborted && unwritten.MatchString(stderr) && exists(rm) {
+		if _, err := putBackPick(rm); err != nil {
+			return err
+		}
+	}
+	unlock := retry.locked()
+	cont, also := carryOn(p)
+	if aborted {
+		what := "the key refused the first signature, usually at a missed touch, so nothing is signed yet"
+		if folded {
+			what = "the key refused a signature in a fold of fixup!, amend! or squash! commits, which the pass " +
+				"does not retry in place, so it undid the rebase: nothing on " + p.Branch + " is signed yet"
+		}
+		return fmt.Errorf("%s. Run `%s`, touching the key when it blinks (up to %s), to sign from the start%s. "+
+			"The unsigned branch is kept as %s%s%s", what, p.resume(), touches(rangeSignatures(p)), also, BackupRef,
+			p.Branch, unlock)
+	}
+	return fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `%s` "+
+		"(touching the key when it blinks, up to %s), then `%s`%s. The unsigned branch is kept as "+
+		"%s%s%s", cont, touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch, unlock)
+}
+
+// startPass returns nil pending state when the pass has no signing to finish;
+// its result and error then belong directly to Run's caller.
+func startPass(branch, base, path string, push, setUpstream bool) (*pending, any, error) {
+	var p *pending
+	var err error
+	if exists(path) {
+		return nil, nil, refuse("a signing pass on %s is already in progress; finish it with --resume, or remove %s", branch, path)
+	}
+	if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
+		return nil, nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
+	}
+	var early map[string]string
+	if p, early, err = prepare(branch, base); err != nil {
+		return nil, nil, err
+	}
+	if early != nil {
+		if !push && !setUpstream {
+			return nil, early, nil
+		}
+		result, err := pushUnmoved(branch, base, early, setUpstream)
+		return nil, result, err
+	}
+	p.push, p.setUpstream = push, setUpstream
+	if err := p.announcePass(branch, push, setUpstream); err != nil {
+		return nil, nil, err
+	}
+	if err := sign(p, path); err != nil {
+		return nil, nil, err
+	}
+	return p, nil, nil
+}
+
+func (p *pending) announcePass(branch string, push, setUpstream bool) error {
+	pushBranches, urls := 0, 0
+	if push || setUpstream {
+		byRemote, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again")
+		if err != nil {
+			return err
+		}
+		if err := sshmux.Check("run the pass again"); err != nil {
+			return err
+		}
+		pushBranches, urls = pushShare(byRemote)
+	}
+	announceGains(p.gains)
+	if Brief {
+		commits := len(p.Shape)
+		if p.Squash {
+			commits = len(p.Kept)
+		}
+		announce(commits, 1+len(p.Stacked), pushBranches, urls, signatures(p.Start, "refs/heads/"+branch)+urls)
+	}
+	return nil
+}
+
+func (p *pending) retryDescription(folded bool) string {
+	what := "signing " + p.Branch
+	if folded {
+		what = fmt.Sprintf("signing %s again from the start, up to %s, as a refusal in a fold of fixup!, "+
+			"amend! or squash! commits is not retried in place", p.Branch, touches(rangeSignatures(p)))
+	}
+	return what
+}
+
+func (u *urlPush) acceptSnapshot(observed map[string]string) error {
+	for _, r := range u.Refs {
+		if r.Done {
+			continue
+		}
+		// A URL may already hold New: another URL of the same repository
+		// pushed it, or another client did. A published branch must still
+		// be absent.
+		if old := observed["refs/heads/"+r.Branch]; old != "" && old != r.Old && (r.Publish || old != r.New) {
+			return refuse("%s at %s changed from the expected %.12s to %.12s; fetch and review that destination before pushing", r.Branch, u.URL, r.Old, old)
+		}
+	}
+	for i := range u.Refs {
+		if !u.Refs[i].Done {
+			u.Refs[i].Old = observed["refs/heads/"+u.Refs[i].Branch]
+		}
+	}
+	u.NeedsSnapshot = false
+	return nil
+}
+
+func wrongPushBranch(b, remote, merge, retry string) error {
+	fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", quote(b))
+	if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
+		fix = fmt.Sprintf("`git branch --set-upstream-to=%s %s`", quote(remote+"/"+b), quote(b))
+	}
+	return refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
+		"name; point it at its own with %s, then %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix, retry)
+}
+
+func resumePass(branch, path string, push, setUpstream bool) (*pending, any, error) {
+	p := &pending{}
+	found, err := readJSON(path, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !found {
+		result, err := retryPush(branch, setUpstream)
+		return nil, result, err
+	}
+	p.push, p.setUpstream = push, setUpstream
+	// A pass whose first signature the key refused rewrote nothing.
+	if tip, _ := git.Run("rev-parse", "refs/heads/"+p.Branch); tip == p.Before[p.Branch] {
+		if Brief {
+			announceTouch()
+		}
+		if err := rebase(p); err != nil {
+			return nil, nil, err
+		}
+	}
+	return p, nil, nil
+}
+
+func (p *pending) rebaseArgs() []string {
+	upstream := []string{p.Start}
+	if p.Onto != "" {
+		upstream = []string{"--onto", p.Onto, p.Fork}
+	}
+	if !Brief {
+		count, _ := git.Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
+		fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
+	}
+	args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
+	if p.Fixups {
+		args = append(args, "-i", "--autosquash")
+	}
+	args = append(append(args, upstream...), p.Branch)
+	return args
 }

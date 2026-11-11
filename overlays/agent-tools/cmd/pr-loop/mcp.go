@@ -365,18 +365,6 @@ func (t mcpTool) names() []string {
 
 // value is v as p takes it.
 func (p mcpParam) value(v any, worktree string) (any, error) {
-	plain := func(v any) (string, error) {
-		s, ok := v.(string)
-		switch {
-		case !ok:
-			return "", fmt.Errorf("takes a string, not %v", v)
-		case p.kind != literal && strings.HasPrefix(s, "-"):
-			return "", fmt.Errorf("%q starts with -, which the command would read as a flag", s)
-		case p.enum != nil && !slices.Contains(p.enum, s):
-			return "", fmt.Errorf("takes one of %s, not %q", strings.Join(p.enum, ", "), s)
-		}
-		return s, nil
-	}
 	switch p.kind {
 	case number:
 		n, ok := v.(float64)
@@ -397,7 +385,7 @@ func (p mcpParam) value(v any, worktree string) (any, error) {
 		}
 		out := []string{}
 		for _, item := range list {
-			s, err := plain(item)
+			s, err := p.plain(item)
 			if err != nil {
 				return nil, err
 			}
@@ -405,23 +393,40 @@ func (p mcpParam) value(v any, worktree string) (any, error) {
 		}
 		return out, nil
 	case file:
-		s, err := plain(v)
+		s, err := p.plain(v)
 		if err != nil {
 			return nil, err
 		}
-		if !filepath.IsAbs(s) {
-			s = filepath.Join(worktree, s)
-		}
-		real, err := filepath.EvalSymlinks(s)
-		if err != nil {
-			return nil, fmt.Errorf("no file %s in the worktree", s)
-		}
-		if rel, err := filepath.Rel(worktree, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("%s is outside the worktree %s; write the file there", s, worktree)
-		}
-		return real, nil
+		return worktreeFile(s, worktree)
 	}
-	return plain(v)
+	return p.plain(v)
+}
+
+func worktreeFile(s, worktree string) (string, error) {
+	if !filepath.IsAbs(s) {
+		s = filepath.Join(worktree, s)
+	}
+	real, err := filepath.EvalSymlinks(s)
+	if err != nil {
+		return "", fmt.Errorf("no file %s in the worktree", s)
+	}
+	if rel, err := filepath.Rel(worktree, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s is outside the worktree %s; write the file there", s, worktree)
+	}
+	return real, nil
+}
+
+func (p mcpParam) plain(v any) (string, error) {
+	s, ok := v.(string)
+	switch {
+	case !ok:
+		return "", fmt.Errorf("takes a string, not %v", v)
+	case p.kind != literal && strings.HasPrefix(s, "-"):
+		return "", fmt.Errorf("%q starts with -, which the command would read as a flag", s)
+	case p.enum != nil && !slices.Contains(p.enum, s):
+		return "", fmt.Errorf("takes one of %s, not %q", strings.Join(p.enum, ", "), s)
+	}
+	return s, nil
 }
 
 // rpcMessage is a JSON-RPC message from the client: a request, or a

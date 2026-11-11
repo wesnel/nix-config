@@ -72,16 +72,7 @@ func structureOf(text string) []structureProblem {
 	add := func(h heading, format string, args ...any) {
 		out = append(out, structureProblem{strings.Repeat("*", h.Level) + " " + h.Title, fmt.Sprintf(format, args...)})
 	}
-	lines := strings.Split(text, "\n")
-	for i, in := range blockLines(lines) {
-		switch m := blockLine.FindStringSubmatch(lines[i]); {
-		case in && orgHeading.MatchString(lines[i]):
-			out = append(out, structureProblem{strings.TrimSpace(lines[i]),
-				"a heading line inside a block, which Org reads as a heading; Org escapes it with a comma"})
-		case !in && m != nil && strings.EqualFold(m[1], "begin"):
-			out = append(out, structureProblem{strings.TrimSpace(lines[i]), "a block with no end, which Org reads as text"})
-		}
-	}
+	out = append(out, blockProblems(text)...)
 
 	// above is the chain of headings above the current one, nearest last.
 	type above struct {
@@ -132,7 +123,7 @@ func structureOf(text string) []structureProblem {
 				me.skip = true
 			}
 			sections[title] = true
-		case me.section == "Goal" || me.section == "Verification" || me.section == "Related":
+		case slices.Contains([]string{"Goal", "Verification", "Related"}, me.section):
 			add(h, "a heading under %s, which holds text", me.section)
 			me.skip = true
 		case me.section == "References":
@@ -141,27 +132,7 @@ func structureOf(text string) []structureProblem {
 			}
 			me.skip = true
 		case h.Level == 3 || parent.group:
-			ids := entryIDs[me.section]
-			id := itemID(h)
-			archive := h.Title == "Archive" && slices.Contains(h.Tags, archiveTag)
-			me.group = archive || h.Props["ORDERED"] == "t" && (me.section == "Steps" || me.section == "Distribution")
-			if me.group && (archive || id == "") {
-				switch {
-				case strings.TrimSpace(strings.Join(h.Body, "")) != "":
-					add(h, "a group with text of its own")
-					me.skip = true
-				case i+1 == len(hs) || hs[i+1].Level <= h.Level:
-					add(h, "a group with no entries under it")
-				}
-				break
-			}
-			me.skip = !me.group
-			if !ids.match(id) {
-				add(h, "a %s entry without an ID %s", me.section, ids.shown)
-			} else if me.section == "Questions" && !slices.Contains(questionKeywords, h.Keyword) {
-				add(h, "a question without a keyword %s or %s", strings.Join(questionKeywords[:len(questionKeywords)-1], ", "),
-					questionKeywords[len(questionKeywords)-1])
-			}
+			me.group, me.skip = checkStructureEntry(h, me.section, i+1 < len(hs) && hs[i+1].Level > h.Level, add)
 		}
 		stack = append(stack, me)
 	}
@@ -293,4 +264,44 @@ func (s Status) structureLine() string {
 	}
 	return fmt.Sprintf("Structure drift in %d headings, which `agent-plan status %s` lists: %s", n, s.Plan,
 		strings.Join(headings, ", "))
+}
+
+func blockProblems(text string) (out []structureProblem) {
+	lines := strings.Split(text, "\n")
+	for i, in := range blockLines(lines) {
+		switch m := blockLine.FindStringSubmatch(lines[i]); {
+		case in && orgHeading.MatchString(lines[i]):
+			out = append(out, structureProblem{strings.TrimSpace(lines[i]),
+				"a heading line inside a block, which Org reads as a heading; Org escapes it with a comma"})
+		case !in && m != nil && strings.EqualFold(m[1], "begin"):
+			out = append(out, structureProblem{strings.TrimSpace(lines[i]), "a block with no end, which Org reads as text"})
+		}
+	}
+
+	return out
+}
+
+func checkStructureEntry(h heading, section string, hasChild bool, add func(heading, string, ...any)) (group, skip bool) {
+	ids := entryIDs[section]
+	id := itemID(h)
+	archive := h.Title == "Archive" && slices.Contains(h.Tags, archiveTag)
+	group = archive || h.Props["ORDERED"] == "t" && (section == "Steps" || section == "Distribution")
+	if group && (archive || id == "") {
+		switch {
+		case strings.TrimSpace(strings.Join(h.Body, "")) != "":
+			add(h, "a group with text of its own")
+			skip = true
+		case !hasChild:
+			add(h, "a group with no entries under it")
+		}
+		return group, skip
+	}
+	skip = !group
+	if !ids.match(id) {
+		add(h, "a %s entry without an ID %s", section, ids.shown)
+	} else if section == "Questions" && !slices.Contains(questionKeywords, h.Keyword) {
+		add(h, "a question without a keyword %s or %s", strings.Join(questionKeywords[:len(questionKeywords)-1], ", "),
+			questionKeywords[len(questionKeywords)-1])
+	}
+	return group, skip
 }

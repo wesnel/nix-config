@@ -331,21 +331,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 2
 	}
 	report := func(result any, err error, code int) int { return reportRecord(result, err, code, stdout, stderr) }
-	goalGiven := false
-	flags.Visit(func(f *flag.Flag) { goalGiven = goalGiven || f.Name == "goal" })
-	if goalGiven {
-		return report(nil, refusal.New("git delegate reads the goal statement from the plan, not a file; pass "+
-			"`--plan PLAN` in place of `--goal`, with `--part P1` for a part's goal"), 0)
-	}
-	if *part != "" && *plan == "" {
-		return report(nil, refusal.New("--part names a part of the plan --plan names; pass `--plan PLAN --part %s`",
-			*part), 0)
-	}
-	for _, t := range reviewers {
-		if _, ok := reviewerTypes[t]; !ok {
-			return report(nil, refusal.New("%q is not a reviewer type; pass `--reviewer` with one of %s", t,
-				strings.Join(slices.Sorted(maps.Keys(reviewerTypes)), ", ")), 0)
-		}
+	if err := checkReviewFlags(flags, reviewers, *plan, *part); err != nil {
+		return report(nil, err, 0)
 	}
 	s, err := parseSource(positional[0])
 	if err != nil {
@@ -365,82 +352,62 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 
-	base := inputs{r: r, availability: newAvailability()}
-	if *plan != "" {
-		if base.goal, err = planGoal(*plan, *part); err != nil {
-			return report(nil, err, 0)
-		}
-	} else if s.number == 0 {
-		return report(nil, refusal.New("a review is judged against a goal statement, the Goal of the change's plan; "+
-			"pass `--plan PLAN`, with `--part P1` for a part's goal"), 0)
-	}
-	goal := goalFlags(*plan, *part)
-	if *items != "" {
-		if base.items, err = readFile(*items, stdin); err != nil {
-			return report(nil, err, 0)
-		}
-	}
-	switch {
-	case *description != "":
-		if base.description, err = readFile(*description, stdin); err != nil {
-			return report(nil, err, 0)
-		}
-		base.descriptionFrom = "the description " + *description
-	case s.number != 0:
-		base.description = s.pr.Body
-		base.descriptionFrom = fmt.Sprintf("the description of %s#%d", s.slug(), s.number)
-	}
-	if s.number != 0 {
-		if err := prInputs(s, &base, stderr); err != nil {
-			return report(nil, err, 0)
-		}
-	}
-	if slices.Contains(reviewers, "compat") {
-		if _, err := base.reverting(); err != nil {
-			return report(nil, err, 0)
-		}
-	}
-	path, err := record.RangeFile(s.owner, s.repo, r.base, r.tip)
-	if err != nil {
-		return report(nil, err, 0)
-	}
-	if base.prior, err = priorText(path, s); err != nil {
-		return report(nil, err, 0)
-	}
-	var redCheckJSON string
-	if *redCheckFile != "" {
-		if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
-			return report(nil, err, 0)
-		}
-	}
-	tests, err := testAdequacy(r, *redCheckFile, []byte(redCheckJSON), stderr)
-	if err != nil {
-		return report(nil, err, 0)
-	}
+	return reviewChange(ctx, s, r, reviewOptions{reviewers: reviewers, plan: *plan, part: *part, items: *items,
+		redCheckFile: *redCheckFile, description: *description, model: *model,
+		timeout: time.Duration(*timeout) * time.Second, printPrompt: *printPrompt}, stdin, stdout, stderr)
+}
 
-	if *printPrompt {
+func checkReviewFlags(flags *flag.FlagSet, reviewers []string, plan, part string) error {
+	goalGiven := false
+	flags.Visit(func(f *flag.Flag) { goalGiven = goalGiven || f.Name == "goal" })
+	if goalGiven {
+		return refusal.New("git delegate reads the goal statement from the plan, not a file; pass " +
+			"`--plan PLAN` in place of `--goal`, with `--part P1` for a part's goal")
+	}
+	if part != "" && plan == "" {
+		return refusal.New("--part names a part of the plan --plan names; pass `--plan PLAN --part %s`",
+			part)
+	}
+	for _, t := range reviewers {
+		if _, ok := reviewerTypes[t]; !ok {
+			return refusal.New("%q is not a reviewer type; pass `--reviewer` with one of %s", t,
+				strings.Join(slices.Sorted(maps.Keys(reviewerTypes)), ", "))
+		}
+	}
+	return nil
+}
+
+type reviewOptions struct {
+	reviewers                                           []string
+	plan, part, items, redCheckFile, description, model string
+	timeout                                             time.Duration
+	printPrompt                                         bool
+}
+
+func reviewChange(ctx context.Context, s *source, r *span, opts reviewOptions, stdin io.Reader, stdout, stderr io.Writer) int {
+	report := func(result any, err error, code int) int { return reportRecord(result, err, code, stdout, stderr) }
+	base, path, tests, err := reviewInputs(s, r, opts, stdin, stderr)
+	if err != nil {
+		return report(nil, err, 0)
+	}
+	goal := goalFlags(opts.plan, opts.part)
+
+	if opts.printPrompt {
 		t := generalReviewer()
-		if len(reviewers) == 1 {
-			t = reviewers[0]
+		if len(opts.reviewers) == 1 {
+			t = opts.reviewers[0]
 		}
 		base.printed = true
-		in, err := typeInputs(ctx, base, t, tests, stderr)
-		if err != nil {
+		if err := printReview(ctx, base, t, tests, stdout, stderr); err != nil {
 			return report(nil, err, 0)
 		}
-		in.where = where(r)
-		if reviewerTypes[t].diagram {
-			fmt.Fprint(stdout, diagramFallback(in))
-			return 0
-		}
-		fmt.Fprint(stdout, prompt(in))
 		return 0
 	}
 
 	// Without --reviewer, prefer one general review by the other family.
-	explicit := len(reviewers) > 0
+	explicit := len(opts.reviewers) > 0
 	scanned := routeChange(r, nil, stderr)
-	chosen := slices.Clone([]string(reviewers))
+	chosen := slices.Clone([]string(opts.reviewers))
 	if !explicit {
 		chosen = []string{generalReviewer()}
 	}
@@ -448,42 +415,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 
 	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
-	var runs []*typeRun
-	for i, t := range chosen {
-		run := runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
-		// Where Claude cannot review a Codex caller's change, Codex does.
-		if i == 0 && !explicit && t == "claude" && run.out == nil && run.failures == nil && !run.refused {
-			fmt.Fprintf(stderr, "%s: the claude review could not run here: %s; codex reviews in its place\n", name, run.why)
-			t = "codex"
-			run = runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
-		}
-		if run.out == nil {
-			if run.failures != nil {
-				runs = append(runs, run)
-			}
-			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
-			if run.refused {
-				// Its inputs are refused anywhere, --print-prompt too.
-				fmt.Fprintf(stderr, "%s: the %s review could not run: %s\n", name, t, run.why)
-				continue
-			}
-			reader := "a sub-agent that only reads"
-			if agent := reviewerTypes[t].agent; agent != "" {
-				reader = "a new `" + agent + "` sub-agent"
-			}
-			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning.\n",
-				name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
-			continue
-		}
-		runs = append(runs, run)
-		if run.out != nil {
-			result.Reviews = append(result.Reviews, run.out)
-			if ty := reviewerTypes[t]; ty.focus == "" && !ty.guide && !ty.diagram {
-				result.Routes = run.out.Routes
-			}
-		}
-	}
+	runs := runChosen(ctx, s, base, tests, opts, chosen, result, stderr)
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
 			fmt.Fprintf(stderr, "%s: candidate %s review (%s): assess the risk, then run `git delegate --reviewer %s %s%s` if needed\n",
@@ -509,6 +441,132 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		code = 3
 	}
 	return report(result, nil, code)
+}
+
+func reviewInputs(s *source, r *span, opts reviewOptions, stdin io.Reader, stderr io.Writer) (inputs, string, *adequacy, error) {
+	var err error
+	base := inputs{r: r, availability: newAvailability()}
+	if opts.plan != "" {
+		if base.goal, err = planGoal(opts.plan, opts.part); err != nil {
+			return base, "", nil, err
+		}
+	} else if s.number == 0 {
+		return base, "", nil, refusal.New("a review is judged against a goal statement, the Goal of the change's plan; " +
+			"pass `--plan PLAN`, with `--part P1` for a part's goal")
+	}
+	if opts.items != "" {
+		if base.items, err = readFile(opts.items, stdin); err != nil {
+			return base, "", nil, err
+		}
+	}
+	if err := base.readDescription(s, opts.description, stdin); err != nil {
+		return base, "", nil, err
+	}
+	if s.number != 0 {
+		if err := prInputs(s, &base, stderr); err != nil {
+			return base, "", nil, err
+		}
+	}
+	if slices.Contains(opts.reviewers, "compat") {
+		if _, err := base.reverting(); err != nil {
+			return base, "", nil, err
+		}
+	}
+	path, err := record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	if err != nil {
+		return base, "", nil, err
+	}
+	if base.prior, err = priorText(path, s); err != nil {
+		return base, "", nil, err
+	}
+	var redCheckJSON string
+	if opts.redCheckFile != "" {
+		if redCheckJSON, err = readFile(opts.redCheckFile, stdin); err != nil {
+			return base, "", nil, err
+		}
+	}
+	tests, err := testAdequacy(r, opts.redCheckFile, []byte(redCheckJSON), stderr)
+	if err != nil {
+		return base, "", nil, err
+	}
+
+	return base, path, tests, nil
+}
+
+func printReview(ctx context.Context, base inputs, t string, tests *adequacy, stdout, stderr io.Writer) error {
+	in, err := typeInputs(ctx, base, t, tests, stderr)
+	if err != nil {
+		return err
+	}
+	in.where = where(base.r)
+	if reviewerTypes[t].diagram {
+		fmt.Fprint(stdout, diagramFallback(in))
+		return nil
+	}
+	fmt.Fprint(stdout, prompt(in))
+	return nil
+}
+
+func runChosen(ctx context.Context, s *source, base inputs, tests *adequacy, opts reviewOptions, chosen []string, result *RunResult, stderr io.Writer) []*typeRun {
+	r := base.r
+	explicit := len(opts.reviewers) > 0
+	goal := goalFlags(opts.plan, opts.part)
+	var runs []*typeRun
+	for i, t := range chosen {
+		run := runType(ctx, s, r, base, t, tests, opts.model, opts.timeout, stderr)
+		// Where Claude cannot review a Codex caller's change, Codex does.
+		if i == 0 && !explicit && t == "claude" && run.out == nil && run.failures == nil && !run.refused {
+			fmt.Fprintf(stderr, "%s: the claude review could not run here: %s; codex reviews in its place\n", name, run.why)
+			t = "codex"
+			run = runType(ctx, s, r, base, t, tests, opts.model, opts.timeout, stderr)
+		}
+		if run.out == nil {
+			if run.failures != nil {
+				runs = append(runs, run)
+			}
+			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
+			reportUnavailable(s, t, goal, run, stderr)
+			continue
+		}
+		runs = append(runs, run)
+		if run.out != nil {
+			result.Reviews = append(result.Reviews, run.out)
+			if ty := reviewerTypes[t]; ty.focus == "" && !ty.guide && !ty.diagram {
+				result.Routes = run.out.Routes
+			}
+		}
+	}
+	return runs
+}
+
+func reportUnavailable(s *source, t, goal string, run *typeRun, stderr io.Writer) {
+	if run.refused {
+		// Its inputs are refused anywhere, --print-prompt too.
+		fmt.Fprintf(stderr, "%s: the %s review could not run: %s\n", name, t, run.why)
+		return
+	}
+	reader := "a sub-agent that only reads"
+	if agent := reviewerTypes[t].agent; agent != "" {
+		reader = "a new `" + agent + "` sub-agent"
+	}
+	fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
+		"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning.\n",
+		name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
+}
+
+func (base *inputs) readDescription(s *source, description string, stdin io.Reader) error {
+	var err error
+	switch {
+	case description != "":
+		if base.description, err = readFile(description, stdin); err != nil {
+			return err
+		}
+		base.descriptionFrom = "the description " + description
+	case s.number != 0:
+		base.description = s.pr.Body
+		base.descriptionFrom = fmt.Sprintf("the description of %s#%d", s.slug(), s.number)
+	}
+	return nil
 }
 
 // typeInputs are base's inputs as type t's reviewer is given them: a
@@ -705,17 +763,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 		}
 		remove()
 		if err == nil {
-			out.Reviewer, out.Focus = t, ty.focus
-			if reply.Model != "" {
-				out.Model = &reply.Model
-			}
-			if ty.focus == "" && !ty.guide {
-				tests.add(out)
-				out.Routes = routeChange(r, out, log)
-			}
-			if in.upgrades != nil {
-				in.upgrades.add(r, out)
-			}
+			completeReview(out, reply, t, r, tests, in, log)
 			run.out = out
 			return run
 		}
@@ -730,4 +778,19 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 	}
 	run.why = "its reply did not fit twice"
 	return run
+}
+
+func completeReview(out *Output, reply *CodexReply, t string, r *span, tests *adequacy, in inputs, log io.Writer) {
+	ty := reviewerTypes[t]
+	out.Reviewer, out.Focus = t, ty.focus
+	if reply.Model != "" {
+		out.Model = &reply.Model
+	}
+	if ty.focus == "" && !ty.guide {
+		tests.add(out)
+		out.Routes = routeChange(r, out, log)
+	}
+	if in.upgrades != nil {
+		in.upgrades.add(r, out)
+	}
 }

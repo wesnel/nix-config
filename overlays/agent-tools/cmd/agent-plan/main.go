@@ -401,28 +401,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return codexUsage(args[1:], stderr)
 	}
 	if args[0] == "statusline" {
-		// Claude Code shows whatever this prints, so a failure prints
-		// nothing.
-		input := readAll(stdin)
-		if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
-			_ = quota.Record(quota.File(), ws) // a reading not recorded waits for the next refresh
-		}
-		var parts []string
-		if line := quota.StatusLine(input, time.Now()); line != "" {
-			parts = append(parts, line)
-		}
-		if c, err := plans.Load(); err == nil {
-			if line := c.StatusLine(input); line != "" {
-				parts = append(parts, line)
-			}
-			if checkpointHint(c, input, time.Now()) != "" {
-				parts = append(parts, "checkpoint · /clear")
-			}
-		}
-		if len(parts) > 0 {
-			fmt.Fprintln(stdout, strings.Join(parts, " · "))
-		}
-		return 0
+		return statusLine(stdin, stdout)
 	}
 	if args[0] == "remind" {
 		// A failure asks for nothing, quietly.
@@ -548,67 +527,20 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if !ok {
 		return code
 	}
-	one := func(values multi) string {
-		if len(values) == 0 {
-			return ""
-		}
-		return values[len(values)-1]
-	}
-	if *unset && command != "postpone" && command != "after" {
-		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
-		return 2
-	}
-	given := map[string]bool{}
-	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	if given["plan"] {
-		if command != "sign-id" {
-			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
-			return 2
-		}
-		if *signPlan == "" {
-			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
-			return 2
-		}
-	}
-	if given["workstream"] && command != "new" {
-		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
-		return 2
-	}
-	if given["base"] && command != "sign-id" {
-		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
-		return 2
-	}
-	if given["reason"] && command != "unfile" {
-		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
-		return 2
-	}
-	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
-		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+	given, ok := commandFlags(command, flags, *unset, *signPlan, stderr)
+	if !ok {
 		return 2
 	}
 	if given["text-file"] {
-		fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
-			"followup": "context"}[command]
-		into := map[string]*string{"text": text, "context": context}[fills]
-		switch {
-		case !ok:
-			fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
-			return 2
-		case given["text"] || given["context"]:
-			fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
-			return 2
+		if code := commandText(command, *textFile, text, context, given, stdout, stderr); code != 0 {
+			return code
 		}
-		data, err := readTextFile(*textFile)
-		if err != nil {
-			return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
-		}
-		*into, given[fills] = data, true
 	}
 	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
 		return 2
 	}
-	branch, session, worktree := one(branches), one(sessions), one(trees)
+	branch, session, worktree := lastValue(branches), lastValue(sessions), lastValue(trees)
 	report := func(result any, err error) int {
 		return cli.Report("agent-plan", result, err, 0, stdout, stderr)
 	}
@@ -620,18 +552,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	// of related plans, then links p to them, saying so on stderr.
 	reportLinking := func(p plans.Plan) func(any, error) int {
 		return func(result any, err error) int {
-			code := report(result, err)
-			if err != nil {
-				return code
-			}
-			linked, err := c.LinkEvidence(p.File(), time.Now())
-			for _, r := range linked {
-				fmt.Fprintf(stderr, "agent-plan: linked %s to %s: %s\n", p.Name, r.Plan, strings.Join(r.Evidence, " "))
-			}
-			if err != nil {
-				fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", err)
-			}
-			return code
+			return reportLinked(c, p, result, err, report, stderr)
 		}
 	}
 	wantPlan := func() (plans.Plan, bool) {
@@ -651,467 +572,75 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	switch command {
 	case "workstream":
-		switch {
-		case len(positional) == 1 && positional[0] == "new" && !*asJSON:
-			return report(c.NewWorkstream(*title, *summary))
-		case len(positional) == 1 && positional[0] == "list" && *title == "" && *summary == "":
-			ws, err := c.Workstreams()
-			if err != nil || *asJSON {
-				return report(ws, err)
-			}
-			for _, w := range ws {
-				fmt.Fprintf(stdout, "- %s (%s)\n", w.Title, w.Name)
-			}
-			return 0
-		}
-		fmt.Fprint(stderr, "agent-plan workstream: takes new --title T [--summary S], or list [--json]\n")
-		return 2
+		return runWorkstream(*title, *summary, *asJSON, c, positional, stdout, stderr, report)
 	case "new":
-		if len(positional) != 0 {
-			fmt.Fprint(stderr, usage)
-			return 2
-		}
-		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}
-		if len(o.Sessions) == 0 {
-			if h, id := plans.EnvSession(); id != "" {
-				o.Sessions = []string{h + ":" + id}
-				if o.Harness == "" {
-					o.Harness = h
-				}
-			}
-		}
-		if len(o.Worktrees) == 0 {
-			if top, _ := checkout(); top != "" && !strings.ContainsAny(top, " \t") {
-				o.Worktrees = []string{top}
-			}
-		}
-		made, err := c.New(o, time.Now())
-		if made.Note != "" {
-			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
-		}
-		if made.Unlinked != "" {
-			fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", made.Unlinked)
-		}
-		return report(made, err)
+		return runNew(plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}, c, positional, stderr, report)
 	case "log":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		e := plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
+		return runLog(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
 			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
-			Command: *run, Dir: *runDir}
-		if *revision != "" {
-			top, _ := checkout()
-			identity, err := plans.CommitIdentity(top, *revision)
-			if err != nil {
-				return report(nil, err)
-			}
-			e.Repository, e.Revision, e.Worktree = identity.Repository, identity.Revision, identity.Worktree
-			if e.Commit != "" && e.Commit != identity.Commit {
-				return report(nil, fmt.Errorf("--commit does not match --revision's subject"))
-			}
-			e.Commit = identity.Commit
-		}
-		return report(p.Log(e, time.Now()))
+			Command: *run, Dir: *runDir}, *revision, report, wantPlan)
 	case "commits":
-		if len(positional) > 1 || len(repos) > 1 {
-			return report(nil, fmt.Errorf("commits takes at most one PLAN and --repo"))
-		}
-		plan := ""
-		if len(positional) == 1 {
-			plan = positional[0]
-		}
-		return report(c.Commits(plans.CommitOptions{Plan: plan, Repository: one(repos), Revision: *revision, Item: *item}))
+		return runCommits(*item, *revision, repos, c, positional, report)
 	case "resolve-commit":
-		if len(positional) != 0 || len(repos) != 1 {
-			return report(nil, fmt.Errorf("resolve-commit takes --repo and --revision, without PLAN"))
-		}
-		return report(c.ResolveCommit(one(repos), *revision))
+		return runResolveCommit(*revision, repos, c, positional, report)
 	case "waiting":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		ws, err := p.Waiting()
-		if err != nil || *asJSON {
-			return report(ws, err)
-		}
-		for _, w := range ws {
-			line := "- " + w.Item + ": `" + w.Command + "`"
-			if w.Dir != "" {
-				line += " in " + w.Dir
-			}
-			if w.Summary != "" {
-				line += " (" + w.Summary + ")"
-			}
-			fmt.Fprintln(stdout, line)
-		}
-		return 0
+		return runWaiting(*asJSON, stdout, report, wantPlan)
 	case "find":
-		if *hook {
-			h := *harness
-			if h == "" {
-				h = "claude"
-			}
-			input := readAll(stdin)
-			var event struct {
-				Name string `json:"hook_event_name"`
-			}
-			if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" && h == "claude" {
-				return hookReport(nil, c.SessionEndHook(input, time.Now()), stdout, stderr)
-			}
-			out, err := c.SessionHook(input, h)
-			return hookReport(out, err, stdout, stderr)
-		}
-		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
-		if o == (plans.FindOptions{}) {
-			session := ""
-			if h, id := plans.EnvSession(); id != "" {
-				session = h + ":" + id
-			}
-			cwd, _ := os.Getwd()
-			if o = plans.Here(session, cwd); o == (plans.FindOptions{}) {
-				return report([]plans.Found{}, nil)
-			}
-		}
-		return report(c.Find(o))
+		return runFind(*harness, *hook, plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}, c, stdin, stdout, stderr, report)
 	case "goal":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		goal, err := p.Goal(*part)
-		if err != nil {
-			return report(nil, err)
-		}
-		io.WriteString(stdout, goal)
-		return 0
+		return runGoal(*part, stdout, report, wantPlan)
 	case "status":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		s, err := p.Status()
-		if err != nil || *format == "json" {
-			return report(s, err)
-		}
-		io.WriteString(stdout, s.Org())
-		return 0
+		return runStatus(*format, stdout, report, wantPlan)
 	case "questions":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		qs, err := p.Questions(*all)
-		if !*waiting {
-			qs = plans.Askable(qs)
-		}
-		switch {
-		case err != nil || *asJSON:
-			return report(qs, err)
-		case *count:
-			fmt.Fprintln(stdout, len(qs))
-		default:
-			io.WriteString(stdout, plans.QuestionsOrg(qs))
-		}
-		return 0
+		return runQuestions(*all, *asJSON, *count, *waiting, stdout, report, wantPlan)
 	case "open":
-		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan open: takes [--kind KIND] [--since TIME] [--json], and no PLAN\n")
-			return 2
-		}
-		f := plans.OpenFilter{Kind: *kind}
-		if *since != "" {
-			if f.Since, err = plans.ParseSince(*since, time.Local); err != nil {
-				return report(nil, err)
-			}
-		}
-		items, err := c.OpenItems(f, time.Now())
-		if items == nil {
-			return report(nil, err)
-		}
-		if *asJSON {
-			report(items, nil)
-		} else {
-			io.WriteString(stdout, plans.OpenItemsOrg(items))
-		}
-		if err != nil {
-			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
-			return 1
-		}
-		return 0
+		return runOpen(*kind, *since, *asJSON, c, positional, stdout, stderr, report)
 	case "brief":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		brief, err := p.Brief(time.Now())
-		if *resume {
-			brief, err = p.ResumeBrief(time.Now(), plans.ResumeLimit)
-		}
-		if err != nil {
-			return report(nil, err)
-		}
-		io.WriteString(stdout, brief)
-		return 0
+		return runBrief(*resume, stdout, report, wantPlan)
 	case "decisions":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		ds, err := p.Decisions(*all)
-		if err != nil || *asJSON {
-			return report(ds, err)
-		}
-		io.WriteString(stdout, plans.DecisionsOrg(ds))
-		return 0
+		return runDecisions(*all, *asJSON, stdout, report, wantPlan)
 	case "ask":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Priority: *priority, Context: *context,
-			Recommendation: *advice, Answer: *answer, Role: *role, Kind: *kind, Alternatives: alternatives, After: after},
-			time.Now()))
+		return runAsk(plans.AskOptions{Part: *part, Question: *question, Priority: *priority, Context: *context,
+			Recommendation: *advice, Answer: *answer, Role: *role, Kind: *kind, Alternatives: alternatives, After: after}, report, wantPlan)
 	case "decide":
-		if len(positional) != 2 {
-			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		return report(p.Decide(positional[1], plans.DecideOptions{Answer: *answer, Drop: *drop, Supersedes: *replaces,
-			Role: *role}, time.Now()))
+		return runDecide(plans.DecideOptions{Answer: *answer, Drop: *drop, Supersedes: *replaces,
+			Role: *role}, c, positional, stderr, report)
 	case "followup":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
-			time.Now()))
+		return runFollowup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part}, report, wantPlan)
 	case "step", "part":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		o := plans.EntryOptions{Section: "Steps", Part: *part, Title: *title, Text: *text, After: after}
-		if command == "part" {
-			if *part != "" || len(repos) > 1 {
-				fmt.Fprint(stderr, "agent-plan part: takes PLAN --title T and one --repo, and no --part: a part's file has no Distribution\n")
-				return 2
-			}
-			o = plans.EntryOptions{Section: "Distribution", Title: *title, Text: *text, After: after, Repo: one(repos),
-				Branch: branch, Worktree: worktree}
-		} else if len(repos)+len(branches)+len(trees) > 0 {
-			fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
-			return 2
-		}
-		return reportLinking(p)(p.AddEntry(o, time.Now()))
+		return runStep(command, plans.EntryOptions{Section: "Steps", Part: *part, Title: *title, Text: *text, After: after,
+			Repo: lastValue(repos), Branch: branch, Worktree: worktree}, len(repos), len(repos)+len(branches)+len(trees), stderr, wantPlan, reportLinking)
 	case "edit":
-		if len(positional) != 2 {
-			fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		var o plans.EditOptions
-		if given["title"] {
-			o.Title = title
-		}
-		if given["text"] {
-			o.Text = text
-		}
-		return reportLinking(p)(p.EditEntry(positional[1], o, time.Now()))
+		return runEdit(title, text, c, positional, given, stderr, report, reportLinking)
 	case "after":
-		if len(positional) < 2 || (len(positional) == 2) != *unset {
-			fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		return report(p.SetAfter(positional[1], positional[2:], time.Now()))
+		return runAfter(*unset, c, positional, stderr, report)
 	case "section":
-		if len(positional) != 2 || !given["text"] {
-			fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification (--text TEXT | --text-file F) [--part P1]\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		return reportLinking(p)(p.SetSection(*part, positional[1], *text, time.Now()))
+		return runSection(*part, *text, c, positional, given, stderr, report, reportLinking)
 	case "reference":
-		if len(positional) != 2 {
-			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		return report(p.Reference(positional[1], *note, time.Now()))
+		return runReference(*note, c, positional, stderr, report)
 	case "link":
-		if len(positional) != 2 {
-			fmt.Fprint(stderr, "agent-plan link: takes PLAN OTHER --why TEXT\n")
-			return 2
-		}
-		return report(c.Link(positional[0], positional[1], *why, time.Now()))
+		return runLink(*why, c, positional, stderr, report)
 	case "postpone":
-		if len(positional) != 2 || (*until == "") == !*unset {
-			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		return report(p.Postpone(positional[1], *until, time.Now()))
+		return runPostpone(*until, *unset, c, positional, stderr, report)
 	case "init":
-		r, err := c.Init()
-		if r.Note != "" {
-			fmt.Fprintf(stderr, "agent-plan: %s\n", r.Note)
-		}
-		return report(r, err)
+		return runInit(c, stderr, report)
 	case "sync":
-		if len(positional) != 0 {
-			fmt.Fprint(stderr, usage)
-			return 2
-		}
-		return report(c.Sync(plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
+		return runSync(*pull, *settle, c, positional, stderr, report)
 	case "own":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		return report(p.SetOwner(worktree, *agent, time.Now()))
+		return runOwn(*agent, worktree, report, wantPlan)
 	case "set":
-		if len(positional) < 2 {
-			fmt.Fprint(stderr, "agent-plan set: takes PLAN NAME [VALUE...] [--part P1]\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		name, values := positional[1], positional[2:]
-		if err := p.SetProperty(*part, name, values, time.Now()); err != nil {
-			return report(nil, err)
-		}
-		return reportLinking(p)(map[string]any{"property": name, "values": values}, nil)
+		return runSet(*part, c, positional, stderr, report, reportLinking)
 	case "related":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		rs, err := c.Related(p.File())
-		if *asJSON {
-			report(rs, nil)
-		} else {
-			for _, r := range rs {
-				state := "soft"
-				if r.Hard {
-					state = "hard"
-				}
-				if r.Linked {
-					state += " linked"
-				}
-				fmt.Fprintf(stdout, "- %s %s (%s): %s\n", state, r.Plan, r.Title, strings.Join(r.Evidence, " "))
-			}
-		}
-		if err != nil {
-			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
-			return 1
-		}
-		return 0
+		return runRelated(*asJSON, c, stdout, stderr, report, wantPlan)
 	case "unfile":
-		if len(positional) != 3 {
-			fmt.Fprint(stderr, "agent-plan unfile: takes PLAN NAME VALUE --reason TEXT [--part P1]\n")
-			return 2
-		}
-		p, err := c.Open(positional[0])
-		if err != nil {
-			return report(nil, err)
-		}
-		name, value := positional[1], positional[2]
-		if err := p.RemoveFromProperty(*part, name, value, *reason, time.Now()); err != nil {
-			return report(nil, err)
-		}
-		return report(map[string]any{"property": name, "removed": value, "reason": *reason}, nil)
+		return runUnfile(*part, *reason, c, positional, stderr, report)
 	case "reseal":
-		p, ok := wantPlan()
-		if !ok {
-			return 2
-		}
-		return report(p.Reseal(time.Now()))
+		return runReseal(report, wantPlan)
 	case "sign-id":
-		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan sign-id: takes [--plan PLAN] [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
-			return 2
-		}
-		if session == "" {
-			_, session = plans.EnvSession()
-		}
-		top, current := checkout()
-		if worktree != "" {
-			top = worktree
-			_, current = checkoutAt(worktree)
-		}
-		if len(branches) == 0 && current != "" {
-			branches = multi{current}
-		}
-		id, err := c.RequestSign(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
-		if err != nil {
-			return report(nil, err)
-		}
-		fmt.Fprintln(stdout, id)
-		return 0
+		return runSignID(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: worktree, Branches: branches, Base: *signBase}, c, positional, stdout, stderr, report)
 	case "sign-result":
-		if len(positional) != 1 {
-			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check] [--wait [--timeout DURATION]]\n")
-			return 2
-		}
-		if *wait {
-			deadline := time.Now().Add(*timeout)
-			for {
-				ds, err := c.SignResults(positional[0], false, time.Now())
-				if err != nil {
-					return report(nil, err)
-				}
-				left := time.Until(deadline)
-				if len(ds) > 0 || left <= 0 {
-					break
-				}
-				time.Sleep(min(signPoll, left))
-			}
-		}
-		ds, err := c.SignResults(positional[0], !*check, time.Now())
-		if err != nil {
-			return report(nil, err)
-		}
-		if len(ds) == 0 {
-			if !*check {
-				fmt.Fprintf(stderr, "agent-plan sign-result: no result of sign-pass %s is logged yet\n", positional[0])
-			}
-			return 1
-		}
-		if !*check {
-			for _, d := range ds {
-				line := d.Line()
-				if d.Delivered {
-					line += " (already delivered)"
-				}
-				fmt.Fprintln(stdout, line)
-			}
-		}
-		return 0
+		return runSignResult(*check, *wait, *timeout, c, positional, stdout, stderr, report)
 	}
 	fmt.Fprint(stderr, usage)
 	return 2
@@ -1136,4 +665,635 @@ func hookReport(out []byte, err error, stdout, stderr io.Writer) int {
 		stdout.Write(append(out, '\n'))
 	}
 	return 0
+}
+
+func statusLine(stdin io.Reader, stdout io.Writer) int {
+	// Claude Code shows whatever this prints, so a failure prints
+	// nothing.
+	input := readAll(stdin)
+	if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
+		_ = quota.Record(quota.File(), ws) // a reading not recorded waits for the next refresh
+	}
+	var parts []string
+	if line := quota.StatusLine(input, time.Now()); line != "" {
+		parts = append(parts, line)
+	}
+	if c, err := plans.Load(); err == nil {
+		if line := c.StatusLine(input); line != "" {
+			parts = append(parts, line)
+		}
+		if checkpointHint(c, input, time.Now()) != "" {
+			parts = append(parts, "checkpoint · /clear")
+		}
+	}
+	if len(parts) > 0 {
+		fmt.Fprintln(stdout, strings.Join(parts, " · "))
+	}
+	return 0
+}
+
+func runWorkstream(title string, summary string, asJSON bool, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+	switch {
+	case len(positional) == 1 && positional[0] == "new" && !asJSON:
+		return report(c.NewWorkstream(title, summary))
+	case len(positional) == 1 && positional[0] == "list" && title == "" && summary == "":
+		ws, err := c.Workstreams()
+		if err != nil || asJSON {
+			return report(ws, err)
+		}
+		for _, w := range ws {
+			fmt.Fprintf(stdout, "- %s (%s)\n", w.Title, w.Name)
+		}
+		return 0
+	}
+	fmt.Fprint(stderr, "agent-plan workstream: takes new --title T [--summary S], or list [--json]\n")
+	return 2
+}
+
+func runNew(o plans.NewOptions, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+
+	if len(o.Sessions) == 0 {
+		if h, id := plans.EnvSession(); id != "" {
+			o.Sessions = []string{h + ":" + id}
+			if o.Harness == "" {
+				o.Harness = h
+			}
+		}
+	}
+	if len(o.Worktrees) == 0 {
+		if top, _ := checkout(); top != "" && !strings.ContainsAny(top, " \t") {
+			o.Worktrees = []string{top}
+		}
+	}
+	made, err := c.New(o, time.Now())
+	if made.Note != "" {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
+	}
+	if made.Unlinked != "" {
+		fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", made.Unlinked)
+	}
+	return report(made, err)
+}
+
+func runLog(e plans.Event, revision string, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+
+	if revision != "" {
+		top, _ := checkout()
+		identity, err := plans.CommitIdentity(top, revision)
+		if err != nil {
+			return report(nil, err)
+		}
+		e.Repository, e.Revision, e.Worktree = identity.Repository, identity.Revision, identity.Worktree
+		if e.Commit != "" && e.Commit != identity.Commit {
+			return report(nil, fmt.Errorf("--commit does not match --revision's subject"))
+		}
+		e.Commit = identity.Commit
+	}
+	return report(p.Log(e, time.Now()))
+}
+
+func runCommits(item string, revision string, repos multi, c plans.Config, positional []string, report func(any, error) int) int {
+	if len(positional) > 1 || len(repos) > 1 {
+		return report(nil, fmt.Errorf("commits takes at most one PLAN and --repo"))
+	}
+	plan := ""
+	if len(positional) == 1 {
+		plan = positional[0]
+	}
+	return report(c.Commits(plans.CommitOptions{Plan: plan, Repository: lastValue(repos), Revision: revision, Item: item}))
+}
+
+func runResolveCommit(revision string, repos multi, c plans.Config, positional []string, report func(any, error) int) int {
+	if len(positional) != 0 || len(repos) != 1 {
+		return report(nil, fmt.Errorf("resolve-commit takes --repo and --revision, without PLAN"))
+	}
+	return report(c.ResolveCommit(lastValue(repos), revision))
+}
+
+func runWaiting(asJSON bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	ws, err := p.Waiting()
+	if err != nil || asJSON {
+		return report(ws, err)
+	}
+	for _, w := range ws {
+		line := "- " + w.Item + ": `" + w.Command + "`"
+		if w.Dir != "" {
+			line += " in " + w.Dir
+		}
+		if w.Summary != "" {
+			line += " (" + w.Summary + ")"
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	return 0
+}
+
+func runFind(harness string, hook bool, o plans.FindOptions, c plans.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+	if hook {
+		h := harness
+		if h == "" {
+			h = "claude"
+		}
+		input := readAll(stdin)
+		var event struct {
+			Name string `json:"hook_event_name"`
+		}
+		if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" && h == "claude" {
+			return hookReport(nil, c.SessionEndHook(input, time.Now()), stdout, stderr)
+		}
+		out, err := c.SessionHook(input, h)
+		return hookReport(out, err, stdout, stderr)
+	}
+	if o == (plans.FindOptions{}) {
+		session := ""
+		if h, id := plans.EnvSession(); id != "" {
+			session = h + ":" + id
+		}
+		cwd, _ := os.Getwd()
+		if o = plans.Here(session, cwd); o == (plans.FindOptions{}) {
+			return report([]plans.Found{}, nil)
+		}
+	}
+	return report(c.Find(o))
+}
+
+func runGoal(part string, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	goal, err := p.Goal(part)
+	if err != nil {
+		return report(nil, err)
+	}
+	io.WriteString(stdout, goal)
+	return 0
+}
+
+func runStatus(format string, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	s, err := p.Status()
+	if err != nil || format == "json" {
+		return report(s, err)
+	}
+	io.WriteString(stdout, s.Org())
+	return 0
+}
+
+func runQuestions(all bool, asJSON bool, count bool, waiting bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	qs, err := p.Questions(all)
+	if !waiting {
+		qs = plans.Askable(qs)
+	}
+	switch {
+	case err != nil || asJSON:
+		return report(qs, err)
+	case count:
+		fmt.Fprintln(stdout, len(qs))
+	default:
+		io.WriteString(stdout, plans.QuestionsOrg(qs))
+	}
+	return 0
+}
+
+func runOpen(kind string, since string, asJSON bool, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+	var err error
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, "agent-plan open: takes [--kind KIND] [--since TIME] [--json], and no PLAN\n")
+		return 2
+	}
+	f := plans.OpenFilter{Kind: kind}
+	if since != "" {
+		if f.Since, err = plans.ParseSince(since, time.Local); err != nil {
+			return report(nil, err)
+		}
+	}
+	items, err := c.OpenItems(f, time.Now())
+	if items == nil {
+		return report(nil, err)
+	}
+	if asJSON {
+		report(items, nil)
+	} else {
+		io.WriteString(stdout, plans.OpenItemsOrg(items))
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runBrief(resume bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	brief, err := p.Brief(time.Now())
+	if resume {
+		brief, err = p.ResumeBrief(time.Now(), plans.ResumeLimit)
+	}
+	if err != nil {
+		return report(nil, err)
+	}
+	io.WriteString(stdout, brief)
+	return 0
+}
+
+func runDecisions(all bool, asJSON bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	ds, err := p.Decisions(all)
+	if err != nil || asJSON {
+		return report(ds, err)
+	}
+	io.WriteString(stdout, plans.DecisionsOrg(ds))
+	return 0
+}
+
+func runAsk(o plans.AskOptions, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	return report(p.Ask(o,
+		time.Now()))
+}
+
+func runDecide(o plans.DecideOptions, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 2 {
+		fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	return report(p.Decide(positional[1], o, time.Now()))
+}
+
+func runFollowup(o plans.FollowupOptions, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	return report(p.Followup(o,
+		time.Now()))
+}
+
+func runStep(command string, o plans.EntryOptions, repoCount, locationCount int, stderr io.Writer, wantPlan func() (plans.Plan, bool), reportLinking func(plans.Plan) func(any, error) int) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+
+	if command == "part" {
+		if o.Part != "" || repoCount > 1 {
+			fmt.Fprint(stderr, "agent-plan part: takes PLAN --title T and one --repo, and no --part: a part's file has no Distribution\n")
+			return 2
+		}
+		o.Section = "Distribution"
+	} else if locationCount > 0 {
+		fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
+		return 2
+	}
+	return reportLinking(p)(p.AddEntry(o, time.Now()))
+}
+
+func runEdit(title *string, text *string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int, reportLinking func(plans.Plan) func(any, error) int) int {
+	if len(positional) != 2 {
+		fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	var o plans.EditOptions
+	if given["title"] {
+		o.Title = title
+	}
+	if given["text"] {
+		o.Text = text
+	}
+	return reportLinking(p)(p.EditEntry(positional[1], o, time.Now()))
+}
+
+func runAfter(unset bool, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) < 2 || (len(positional) == 2) != unset {
+		fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	return report(p.SetAfter(positional[1], positional[2:], time.Now()))
+}
+
+func runSection(part string, text string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int, reportLinking func(plans.Plan) func(any, error) int) int {
+	if len(positional) != 2 || !given["text"] {
+		fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification (--text TEXT | --text-file F) [--part P1]\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	return reportLinking(p)(p.SetSection(part, positional[1], text, time.Now()))
+}
+
+func runReference(note string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 2 {
+		fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	return report(p.Reference(positional[1], note, time.Now()))
+}
+
+func runLink(why string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 2 {
+		fmt.Fprint(stderr, "agent-plan link: takes PLAN OTHER --why TEXT\n")
+		return 2
+	}
+	return report(c.Link(positional[0], positional[1], why, time.Now()))
+}
+
+func runPostpone(until string, unset bool, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 2 || (until == "") == !unset {
+		fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	return report(p.Postpone(positional[1], until, time.Now()))
+}
+
+func runInit(c plans.Config, stderr io.Writer, report func(any, error) int) int {
+	r, err := c.Init()
+	if r.Note != "" {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", r.Note)
+	}
+	return report(r, err)
+}
+
+func runSync(pull bool, settle time.Duration, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	return report(c.Sync(plans.SyncOptions{PullOnly: pull, Settle: settle}))
+}
+
+func runOwn(agent string, worktree string, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	return report(p.SetOwner(worktree, agent, time.Now()))
+}
+
+func runSet(part string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int, reportLinking func(plans.Plan) func(any, error) int) int {
+	if len(positional) < 2 {
+		fmt.Fprint(stderr, "agent-plan set: takes PLAN NAME [VALUE...] [--part P1]\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	name, values := positional[1], positional[2:]
+	if err := p.SetProperty(part, name, values, time.Now()); err != nil {
+		return report(nil, err)
+	}
+	return reportLinking(p)(map[string]any{"property": name, "values": values}, nil)
+}
+
+func runRelated(asJSON bool, c plans.Config, stdout io.Writer, stderr io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	rs, err := c.Related(p.File())
+	if asJSON {
+		report(rs, nil)
+	} else {
+		for _, r := range rs {
+			state := "soft"
+			if r.Hard {
+				state = "hard"
+			}
+			if r.Linked {
+				state += " linked"
+			}
+			fmt.Fprintf(stdout, "- %s %s (%s): %s\n", state, r.Plan, r.Title, strings.Join(r.Evidence, " "))
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runUnfile(part string, reason string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 3 {
+		fmt.Fprint(stderr, "agent-plan unfile: takes PLAN NAME VALUE --reason TEXT [--part P1]\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	name, value := positional[1], positional[2]
+	if err := p.RemoveFromProperty(part, name, value, reason, time.Now()); err != nil {
+		return report(nil, err)
+	}
+	return report(map[string]any{"property": name, "removed": value, "reason": reason}, nil)
+}
+
+func runReseal(report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	return report(p.Reseal(time.Now()))
+}
+
+func runSignID(request plans.SignRequest, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, "agent-plan sign-id: takes [--plan PLAN] [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
+		return 2
+	}
+	if request.Session == "" {
+		_, request.Session = plans.EnvSession()
+	}
+	top, current := checkout()
+	if request.Worktree != "" {
+		top = request.Worktree
+		_, current = checkoutAt(request.Worktree)
+	}
+	if len(request.Branches) == 0 && current != "" {
+		request.Branches = multi{current}
+	}
+	request.Worktree = top
+	id, err := c.RequestSign(request, time.Now())
+	if err != nil {
+		return report(nil, err)
+	}
+	fmt.Fprintln(stdout, id)
+	return 0
+}
+
+func runSignResult(check bool, wait bool, timeout time.Duration, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 1 {
+		fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check] [--wait [--timeout DURATION]]\n")
+		return 2
+	}
+	if wait {
+		if err := awaitSignResult(c, positional[0], timeout); err != nil {
+			return report(nil, err)
+		}
+	}
+	ds, err := c.SignResults(positional[0], !check, time.Now())
+	if err != nil {
+		return report(nil, err)
+	}
+	if len(ds) == 0 {
+		if !check {
+			fmt.Fprintf(stderr, "agent-plan sign-result: no result of sign-pass %s is logged yet\n", positional[0])
+		}
+		return 1
+	}
+	if !check {
+		for _, d := range ds {
+			line := d.Line()
+			if d.Delivered {
+				line += " (already delivered)"
+			}
+			fmt.Fprintln(stdout, line)
+		}
+	}
+	return 0
+}
+
+func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan string, stderr io.Writer) (map[string]bool, bool) {
+	if unset && command != "postpone" && command != "after" {
+		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
+		return nil, false
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["plan"] {
+		if command != "sign-id" {
+			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
+			return nil, false
+		}
+		if signPlan == "" {
+			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
+			return nil, false
+		}
+	}
+	if given["workstream"] && command != "new" {
+		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+		return nil, false
+	}
+	if given["base"] && command != "sign-id" {
+		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
+		return nil, false
+	}
+	if given["reason"] && command != "unfile" {
+		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
+		return nil, false
+	}
+	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+		return nil, false
+	}
+	return given, true
+}
+
+func commandText(command, textFile string, text, context *string, given map[string]bool, stdout, stderr io.Writer) int {
+	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
+		"followup": "context"}[command]
+	into := map[string]*string{"text": text, "context": context}[fills]
+	switch {
+	case !ok:
+		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
+		return 2
+	case given["text"] || given["context"]:
+		fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
+		return 2
+	}
+	data, err := readTextFile(textFile)
+	if err != nil {
+		return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
+	}
+	*into, given[fills] = data, true
+	return 0
+}
+
+func reportLinked(c plans.Config, p plans.Plan, result any, err error, report func(any, error) int, stderr io.Writer) int {
+	code := report(result, err)
+	if err != nil {
+		return code
+	}
+	linked, err := c.LinkEvidence(p.File(), time.Now())
+	for _, r := range linked {
+		fmt.Fprintf(stderr, "agent-plan: linked %s to %s: %s\n", p.Name, r.Plan, strings.Join(r.Evidence, " "))
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", err)
+	}
+	return code
+}
+
+func awaitSignResult(c plans.Config, id string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		ds, err := c.SignResults(id, false, time.Now())
+		if err != nil {
+			return err
+		}
+		left := time.Until(deadline)
+		if len(ds) > 0 || left <= 0 {
+			break
+		}
+		time.Sleep(min(signPoll, left))
+	}
+	return nil
+}
+
+func lastValue(values multi) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
 }

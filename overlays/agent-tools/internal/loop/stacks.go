@@ -106,61 +106,12 @@ func Stack(target string) (any, error) {
 
 // link puts chain, bottom first, into one GitHub stack, as Link describes.
 func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
-	for i := 1; i < len(chain); i++ {
-		below, pr := chain[i-1], chain[i]
-		if pr.BaseRefName != below.HeadRefName {
-			return nil, refuse("#%d is based on %s, not on %s, the branch of #%d, and a GitHub stack is a chain of pull requests "+
-				"each based on the one below; name them bottom first, or change the base with `gh pr edit %d --base %s` "+
-				"once %s is rebased onto %s", pr.Number, pr.BaseRefName, below.HeadRefName, below.Number,
-				pr.Number, below.HeadRefName, pr.HeadRefName, below.HeadRefName)
-		}
+	target, k, err := linkTarget(repo, prs, chain)
+	if err != nil {
+		return nil, err
 	}
-	stacks := make([]*GitHubStack, len(chain))
-	for i, pr := range chain {
-		var err error
-		if stacks[i], err = githubStack(repo, pr.Number); err != nil {
-			return nil, err
-		}
-	}
-	// chain[:k] is already in a stack, and chain[k:] is to be added.
-	k := 0
-	for k < len(chain) && stacks[k] != nil {
-		k++
-	}
-	for i := k; i < len(chain); i++ {
-		if stacks[i] != nil {
-			return nil, refuse("#%d is in GitHub stack #%d, but #%d below it is in none, and a stack is a single line; "+
-				"`pr-loop stack %d` shows it, and unstacking is the operator's call", chain[i].Number, stacks[i].Number,
-				chain[k].Number, chain[i].Number)
-		}
-	}
-	var target *GitHubStack
-	if k > 0 {
-		target = stacks[0]
-		at := position(target, chain[0].Number)
-		for i := 1; i < k; i++ {
-			if stacks[i].Number != target.Number || at+i >= len(target.PRs) || target.PRs[at+i].PR != chain[i].Number {
-				return nil, refuse("#%d and #%d are not next to each other in one GitHub stack; `pr-loop stack %d` shows "+
-					"GitHub's stacks, and unstacking is the operator's call", chain[i-1].Number, chain[i].Number, chain[i].Number)
-			}
-		}
-		if k == len(chain) {
-			return map[string]any{"stack": target.Number, "added": []int{}}, nil
-		}
-		if top := chain[k-1]; at+k != len(target.PRs) { //nolint:gosec // 0 < k <= len(chain) in this branch
-			return nil, refuse(aboveTop, top.Number, target.PRs[at+k].PR, target.Number, top.Number, target.Number)
-		}
-	} else if below := prs[chain[0].BaseRefName]; below != nil {
-		s, err := githubStack(repo, below.Number)
-		if err != nil {
-			return nil, err
-		}
-		if s != nil {
-			if at := position(s, below.Number); at+1 != len(s.PRs) {
-				return nil, refuse(aboveTop, below.Number, s.PRs[at+1].PR, s.Number, below.Number, s.Number)
-			}
-			target = s
-		}
+	if k > 0 && k == len(chain) {
+		return map[string]any{"stack": target.Number, "added": []int{}}, nil
 	}
 	added := []int{}
 	for _, pr := range chain[k:] {
@@ -190,6 +141,80 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{"stack": target.Number, "added": added}, nil
+}
+
+func checkStackChain(chain []*PR) error {
+	for i := 1; i < len(chain); i++ {
+		below, pr := chain[i-1], chain[i]
+		if pr.BaseRefName != below.HeadRefName {
+			return refuse("#%d is based on %s, not on %s, the branch of #%d, and a GitHub stack is a chain of pull requests "+
+				"each based on the one below; name them bottom first, or change the base with `gh pr edit %d --base %s` "+
+				"once %s is rebased onto %s", pr.Number, pr.BaseRefName, below.HeadRefName, below.Number,
+				pr.Number, below.HeadRefName, pr.HeadRefName, below.HeadRefName)
+		}
+	}
+	return nil
+}
+
+func linkTarget(repo *Repo, prs map[string]*PR, chain []*PR) (*GitHubStack, int, error) {
+	if err := checkStackChain(chain); err != nil {
+		return nil, 0, err
+	}
+	stacks := make([]*GitHubStack, len(chain))
+	for i, pr := range chain {
+		var err error
+		if stacks[i], err = githubStack(repo, pr.Number); err != nil {
+			return nil, 0, err
+		}
+	}
+	// chain[:k] is already in a stack, and chain[k:] is to be added.
+	k := 0
+	for k < len(chain) && stacks[k] != nil {
+		k++
+	}
+	for i := k; i < len(chain); i++ {
+		if stacks[i] != nil {
+			return nil, 0, refuse("#%d is in GitHub stack #%d, but #%d below it is in none, and a stack is a single line; "+
+				"`pr-loop stack %d` shows it, and unstacking is the operator's call", chain[i].Number, stacks[i].Number,
+				chain[k].Number, chain[i].Number)
+		}
+	}
+	var target *GitHubStack
+	if k > 0 {
+		target = stacks[0]
+		if err := checkStackPrefix(target, stacks, chain, k); err != nil {
+			return nil, 0, err
+		}
+	} else if below := prs[chain[0].BaseRefName]; below != nil {
+		s, err := githubStack(repo, below.Number)
+		if err != nil {
+			return nil, 0, err
+		}
+		if s != nil {
+			if at := position(s, below.Number); at+1 != len(s.PRs) {
+				return nil, 0, refuse(aboveTop, below.Number, s.PRs[at+1].PR, s.Number, below.Number, s.Number)
+			}
+			target = s
+		}
+	}
+	return target, k, nil
+}
+
+func checkStackPrefix(target *GitHubStack, stacks []*GitHubStack, chain []*PR, k int) error {
+	at := position(target, chain[0].Number)
+	for i := 1; i < k; i++ {
+		if stacks[i].Number != target.Number || at+i >= len(target.PRs) || target.PRs[at+i].PR != chain[i].Number {
+			return refuse("#%d and #%d are not next to each other in one GitHub stack; `pr-loop stack %d` shows "+
+				"GitHub's stacks, and unstacking is the operator's call", chain[i-1].Number, chain[i].Number, chain[i].Number)
+		}
+	}
+	if k == len(chain) {
+		return nil
+	}
+	if top := chain[k-1]; at+k != len(target.PRs) { //nolint:gosec // linkTarget calls this only with 0 < k <= len(chain).
+		return refuse(aboveTop, top.Number, target.PRs[at+k].PR, target.Number, top.Number, target.Number)
+	}
+	return nil
 }
 
 // aboveTop is the refusal to stack onto a PR that is not its stack's top.

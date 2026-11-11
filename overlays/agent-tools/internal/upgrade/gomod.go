@@ -61,12 +61,7 @@ func goMod(file, text string) (goModFile, error) {
 		if m.Toolchain != nil {
 			f.directives["toolchain"] = m.Toolchain.Name
 		}
-		for _, r := range m.Require {
-			if _, ok := f.requires[r.Mod.Path]; !ok {
-				f.order = append(f.order, r.Mod.Path)
-			}
-			f.requires[r.Mod.Path] = r.Mod.Version
-		}
+		f.readRequirements(m.Require)
 		replaces = m.Replace
 	}
 	for _, r := range replaces {
@@ -77,6 +72,15 @@ func goMod(file, text string) (goModFile, error) {
 		f.replaces[left] = goTarget{r.New.Path, r.New.Version}
 	}
 	return f, nil
+}
+
+func (f *goModFile) readRequirements(requires []*modfile.Require) {
+	for _, r := range requires {
+		if _, ok := f.requires[r.Mod.Path]; !ok {
+			f.order = append(f.order, r.Mod.Path)
+		}
+		f.requires[r.Mod.Path] = r.Mod.Version
+	}
 }
 
 // goModulePin is the pin of a module moved from oldPath at oldVersion to
@@ -147,6 +151,12 @@ func goModPins(file, old, next string) []Pin {
 	for _, m := range dropped {
 		pins = append(pins, goModulePin(file+"#"+m, file, m, a.requires[m], "", ""))
 	}
+	pins = append(pins, replacementPins(file, a, b)...)
+	return pins
+}
+
+func replacementPins(file string, a, b goModFile) []Pin {
+	var pins []Pin
 	seen := map[string]bool{}
 	for _, left := range append(slices.Clone(b.replaceOrder), a.replaceOrder...) {
 		before, after := a.replaces[left], b.replaces[left]

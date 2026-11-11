@@ -94,41 +94,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	hint := ""
 	reason := judged(func() string {
-		reason := checkSubagentStash(in)
-		// Claude Code's shell, where its sandbox's exclusions apply; Codex
-		// sets TurnID, and has none, nor has a headless reviewer, whose
-		// hook is --reviewer.
-		claudeShell := in.ToolName == "Bash" && in.TurnID == "" && who == baseline
-		var shell struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &shell)
-		if reason == "" && claudeShell {
-			reason = checkExcludedAlone(shell.Command)
-		}
-		if reason == "" {
-			reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
-		}
-		if reason == "" && claudeShell {
-			reason = checkPlainGh(shell.Command)
-		}
-		if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-			// Codex alone keeps a command's terminal for write_stdin.
-			var args struct {
-				Command string `json:"command"`
-			}
-			json.Unmarshal(in.ToolInput, &args)
-			if terminalReader(args.Command) {
-				reason = readsTerminal
-			}
-		}
-		if reason == "" {
-			reason = checkOwner(in)
-		}
-		// The hint runs git too, so it is judged with the rest.
-		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
-			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd)
-		}
+		reason, context := judgeInput(in, who)
+		hint = context
 		return reason
 	})
 	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason) || in.AgentID == "" && codexTaskOperation(in.ToolName, reason)) {
@@ -160,6 +127,51 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return 0
+}
+
+func judgeInput(in input, who role) (string, string) {
+	if reason := checkSubagentStash(in); reason != "" {
+		return reason, ""
+	}
+	// Claude Code's shell, where its sandbox's exclusions apply; Codex
+	// sets TurnID, and has none, nor has a headless reviewer, whose
+	// hook is --reviewer.
+	claudeShell := in.ToolName == "Bash" && in.TurnID == "" && who == baseline
+	var shell struct {
+		Command string `json:"command"`
+	}
+	json.Unmarshal(in.ToolInput, &shell)
+	if claudeShell {
+		if reason := checkExcludedAlone(shell.Command); reason != "" {
+			return reason, ""
+		}
+	}
+	if reason := check(in.ToolName, in.ToolInput, who, in.Cwd); reason != "" {
+		return reason, ""
+	}
+	if claudeShell {
+		if reason := checkPlainGh(shell.Command); reason != "" {
+			return reason, ""
+		}
+	}
+	if in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
+		// Codex alone keeps a command's terminal for write_stdin.
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &args)
+		if terminalReader(args.Command) {
+			return readsTerminal, ""
+		}
+	}
+	if reason := checkOwner(in); reason != "" {
+		return reason, ""
+	}
+	// The hint runs git too, so it is judged with the rest.
+	if in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit" {
+		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd)
+	}
+	return "", ""
 }
 
 // unreadable is why a call is denied whose event or tool input the guard
@@ -215,31 +227,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		}
 		return command(args.Command, 0, who, dir, checkout, true)
 	case tool == "local_shell":
-		// Codex's local_shell runs an argv, which the guard reads as the
-		// command line that would run it.
-		var args struct {
-			Command          json.RawMessage `json:"command"`
-			WorkingDirectory string          `json:"working_directory"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
-			return unreadable
-		}
-		if filepath.IsAbs(args.WorkingDirectory) {
-			dir = args.WorkingDirectory
-		}
-		var argv []string
-		if json.Unmarshal(args.Command, &argv) != nil {
-			var line string
-			if json.Unmarshal(args.Command, &line) != nil {
-				return unreadable
-			}
-			return command(line, 0, who, dir, checkout, false)
-		}
-		quoted := make([]string, len(argv))
-		for i, a := range argv {
-			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-		}
-		return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
+		return checkLocalShell(toolInput, who, dir, checkout)
 	case tool == "write_stdin":
 		// Codex's write_stdin types chars into a session exec_command
 		// started, which may be a shell; the session runs on its own, so a
@@ -263,6 +251,34 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		return checkFileTool(tool, toolInput, dir)
 	}
 	return ""
+}
+
+func checkLocalShell(toolInput json.RawMessage, who role, dir, checkout string) string {
+	// Codex's local_shell runs an argv, which the guard reads as the
+	// command line that would run it.
+	var args struct {
+		Command          json.RawMessage `json:"command"`
+		WorkingDirectory string          `json:"working_directory"`
+	}
+	if json.Unmarshal(toolInput, &args) != nil {
+		return unreadable
+	}
+	if filepath.IsAbs(args.WorkingDirectory) {
+		dir = args.WorkingDirectory
+	}
+	var argv []string
+	if json.Unmarshal(args.Command, &argv) != nil {
+		var line string
+		if json.Unmarshal(args.Command, &line) != nil {
+			return unreadable
+		}
+		return command(line, 0, who, dir, checkout, false)
+	}
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
 }
 
 // typed prefixes the reason a command line typed into a running session is
@@ -315,42 +331,20 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	top := false
 	v := visitor{
 		script: func(text string) string {
-			for _, cwd := range w.here {
-				if reason := command(text, depth+1, who, cwd, checkout, bg); reason != "" {
-					return reason
-				}
-			}
-			return ""
+			return commandsInDirs(text, depth+1, who, w.here, checkout, bg)
 		},
 		call: func(c call) string {
-			if p := c.named(); len(p.words) > 0 && !p.expands[0] && (p.words[0] == "cd" || p.words[0] == "pushd") {
-				// Redirections before cd open their files where the
-				// command starts, before it changes directory.
-				if len(p.words) < len(c.words) {
-					for _, cwd := range w.here {
-						if reason := program(c, who, files, cwd, checkout); reason != "" {
-							return reason
-						}
-					}
-				}
-				w.cd(p, end)
-				return ""
+			if changed, reason := checkDirectoryChange(c, &w, who, files, checkout, end); changed {
+				return reason
 			}
 			if !bg && longSleep(c.named()) {
 				return sleeping
 			}
 			c.assigned = assigned
-			if top && len(c.words) == 0 {
-				assigned = append(assigned, c.env...)
-			} else if top && !c.expands[0] && c.words[0] == "unset" {
-				assigned = unset(assigned, c.words[1:])
+			if top {
+				assigned = commandAssignments(c, assigned)
 			}
-			for _, cwd := range w.here {
-				if reason := program(c, who, files, cwd, checkout); reason != "" {
-					return reason
-				}
-			}
-			return ""
+			return programInDirs(c, who, files, w.here, checkout)
 		},
 	}
 	for i, c := range calls {
@@ -360,6 +354,50 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			return reason
 		}
 		w.next(end)
+	}
+	return ""
+}
+
+func commandsInDirs(text string, depth int, who role, dirs []string, checkout string, background bool) string {
+	for _, cwd := range dirs {
+		if reason := command(text, depth, who, cwd, checkout, background); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func commandAssignments(c call, assigned []string) []string {
+	if len(c.words) == 0 {
+		return append(assigned, c.env...)
+	}
+	if !c.expands[0] && c.words[0] == "unset" {
+		return unset(assigned, c.words[1:])
+	}
+	return assigned
+}
+
+func checkDirectoryChange(c call, w *cwds, who role, files, checkout, end string) (bool, string) {
+	p := c.named()
+	if len(p.words) > 0 && !p.expands[0] && (p.words[0] == "cd" || p.words[0] == "pushd") {
+		// Redirections before cd open their files where the
+		// command starts, before it changes directory.
+		if len(p.words) < len(c.words) {
+			if reason := programInDirs(c, who, files, w.here, checkout); reason != "" {
+				return true, reason
+			}
+		}
+		w.cd(p, end)
+		return true, ""
+	}
+	return false, ""
+}
+
+func programInDirs(c call, who role, files string, dirs []string, checkout string) string {
+	for _, cwd := range dirs {
+		if reason := program(c, who, files, cwd, checkout); reason != "" {
+			return reason
+		}
 	}
 	return ""
 }
@@ -416,13 +454,7 @@ func cdTarget(c call, cwd string) string {
 // from a call made in checkout. The rules after checkSession go by the
 // program, which follows any redirections before it (call.named).
 func program(c call, who role, files, dir, checkout string) string {
-	if reason := checkEnv(c.env); reason != "" {
-		return reason
-	}
-	if reason := checkNgrokEnv(c); reason != "" {
-		return reason
-	}
-	if reason := checkLoopStart(c.named(), dir); reason != "" {
+	if reason := checkCallEnvironment(c, dir); reason != "" {
 		return reason
 	}
 	if len(c.words) == 0 || c.expands[0] && c.named().expands[0] {
@@ -467,6 +499,19 @@ func program(c call, who role, files, dir, checkout string) string {
 	return ""
 }
 
+func checkCallEnvironment(c call, dir string) string {
+	if reason := checkEnv(c.env); reason != "" {
+		return reason
+	}
+	if reason := checkNgrokEnv(c); reason != "" {
+		return reason
+	}
+	if reason := checkLoopStart(c.named(), dir); reason != "" {
+		return reason
+	}
+	return ""
+}
+
 const githubAPI = "Writes to GitHub's API go through gh or pr-loop, which the guard can check. Use `pr-loop` or a `gh` command, or put the call in your report for the operator."
 
 // githubAPIWrite reports whether an HTTP client's arguments send something
@@ -479,64 +524,81 @@ func githubAPIWrite(name string, args []string) bool {
 	if !github {
 		return false
 	}
-	read := func(method string) bool {
-		method = strings.ToUpper(method)
-		return method == "GET" || method == "HEAD" || method == "OPTIONS"
-	}
 	switch name {
 	case "curl":
-		for i, a := range args {
-			switch {
-			case a == "-X" || a == "--request":
-				if i+1 < len(args) && !read(args[i+1]) {
-					return true
-				}
-			case strings.HasPrefix(a, "--request="):
-				if !read(strings.TrimPrefix(a, "--request=")) {
-					return true
-				}
-			case strings.HasPrefix(a, "-X"):
-				if !read(a[2:]) {
-					return true
-				}
-			case strings.HasPrefix(a, "--data"), strings.HasPrefix(a, "--form"), strings.HasPrefix(a, "--json"),
-				strings.HasPrefix(a, "--upload-file"), strings.HasPrefix(a, "-d"), strings.HasPrefix(a, "-F"),
-				strings.HasPrefix(a, "-T"):
-				return true
-			}
-		}
+		return curlWrites(args)
 	case "wget":
-		for i, a := range args {
-			switch {
-			case strings.HasPrefix(a, "--post-"), strings.HasPrefix(a, "--body-"):
+		return wgetWrites(args)
+	default:
+		return httpieWrites(args)
+	}
+}
+
+func readMethod(method string) bool {
+	method = strings.ToUpper(method)
+	return method == "GET" || method == "HEAD" || method == "OPTIONS"
+}
+
+func curlWrites(args []string) bool {
+	for i, a := range args {
+		switch {
+		case a == "-X" || a == "--request":
+			if i+1 < len(args) && !readMethod(args[i+1]) {
 				return true
-			case a == "--method":
-				if i+1 < len(args) && !read(args[i+1]) {
-					return true
-				}
-			case strings.HasPrefix(a, "--method="):
-				if !read(strings.TrimPrefix(a, "--method=")) {
-					return true
-				}
+			}
+		case strings.HasPrefix(a, "--request="):
+			if !readMethod(strings.TrimPrefix(a, "--request=")) {
+				return true
+			}
+		case strings.HasPrefix(a, "-X"):
+			if !readMethod(a[2:]) {
+				return true
+			}
+		case strings.HasPrefix(a, "--data"), strings.HasPrefix(a, "--form"), strings.HasPrefix(a, "--json"),
+			strings.HasPrefix(a, "--upload-file"), strings.HasPrefix(a, "-d"), strings.HasPrefix(a, "-F"),
+			strings.HasPrefix(a, "-T"):
+			return true
+		}
+	}
+
+	return false
+}
+
+func wgetWrites(args []string) bool {
+	for i, a := range args {
+		switch {
+		case strings.HasPrefix(a, "--post-"), strings.HasPrefix(a, "--body-"):
+			return true
+		case a == "--method":
+			if i+1 < len(args) && !readMethod(args[i+1]) {
+				return true
+			}
+		case strings.HasPrefix(a, "--method="):
+			if !readMethod(strings.TrimPrefix(a, "--method=")) {
+				return true
 			}
 		}
-	default: // httpie and xh: [METHOD] URL [ITEM...]
-		positional := 0
-		for _, a := range args {
-			if strings.HasPrefix(a, "-") {
-				continue
-			}
-			positional++
-			if positional == 1 && httpMethod.MatchString(a) {
-				if !read(a) {
-					return true
-				}
-				continue
-			}
-			// A data or file item; `==` is a query parameter.
-			if dataItem.MatchString(a) {
+	}
+
+	return false
+}
+
+func httpieWrites(args []string) bool {
+	positional := 0
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional++
+		if positional == 1 && httpMethod.MatchString(a) {
+			if !readMethod(a) {
 				return true
 			}
+			continue
+		}
+		// A data or file item; `==` is a query parameter.
+		if dataItem.MatchString(a) {
+			return true
 		}
 	}
 	return false
@@ -628,24 +690,31 @@ func shellAliasSet(args []string, expands []bool, fed bool) bool {
 		if !alias && !(i < len(expands) && expands[i]) {
 			continue
 		}
-		valued, input := false, false
-		for j := i + 1; j < len(args); j++ {
-			if strings.HasPrefix(strings.TrimSpace(args[j]), "!") || j < len(expands) && expands[j] {
-				return true
-			}
-			// A redirection, and the file a bare one names, is no value.
-			if m := anyRedirect.FindString(args[j]); m != "" {
-				input = input || strings.Contains(m, "<")
-				if m == args[j] {
-					j++
-				}
-				continue
-			}
-			valued = valued || !strings.HasPrefix(args[j], "-")
-		}
-		if alias && !valued && !unsets && (fed || input) {
+		if shellAliasValue(args[i+1:], expands[min(i+1, len(expands)):], alias, unsets, fed) {
 			return true
 		}
+	}
+	return false
+}
+
+func shellAliasValue(args []string, expands []bool, alias, unsets, fed bool) bool {
+	valued, input := false, false
+	for j := 0; j < len(args); j++ {
+		if strings.HasPrefix(strings.TrimSpace(args[j]), "!") || j < len(expands) && expands[j] {
+			return true
+		}
+		// A redirection, and the file a bare one names, is no value.
+		if m := anyRedirect.FindString(args[j]); m != "" {
+			input = input || strings.Contains(m, "<")
+			if m == args[j] {
+				j++
+			}
+			continue
+		}
+		valued = valued || !strings.HasPrefix(args[j], "-")
+	}
+	if alias && !valued && !unsets && (fed || input) {
+		return true
 	}
 	return false
 }
@@ -697,24 +766,8 @@ func gitConfigAlias(path, dir, text string) string {
 // its links resolved, in any case where names fold it, for files and
 // directories that are not there yet.
 func gitConfigFile(path, dir string) bool {
-	if filepath.IsAbs(path) {
-		config := os.Getenv("XDG_CONFIG_HOME")
-		if !filepath.IsAbs(config) {
-			config = filepath.Join(home, ".config")
-		}
-		known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
-		dirs, complete := gitDirsFor(path, dir)
-		if !complete {
-			return true // a git directory the guard did not look at may hold it
-		}
-		for _, g := range dirs {
-			known = append(known, gitDirConfigs(g)...)
-		}
-		for _, k := range known {
-			if Reaches(path, k, false) {
-				return true
-			}
-		}
+	if filepath.IsAbs(path) && knownGitConfig(path, dir) {
+		return true
 	}
 	for _, p := range []string{filepath.Clean(path), physical(path)} {
 		if foldsCase {
@@ -724,6 +777,27 @@ func gitConfigFile(path, dir string) bool {
 		if strings.Contains(base, "gitconfig") ||
 			(base == "config" || base == "config.worktree" || !ascii(base)) && (parent == ".git" || parent == "git" ||
 				filepath.Base(filepath.Dir(filepath.Dir(p))) == "worktrees" || inModules(filepath.Dir(p))) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownGitConfig(path, dir string) bool {
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(config) {
+		config = filepath.Join(home, ".config")
+	}
+	known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
+	dirs, complete := gitDirsFor(path, dir)
+	if !complete {
+		return true // a git directory the guard did not look at may hold it
+	}
+	for _, g := range dirs {
+		known = append(known, gitDirConfigs(g)...)
+	}
+	for _, k := range known {
+		if Reaches(path, k, false) {
 			return true
 		}
 	}
@@ -807,16 +881,21 @@ func gitDirsFor(path, dir string) (dirs []string, complete bool) {
 			break
 		}
 	}
-	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
-			if out, ok := (gitState{dir: dir}).run("rev-parse", "--path-format=absolute", "--git-dir",
-				"--git-common-dir"); ok {
-				for _, g := range strings.Split(out, "\n") {
-					subs, all := submoduleGitDirs(g)
-					dirs, complete = append(append(dirs, g), subs...), complete && all
-				}
-			}
-		}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return dirs, complete
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st.Nlink <= 1 {
+		return dirs, complete
+	}
+	out, ok := (gitState{dir: dir}).run("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	if !ok {
+		return dirs, complete
+	}
+	for _, g := range strings.Split(out, "\n") {
+		subs, all := submoduleGitDirs(g)
+		dirs, complete = append(append(dirs, g), subs...), complete && all
 	}
 	return dirs, complete
 }
@@ -1097,37 +1176,9 @@ func branchWrites(args []string) bool {
 // the hook's directory. expands says which words the shell expands, and
 // fed that xargs adds more.
 func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
-	i := 1
-	var config []string // the -c and --config-env options, for gitState.signs
-	located := false    // --git-dir or --work-tree names the repository
-	// Where git runs, as it reaches it: each -C a chdir, through links.
-	physical := dir
-	for i < len(words) && strings.HasPrefix(words[i], "-") {
-		// Configuration given on the command line.
-		key := ""
-		switch w := words[i]; {
-		case (w == "-c" || w == "--config-env") && i+1 < len(words):
-			key, _, _ = strings.Cut(words[i+1], "=")
-			config = append(config, w, words[i+1])
-		case strings.HasPrefix(w, "--config-env="):
-			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
-			config = append(config, w)
-		case w == "-C" && i+1 < len(words):
-			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
-				dir = ""
-			}
-			physical = physicalPath(physical, shellPath(words[i+1], i+1 < len(expands) && expands[i+1]))
-		case w == "--git-dir" || w == "--work-tree" || strings.HasPrefix(w, "--git-dir=") || strings.HasPrefix(w, "--work-tree="):
-			dir = ""
-			located = true
-		}
-		if reason := checkOneCommandKey(key); reason != "" {
-			return reason
-		}
-		if gitValueFlags[words[i]] {
-			i++
-		}
-		i++
+	i, config, located, dir, physical, reason := gitInvocationOptions(words, expands, dir)
+	if reason != "" {
+		return reason
 	}
 	if i >= len(words) {
 		return ""
@@ -1154,16 +1205,44 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
 	}
-	has := func(flags ...string) bool {
-		for _, w := range rest {
-			for _, f := range flags {
-				if w == f || strings.HasPrefix(w, f+"=") {
-					return true
-				}
+	return checkGitOperation(sub, rest, expands[min(i+1, len(expands)):], gitState{dir: dir, config: config, env: env}, fed)
+}
+
+func gitInvocationOptions(words []string, expands []bool, dir string) (i int, config []string, located bool, logical, physical, reason string) {
+	i = 1
+	// Where git runs, as it reaches it: each -C a chdir, through links.
+	physical = dir
+	for i < len(words) && strings.HasPrefix(words[i], "-") {
+		// Configuration given on the command line.
+		key := ""
+		switch w := words[i]; {
+		case (w == "-c" || w == "--config-env") && i+1 < len(words):
+			key, _, _ = strings.Cut(words[i+1], "=")
+			config = append(config, w, words[i+1])
+		case strings.HasPrefix(w, "--config-env="):
+			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
+			config = append(config, w)
+		case w == "-C" && i+1 < len(words):
+			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
+				dir = ""
 			}
+			physical = physicalPath(physical, shellPath(words[i+1], i+1 < len(expands) && expands[i+1]))
+		case w == "--git-dir" || w == "--work-tree" || strings.HasPrefix(w, "--git-dir=") || strings.HasPrefix(w, "--work-tree="):
+			dir = ""
+			located = true
 		}
-		return false
+		if reason := checkOneCommandKey(key); reason != "" {
+			return i, config, located, dir, physical, reason
+		}
+		if gitValueFlags[words[i]] {
+			i++
+		}
+		i++
 	}
+	return i, config, located, dir, physical, ""
+}
+
+func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fed bool) string {
 	switch {
 	case sub == "credential" && len(rest) > 0 && rest[0] == "fill",
 		sub == "credential-osxkeychain" && len(rest) > 0 && rest[0] == "get":
@@ -1172,43 +1251,50 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		return keyTouch
 	case sub == "push":
 		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
-	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):
+	case overSSH(sub, rest, g):
 		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
 		return remotes
-	case has("--no-verify") || sub == "commit" && has("-n"):
+	case hasFlag(rest, "--no-verify") || sub == "commit" && hasFlag(rest, "-n"):
 		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for the operator."
 	case sub == "tag" && tagWrites(rest):
 		return "Tags are published history, which is the operator's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for the operator."
 	case sub == "config" && !configRead(rest):
-		if shellAliasSet(rest, expands[min(i+1, len(expands)):], fed) {
-			return shellAlias
-		}
-		for _, w := range rest {
-			key := strings.ToLower(w)
-			switch {
-			case strings.HasPrefix(key, "pr-loop."):
-				return "pr-loop.* settings are the operator's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for the operator."
-			case key == "user.signingkey" || strings.HasPrefix(key, "gpg."):
-				// In any file, --worktree included: a program named here runs
-				// when the operator signs, and a key names whose
-				// signatures count as theirs.
-				return "Signing settings say which key signs for the operator and which program signs and checks, so they are the operator's to change. Commit unsigned with `git -c commit.gpgsign=false commit`, and put the `git config` command you propose in the report for the operator."
-			case includeKey(key):
-				return includeConfig
-			case remoteURL.MatchString(key):
-				return remotes
-			}
-			if reason := checkConfigKey(key); reason != "" {
-				return reason
-			}
-			if !has("--worktree") && sharedKeys.MatchString(key) {
-				return sharedConfig
-			}
+		if reason := checkGitConfigWrite(rest, expands, fed); reason != "" {
+			return reason
 		}
 	}
-	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
+	if reason := checkSigning(sub, rest, g); reason != "" {
 		return reason
+	}
+	return ""
+}
+
+func checkGitConfigWrite(rest []string, expands []bool, fed bool) string {
+	if shellAliasSet(rest, expands, fed) {
+		return shellAlias
+	}
+	for _, w := range rest {
+		key := strings.ToLower(w)
+		switch {
+		case strings.HasPrefix(key, "pr-loop."):
+			return "pr-loop.* settings are the operator's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for the operator."
+		case key == "user.signingkey" || strings.HasPrefix(key, "gpg."):
+			// In any file, --worktree included: a program named here runs
+			// when the operator signs, and a key names whose
+			// signatures count as theirs.
+			return "Signing settings say which key signs for the operator and which program signs and checks, so they are the operator's to change. Commit unsigned with `git -c commit.gpgsign=false commit`, and put the `git config` command you propose in the report for the operator."
+		case includeKey(key):
+			return includeConfig
+		case remoteURL.MatchString(key):
+			return remotes
+		}
+		if reason := checkConfigKey(key); reason != "" {
+			return reason
+		}
+		if !hasFlag(rest, "--worktree") && sharedKeys.MatchString(key) {
+			return sharedConfig
+		}
 	}
 	return ""
 }
@@ -1341,20 +1427,6 @@ func configFileEntries(path string) (entries [][2]string, reason string) {
 // writes outside it, as git reaches each from dir.
 func gitTargets(sub string, args []string, expands []bool, dir string) (repo string, outputs []string) {
 	path := func(j int) string { return physicalPath(dir, shellPath(args[j], j < len(expands) && expands[j])) }
-	// The path an option at j gives, as `-o X`, `-oX`, `--long X` or
-	// `--long=X`; short may be "".
-	valueOf := func(j int, short, long string) (string, bool) {
-		a := args[j]
-		switch {
-		case (short != "" && a == short || a == long) && j+1 < len(args):
-			return path(j + 1), true
-		case strings.HasPrefix(a, long+"="):
-			return physicalPath(dir, shellPath(strings.TrimPrefix(a, long+"="), j < len(expands) && expands[j])), true
-		case short != "" && len(a) > len(short) && strings.HasPrefix(a, short) && !strings.HasPrefix(a, "--"):
-			return physicalPath(dir, shellPath(a[len(short):], j < len(expands) && expands[j])), true
-		}
-		return "", false
-	}
 	type option struct{ short, long string }
 	writes := []option{{"", "--output"}}
 	switch sub {
@@ -1369,7 +1441,7 @@ func gitTargets(sub string, args []string, expands []bool, dir string) (repo str
 	}
 	for j := range args {
 		for _, o := range writes {
-			if p, ok := valueOf(j, o.short, o.long); ok {
+			if p, ok := gitOutputOption(args, expands, dir, j, o.short, o.long); ok {
 				outputs = append(outputs, p)
 			}
 		}
@@ -1393,6 +1465,21 @@ func gitTargets(sub string, args []string, expands []bool, dir string) (repo str
 		outputs = append(outputs, path(positional[1]))
 	}
 	return repo, outputs
+}
+
+// gitOutputOption reads the path given by an option and its attached or next-word value.
+// short may be empty; returned paths follow shell expansion and filesystem links.
+func gitOutputOption(args []string, expands []bool, dir string, j int, short, long string) (string, bool) {
+	a := args[j]
+	switch {
+	case (short != "" && a == short || a == long) && j+1 < len(args):
+		return physicalPath(dir, shellPath(args[j+1], j+1 < len(expands) && expands[j+1])), true
+	case strings.HasPrefix(a, long+"="):
+		return physicalPath(dir, shellPath(strings.TrimPrefix(a, long+"="), j < len(expands) && expands[j])), true
+	case short != "" && len(a) > len(short) && strings.HasPrefix(a, short) && !strings.HasPrefix(a, "--"):
+		return physicalPath(dir, shellPath(a[len(short):], j < len(expands) && expands[j])), true
+	}
+	return "", false
 }
 
 // gitPositionals are the indexes of the arguments of git's command sub
@@ -1608,16 +1695,7 @@ var ghEditFlags = map[string]bool{"--base": true, "-B": true, "--title": true, "
 // checkBaselineGh keeps every session from the GitHub changes that are
 // the operator's to make.
 func checkBaselineGh(args []string, expanded []bool, workspace string) string {
-	var words []string
-	for i := 0; i < len(args) && len(words) < 2; i++ {
-		switch a := args[i]; {
-		case a == "-R" || a == "--repo" || a == "--hostname":
-			i++
-		case strings.HasPrefix(a, "-"):
-		default:
-			words = append(words, a)
-		}
-	}
+	words := ghCommandWords(args)
 	group, verb := "", ""
 	if len(words) > 0 {
 		group = words[0]
@@ -1625,64 +1703,20 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	if len(words) > 1 {
 		verb = words[1]
 	}
-	has := func(flags ...string) bool {
-		for _, a := range args {
-			for _, f := range flags {
-				if a == f || strings.HasPrefix(a, f+"=") {
-					return true
-				}
-			}
-		}
-		return false
-	}
 	switch {
 	case group == "api":
 		at := slices.Index(args, "api")
 		return checkAPI(args[at+1:], expanded[at+1:], workspace, ghAPIWrite)
-	case group == "auth" && verb == "status" && has("-t", "--show-token"):
+	case group == "auth" && verb == "status" && hasFlag(args, "-t", "--show-token"):
 		return ghAuth
 	case group == "auth" && !ghReads[group][verb]:
 		return ghAuth
 	case group == "pr" && verb == "create":
-		// The last --draft or -d decides, and a value must parse as true.
-		draft := false
-		for _, a := range args {
-			name, value, valued := strings.Cut(a, "=")
-			if name != "--draft" && name != "-d" {
-				continue
-			}
-			draft = true
-			if valued {
-				draft, _ = strconv.ParseBool(value)
-			}
-		}
-		if draft {
-			return ""
-		}
-		return ghDraft
+		return checkGhCreate(args)
 	case group == "pr" && verb == "edit":
-		after := false
-		for i := 0; i < len(args); i++ {
-			a := args[i]
-			if !after {
-				after = a == "edit"
-				continue
-			}
-			if !strings.HasPrefix(a, "-") {
-				continue
-			}
-			name, _, attached := strings.Cut(a, "=")
-			value, known := ghEditFlags[name]
-			if !known {
-				return ghEdit
-			}
-			if value && !attached {
-				i++
-			}
-		}
-		return ""
+		return checkGhEdit(args)
 	case group == "pr" && verb == "ready":
-		if has("--undo") {
+		if hasFlag(args, "--undo") {
 			return ""
 		}
 		return ghOperatorsCall
@@ -1701,6 +1735,62 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	return "`gh " + group + " " + verb + "` changes GitHub in a way that is the operator's call. Put the command in your report for the operator."
 }
 
+func ghCommandWords(args []string) []string {
+	var words []string
+	for i := 0; i < len(args) && len(words) < 2; i++ {
+		switch a := args[i]; {
+		case a == "-R" || a == "--repo" || a == "--hostname":
+			i++
+		case strings.HasPrefix(a, "-"):
+		default:
+			words = append(words, a)
+		}
+	}
+	return words
+}
+
+func checkGhCreate(args []string) string {
+	// The last --draft or -d decides, and a value must parse as true.
+	draft := false
+	for _, a := range args {
+		name, value, valued := strings.Cut(a, "=")
+		if name != "--draft" && name != "-d" {
+			continue
+		}
+		draft = true
+		if valued {
+			draft, _ = strconv.ParseBool(value)
+		}
+	}
+	if draft {
+		return ""
+	}
+	return ghDraft
+}
+
+func checkGhEdit(args []string) string {
+	after := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !after {
+			after = a == "edit"
+			continue
+		}
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, _, attached := strings.Cut(a, "=")
+		value, known := ghEditFlags[name]
+		if !known {
+			return ghEdit
+		}
+		if value && !attached {
+			i++
+		}
+	}
+	return ""
+}
+
 const graphQLMutation = "GraphQL mutations go through pr-loop. Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; " +
 	"any other write goes in the report for the operator."
 
@@ -1717,16 +1807,8 @@ func checkGraphQL(args []string, expanded []bool, workspace string) string {
 		return graphQLMutation
 	}
 	for i := 0; i < len(args); i++ {
-		flag, value, at := args[i], "", i
-		switch {
-		case strings.HasPrefix(flag, "--") && strings.Contains(flag, "="):
-			flag, value, _ = strings.Cut(flag, "=")
-		case len(flag) > 2 && (flag[:2] == "-f" || flag[:2] == "-F"):
-			flag, value = flag[:2], flag[2:]
-		case ghAPIValueFlags[flag] && i+1 < len(args):
-			i++
-			value, at = args[i], i
-		}
+		flag, value, at, next := apiOption(args, i)
+		i = next
 		var file string
 		switch flag {
 		case "-f", "-F", "--field", "--raw-field":
@@ -1757,6 +1839,20 @@ func checkGraphQL(args []string, expanded []bool, workspace string) string {
 		}
 	}
 	return ""
+}
+
+func apiOption(args []string, i int) (flag, value string, at, next int) {
+	flag, value, at = args[i], "", i
+	switch {
+	case strings.HasPrefix(flag, "--") && strings.Contains(flag, "="):
+		flag, value, _ = strings.Cut(flag, "=")
+	case len(flag) > 2 && (flag[:2] == "-f" || flag[:2] == "-F"):
+		flag, value = flag[:2], flag[2:]
+	case ghAPIValueFlags[flag] && i+1 < len(args):
+		i++
+		value, at = args[i], i
+	}
+	return flag, value, at, i
 }
 
 // readQuery reads a regular file of at most a mebibyte that resolves, through

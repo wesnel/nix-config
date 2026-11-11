@@ -115,24 +115,7 @@ func (r *Range) Render() ([]byte, error) {
 
 	w.line("** Findings")
 	for _, f := range r.Findings {
-		w.line("*** " + string(f.State) + " " + f.ID)
-		w.props("TITLE", value(f.Title, TitleCap), "REVIEWER", value(f.Reviewer, ValueCap), "ROUND", itoa(f.Round),
-			"KIND", value(f.Kind, ValueCap), "PATH", pathText(f.Path), "LINE", itoa(f.Line), "END_LINE", itoa(f.EndLine),
-			"SIDE", f.Side, "OUTCOME_TARGET", value(f.OutcomeTarget, ValueCap))
-		if validPath(f.Path) && f.Line > 0 {
-			at := r.Head
-			if f.Side == "old" {
-				at = r.Base
-			}
-			w.line(link(f.Path, f.Line, at, span(f.Path, f.Line, f.EndLine)))
-		}
-		w.block(freeText(f.Evidence, TextCap))
-		// A reason that cleans to nothing writes no Outcome: an empty one
-		// would read back as no reason, and render differently.
-		if reason := freeText(f.Reason, TextCap); reason != "" {
-			w.line("**** Outcome")
-			w.block(reason)
-		}
+		w.finding(f, r.Base, r.Head)
 	}
 
 	w.line("** Rounds")
@@ -154,6 +137,27 @@ func (r *Range) Render() ([]byte, error) {
 		}
 	}
 	return w.bytes(), nil
+}
+
+func (w *writer) finding(f Finding, base, head string) {
+	w.line("*** " + string(f.State) + " " + f.ID)
+	w.props("TITLE", value(f.Title, TitleCap), "REVIEWER", value(f.Reviewer, ValueCap), "ROUND", itoa(f.Round),
+		"KIND", value(f.Kind, ValueCap), "PATH", pathText(f.Path), "LINE", itoa(f.Line), "END_LINE", itoa(f.EndLine),
+		"SIDE", f.Side, "OUTCOME_TARGET", value(f.OutcomeTarget, ValueCap))
+	if validPath(f.Path) && f.Line > 0 {
+		at := head
+		if f.Side == "old" {
+			at = base
+		}
+		w.line(link(f.Path, f.Line, at, span(f.Path, f.Line, f.EndLine)))
+	}
+	w.block(freeText(f.Evidence, TextCap))
+	// A reason that cleans to nothing writes no Outcome: an empty one
+	// would read back as no reason, and render differently.
+	if reason := freeText(f.Reason, TextCap); reason != "" {
+		w.line("**** Outcome")
+		w.block(reason)
+	}
 }
 
 // Render writes the pull request's record, or says which value it cannot
@@ -193,24 +197,16 @@ func (p *PR) Render() ([]byte, error) {
 // check refuses what the renderer cannot write as given: the values that go
 // into headings, links and properties verbatim.
 func (r *Range) check() error {
-	owner, repo, ok := strings.Cut(r.Repo, "/")
-	switch {
-	case !ok || checkRepo(owner, repo) != nil:
-		return fmt.Errorf("record: %q is not a GitHub owner/name", r.Repo)
-	case !sha.MatchString(r.Base) || !sha.MatchString(r.Head):
-		return fmt.Errorf("record: a range needs full SHAs, got %q..%q", r.Base, r.Head)
-	case r.PR < 0:
-		return fmt.Errorf("record: %d is not a pull request number", r.PR)
+	if err := r.checkHeader(); err != nil {
+		return err
 	}
 	ids := ids{}
 	for _, c := range r.Walkthrough {
 		if err := ids.add(c.ID); err != nil {
 			return err
 		}
-		for _, h := range c.Hunks {
-			if h.NewStart < 0 || h.NewLines < 0 || h.OldStart < 0 || h.OldLines < 0 {
-				return fmt.Errorf("record: chunk %s's hunk %q has a negative line or count", c.ID, h.Path)
-			}
+		if err := c.check(); err != nil {
+			return err
 		}
 	}
 	for _, d := range r.Diagrams {
@@ -222,13 +218,8 @@ func (r *Range) check() error {
 		if err := ids.add(f.ID); err != nil {
 			return err
 		}
-		switch {
-		case !states[f.State]:
-			return fmt.Errorf("record: finding %s has state %q, not one of the #+TODO line's", f.ID, f.State)
-		case f.Side != "" && f.Side != "new" && f.Side != "old":
-			return fmt.Errorf("record: finding %s's side is %q, not new or old", f.ID, f.Side)
-		case f.Round < 0 || f.Line < 0 || f.EndLine < 0:
-			return fmt.Errorf("record: finding %s has a negative round or line", f.ID)
+		if err := f.check(); err != nil {
+			return err
 		}
 	}
 	for _, rd := range r.Rounds {
@@ -238,6 +229,40 @@ func (r *Range) check() error {
 		if rd.RedCheck != "session" && rd.RedCheck != "absent" {
 			return fmt.Errorf("record: round %s's red-check is %q, not session or absent", rd.ID, rd.RedCheck)
 		}
+	}
+	return nil
+}
+
+func (r *Range) checkHeader() error {
+	owner, repo, ok := strings.Cut(r.Repo, "/")
+	switch {
+	case !ok || checkRepo(owner, repo) != nil:
+		return fmt.Errorf("record: %q is not a GitHub owner/name", r.Repo)
+	case !sha.MatchString(r.Base) || !sha.MatchString(r.Head):
+		return fmt.Errorf("record: a range needs full SHAs, got %q..%q", r.Base, r.Head)
+	case r.PR < 0:
+		return fmt.Errorf("record: %d is not a pull request number", r.PR)
+	}
+	return nil
+}
+
+func (c Chunk) check() error {
+	for _, h := range c.Hunks {
+		if h.NewStart < 0 || h.NewLines < 0 || h.OldStart < 0 || h.OldLines < 0 {
+			return fmt.Errorf("record: chunk %s's hunk %q has a negative line or count", c.ID, h.Path)
+		}
+	}
+	return nil
+}
+
+func (f Finding) check() error {
+	switch {
+	case !states[f.State]:
+		return fmt.Errorf("record: finding %s has state %q, not one of the #+TODO line's", f.ID, f.State)
+	case f.Side != "" && f.Side != "new" && f.Side != "old":
+		return fmt.Errorf("record: finding %s's side is %q, not new or old", f.ID, f.Side)
+	case f.Round < 0 || f.Line < 0 || f.EndLine < 0:
+		return fmt.Errorf("record: finding %s has a negative round or line", f.ID)
 	}
 	return nil
 }

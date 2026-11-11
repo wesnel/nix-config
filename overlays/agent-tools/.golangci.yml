@@ -6,10 +6,14 @@ version: "2"
 linters:
   default: none
   enable:
+    - gocognit
     - gosec
+    - interfacebloat
     - nolintlint
 
   settings:
+    gocognit:
+      min-complexity: 20
     gosec:
       excludes:
         # Unchecked errors are errcheck's concern, not a security finding:
@@ -24,12 +28,18 @@ linters:
         # as git delegate ask confines its files to the repository, the check
         # is made on the file opened, never on a name opened again later.
         - G304
+    interfacebloat:
+      max: 10
     nolintlint:
       require-explanation: true
       require-specific: true
 
   exclusions:
     rules:
+      # Table-driven tests keep their cases and assertions together.
+      - path: _test\.go
+        linters:
+          - gocognit
       # Gosec path analysis may omit findings for justified suppressions.
       - text: '^directive .* is unused for linter "gosec"$'
         linters:

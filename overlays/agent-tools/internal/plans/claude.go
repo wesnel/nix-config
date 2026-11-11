@@ -49,18 +49,8 @@ func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
 	if err := json.Unmarshal(hook, &in); err != nil {
 		return nil, err
 	}
-	switch harness {
-	case "claude":
-	case "codex":
-		if in.Event != "SessionStart" || in.SessionID == "" ||
-			!slices.Contains([]string{"startup", "resume", "clear", "compact", "fork"}, in.Source) {
-			return nil, refusal.New("Codex plan lookup needs a SessionStart event with session_id and a supported source. Pass the Codex SessionStart payload to `find --hook --harness codex`")
-		}
-		if err := checkWords("session_id", []string{in.SessionID}); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, refusal.New("unsupported lifecycle harness %q. Use `find --hook --harness claude` or `find --hook --harness codex`", harness)
+	if err := in.validate(harness); err != nil {
+		return nil, err
 	}
 	o := FindOptions{}
 	if in.SessionID != "" {
@@ -90,6 +80,27 @@ func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
 			found = exact
 		}
 	}
+	return c.sessionContext(in, harness, found)
+}
+
+func (in sessionHook) validate(harness string) error {
+	switch harness {
+	case "claude":
+	case "codex":
+		if in.Event != "SessionStart" || in.SessionID == "" ||
+			!slices.Contains([]string{"startup", "resume", "clear", "compact", "fork"}, in.Source) {
+			return refusal.New("Codex plan lookup needs a SessionStart event with session_id and a supported source. Pass the Codex SessionStart payload to `find --hook --harness codex`")
+		}
+		if err := checkWords("session_id", []string{in.SessionID}); err != nil {
+			return err
+		}
+	default:
+		return refusal.New("unsupported lifecycle harness %q. Use `find --hook --harness claude` or `find --hook --harness codex`", harness)
+	}
+	return nil
+}
+
+func (c Config) sessionContext(in sessionHook, harness string, found []Found) ([]byte, error) {
 	var lines []string
 	for _, f := range found {
 		lines = append(lines, fmt.Sprintf("- %s (%s, status %s, matched by %s)", f.File, f.Title, f.State, strings.Join(f.Matched, " and ")))

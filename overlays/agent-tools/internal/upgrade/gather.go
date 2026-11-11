@@ -187,31 +187,8 @@ func gatherPin(ctx context.Context, p Pin, o Options, left *int) Gathered {
 	}
 	private := p.Module != "" && matchPrefixPatterns(o.Private, p.Module) ||
 		p.OldModule != "" && matchPrefixPatterns(o.Private, p.OldModule)
-	switch {
-	case p.Kind == "flake-nix":
-		g.Why = p.File + " changed, and its inputs are what nix evaluates them to, which this review never does on the host; " +
-			"read the diff of its inputs, and whether flake.lock locks what they now name (" + p.Note + ", by a text scan " +
-			"that may miss some); that diff is all there is to read, and reading it settles the pin"
-		return g
-	case p.Kind == "nix-unread" || p.Kind == "actions-unread":
-		g.Why = p.File + "'s changed lines " + p.Note + " name what may be a pin this review's scanner did not read; those " +
-			"lines are all there is to read, and reading them settles the pin"
-		return g
-	case p.Note != "":
-		g.Why = p.File + " cannot be read as its tool reads it (" + p.Note + "), so what it pins is not known; read its diff"
-		return g
-	case p.HashOnly():
-		g.Why = "only its hash or its directory moved, from " + p.Old + " to " + p.New + ", at the same " + p.NewRef +
-			", which has no upstream changes between the two to read; find what changed it"
-		return g
-	case p.Kind == "lockfile":
-		g.Why = "agent-tools reads no versions from " + path.Base(p.File) + "; read its diff"
-		return g
-	case p.Kind == "go" || p.Kind == "toolchain":
-		g.Why = "the Go release notes between " + p.Old + " and " + p.New + " are not gathered"
-		return g
-	case p.Kind == "flake" && p.Owner == "":
-		g.Why = fmt.Sprintf("a %s node, which this review never fetches", cmp.Or(p.Type, "non-github"))
+	if why := ungatheredReason(p); why != "" {
+		g.Why = why
 		return g
 	}
 	if why := unreadable(p, o, private); why != "" {
@@ -243,6 +220,30 @@ func gatherPin(ctx context.Context, p Pin, o Options, left *int) Gathered {
 		}
 	}
 	return g
+}
+
+func ungatheredReason(p Pin) string {
+	switch {
+	case p.Kind == "flake-nix":
+		return p.File + " changed, and its inputs are what nix evaluates them to, which this review never does on the host; " +
+			"read the diff of its inputs, and whether flake.lock locks what they now name (" + p.Note + ", by a text scan " +
+			"that may miss some); that diff is all there is to read, and reading it settles the pin"
+	case p.Kind == "nix-unread" || p.Kind == "actions-unread":
+		return p.File + "'s changed lines " + p.Note + " name what may be a pin this review's scanner did not read; those " +
+			"lines are all there is to read, and reading them settles the pin"
+	case p.Note != "":
+		return p.File + " cannot be read as its tool reads it (" + p.Note + "), so what it pins is not known; read its diff"
+	case p.HashOnly():
+		return "only its hash or its directory moved, from " + p.Old + " to " + p.New + ", at the same " + p.NewRef +
+			", which has no upstream changes between the two to read; find what changed it"
+	case p.Kind == "lockfile":
+		return "agent-tools reads no versions from " + path.Base(p.File) + "; read its diff"
+	case p.Kind == "go" || p.Kind == "toolchain":
+		return "the Go release notes between " + p.Old + " and " + p.New + " are not gathered"
+	case p.Kind == "flake" && p.Owner == "":
+		return fmt.Sprintf("a %s node, which this review never fetches", cmp.Or(p.Type, "non-github"))
+	}
+	return ""
 }
 
 // repoPrivate reports whether GitHub, asked with the user's login, says
@@ -646,18 +647,7 @@ func inTree(root, path string) bool {
 // limit bytes of it. A path reached through a symbolic link counts as not
 // there.
 func notesDiff(ctx context.Context, old, next string, extra []string, limit int) (string, error) {
-	paths := map[string]bool{}
-	for _, dir := range []string{old, next} {
-		entries, _ := os.ReadDir(dir)
-		for _, e := range entries {
-			if slices.ContainsFunc(notesNames, func(n string) bool { return strings.HasPrefix(strings.ToUpper(e.Name()), n) }) {
-				paths[e.Name()] = true
-			}
-		}
-	}
-	for _, p := range extra {
-		paths[filepath.Clean(p)] = true
-	}
+	paths := notePaths(old, next, extra)
 	empty, err := os.MkdirTemp("", "upgrade-empty-")
 	if err != nil {
 		return "", err
@@ -699,6 +689,22 @@ func notesDiff(ctx context.Context, old, next string, extra []string, limit int)
 		b.Write(out)
 	}
 	return b.String(), nil
+}
+
+func notePaths(old, next string, extra []string) map[string]bool {
+	paths := map[string]bool{}
+	for _, dir := range []string{old, next} {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if slices.ContainsFunc(notesNames, func(n string) bool { return strings.HasPrefix(strings.ToUpper(e.Name()), n) }) {
+				paths[e.Name()] = true
+			}
+		}
+	}
+	for _, p := range extra {
+		paths[filepath.Clean(p)] = true
+	}
+	return paths
 }
 
 // diffPaths is `git diff --no-index a z`, run in dir with no configuration,

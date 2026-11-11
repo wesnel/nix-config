@@ -128,44 +128,9 @@ func Post(number int, threads []string) (any, error) {
 		if t.Draft == nil || !t.Draft.Posted.IsZero() || (len(threads) > 0 && !slices.Contains(threads, t.ID)) {
 			continue
 		}
-		// The bytes shown are the bytes posted: the draft is read once.
-		body, outcome := t.Draft.Body, t.Draft.Outcome
-		where := t.Path
-		if t.Line > 0 {
-			where = fmt.Sprintf("%s:%d", t.Path, t.Line)
-		}
-		fmt.Fprintf(tty, "\n=== %s on #%d (%s), answered %s:\n%s\n=== Post this reply? [y/N] ", t.ID, number, where, outcome, body)
-		answer, err := answers.ReadString('\n')
-		if err != nil && answer == "" {
-			return results, fmt.Errorf("reading the answer for %s: %w", t.ID, err)
-		}
-		result := PostResult{Thread: t.ID}
-		if strings.TrimSpace(answer) != "y" {
-			result.Skipped = "not confirmed"
-			results = append(results, result)
-			continue
-		}
-		if err := redact.Outgoing(body); err != nil {
-			return results, fmt.Errorf("the draft for %s: %w", t.ID, err)
-		}
-		thread, err := policy.read(t.ID)
+		result, err := postDraft(policy, number, path, t, tty, answers)
 		if err != nil {
 			return results, err
-		}
-		if thread.pr != number {
-			return results, refuse("%s is on #%d, not #%d; rerun `pr-loop threads %d` to fix the record", t.ID, thread.pr, number, number)
-		}
-		if result.URL, err = postReply(number, t.ID, body); err != nil {
-			return results, err
-		}
-		if err := markPosted(path, t.ID, body); err != nil {
-			return results, err
-		}
-		if (outcome == "fix" || outcome == "rebut") && !thread.resolved {
-			if err := resolveThread(number, t.ID); err != nil {
-				return results, err
-			}
-			result.Resolved = true
 		}
 		results = append(results, result)
 	}
@@ -174,6 +139,48 @@ func Post(number int, threads []string) (any, error) {
 		return results, err
 	}
 	return map[string]any{"posted": results, "rerequested": rerequested}, nil
+}
+
+func postDraft(policy *threadPolicy, number int, path string, t record.Thread, tty io.Writer, answers *bufio.Reader) (PostResult, error) {
+	// The bytes shown are the bytes posted: the draft is read once.
+	body, outcome := t.Draft.Body, t.Draft.Outcome
+	where := t.Path
+	if t.Line > 0 {
+		where = fmt.Sprintf("%s:%d", t.Path, t.Line)
+	}
+	fmt.Fprintf(tty, "\n=== %s on #%d (%s), answered %s:\n%s\n=== Post this reply? [y/N] ", t.ID, number, where, outcome, body)
+	answer, err := answers.ReadString('\n')
+	if err != nil && answer == "" {
+		return PostResult{}, fmt.Errorf("reading the answer for %s: %w", t.ID, err)
+	}
+	result := PostResult{Thread: t.ID}
+	if strings.TrimSpace(answer) != "y" {
+		result.Skipped = "not confirmed"
+		return result, nil
+	}
+	if err := redact.Outgoing(body); err != nil {
+		return PostResult{}, fmt.Errorf("the draft for %s: %w", t.ID, err)
+	}
+	thread, err := policy.read(t.ID)
+	if err != nil {
+		return PostResult{}, err
+	}
+	if thread.pr != number {
+		return PostResult{}, refuse("%s is on #%d, not #%d; rerun `pr-loop threads %d` to fix the record", t.ID, thread.pr, number, number)
+	}
+	if result.URL, err = postReply(number, t.ID, body); err != nil {
+		return PostResult{}, err
+	}
+	if err := markPosted(path, t.ID, body); err != nil {
+		return PostResult{}, err
+	}
+	if (outcome == "fix" || outcome == "rebut") && !thread.resolved {
+		if err := resolveThread(number, t.ID); err != nil {
+			return PostResult{}, err
+		}
+		result.Resolved = true
+	}
+	return result, nil
 }
 
 // markPosted records the draft of thread id, still body, as posted now.
@@ -206,12 +213,7 @@ func rerequest(repo *Repo, path string, number int) ([]string, error) {
 	}
 	var people []string
 	for _, t := range p.Threads {
-		var authors []string
-		for _, c := range t.Comments {
-			if c.Author != repo.Viewer && !isBot(bots, ThreadComment{Author: c.Author, Type: c.Type}) {
-				authors = append(authors, c.Author)
-			}
-		}
+		authors := humanAuthors(t.Comments, bots, repo.Viewer)
 		if len(authors) == 0 || t.Resolved {
 			continue
 		}
@@ -230,4 +232,14 @@ func rerequest(repo *Repo, path string, number int) ([]string, error) {
 		}
 	}
 	return append([]string{}, people...), nil
+}
+
+func humanAuthors(comments []record.Comment, bots []*Bot, viewer string) []string {
+	var authors []string
+	for _, c := range comments {
+		if c.Author != viewer && !isBot(bots, ThreadComment{Author: c.Author, Type: c.Type}) {
+			authors = append(authors, c.Author)
+		}
+	}
+	return authors
 }

@@ -126,28 +126,7 @@ func (u *upgrades) section() string {
 	if len(u.pins) == 0 {
 		b.WriteString("None: the change moves no pin agent-tools reads. Check the `pins` category against the diff.\n")
 	}
-	for _, p := range u.pins {
-		repo := ""
-		if p.Owner != "" {
-			repo = ", github " + plain(p.Owner+"/"+p.Repo)
-		}
-		if p.DiffOnly() {
-			repo += ", only the diff explains it"
-		}
-		for _, k := range p.Covers {
-			repo += ", and for `" + plain(k) + "`"
-		}
-		switch {
-		case p.Old == "":
-			fmt.Fprintf(&b, "- `%s` (%s%s): added at %s, which this review reports as %s\n", plain(p.Key), plain(p.Kind), repo,
-				plain(short(p.New)), unreadPrefix+p.ID())
-		case p.New == "":
-			fmt.Fprintf(&b, "- `%s` (%s%s): dropped, was %s, which this review reports as %s\n", plain(p.Key), plain(p.Kind), repo,
-				plain(short(p.Old)), unreadPrefix+p.ID())
-		default:
-			fmt.Fprintf(&b, "- `%s` (%s%s): %s to %s\n", plain(p.Key), plain(p.Kind), repo, plain(short(p.Old)), plain(short(p.New)))
-		}
-	}
+	writePins(&b, u.pins)
 	for _, g := range u.gathered {
 		p := g.Pin
 		fmt.Fprintf(&b, "\n### `%s`: %s to %s\n\n", plain(p.Key), plain(short(p.Old)), plain(short(p.New)))
@@ -172,6 +151,31 @@ func (u *upgrades) section() string {
 		}
 	}
 	return b.String()
+}
+
+func writePins(b *strings.Builder, pins []upgrade.Pin) {
+	for _, p := range pins {
+		repo := ""
+		if p.Owner != "" {
+			repo = ", github " + plain(p.Owner+"/"+p.Repo)
+		}
+		if p.DiffOnly() {
+			repo += ", only the diff explains it"
+		}
+		for _, k := range p.Covers {
+			repo += ", and for `" + plain(k) + "`"
+		}
+		switch {
+		case p.Old == "":
+			fmt.Fprintf(b, "- `%s` (%s%s): added at %s, which this review reports as %s\n", plain(p.Key), plain(p.Kind), repo,
+				plain(short(p.New)), unreadPrefix+p.ID())
+		case p.New == "":
+			fmt.Fprintf(b, "- `%s` (%s%s): dropped, was %s, which this review reports as %s\n", plain(p.Key), plain(p.Kind), repo,
+				plain(short(p.Old)), unreadPrefix+p.ID())
+		default:
+			fmt.Fprintf(b, "- `%s` (%s%s): %s to %s\n", plain(p.Key), plain(p.Kind), repo, plain(short(p.Old)), plain(short(p.New)))
+		}
+	}
 }
 
 // candidates are the pins an unread-upgrade finding may be raised for:

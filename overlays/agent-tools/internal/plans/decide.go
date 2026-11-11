@@ -59,15 +59,9 @@ func (p Plan) Decide(qid string, o DecideOptions, now time.Time) (Decided, error
 		if !ok || !questionID.MatchString(qid) || q.Keyword == "" || q.Done {
 			return refusal.New("%q is not an open question of %s. Use an ID `agent-plan questions %s --all --waiting` lists", qid, p.Name, p.file(""))
 		}
-		var target item
-		if o.Supersedes != "" {
-			target, ok = items[o.Supersedes]
-			switch {
-			case !ok || !questionID.MatchString(o.Supersedes) || target.Keyword == "":
-				return refusal.New("%q is not a question of %s. Pass the ID of the decision this one replaces, as `agent-plan decisions %s --all` lists it", o.Supersedes, p.Name, p.file(""))
-			case !target.Done:
-				return refusal.New("%s is still open, so there is no decision to supersede. Drop it with `agent-plan decide %s %s --drop --answer 'why'`", o.Supersedes, p.file(""), o.Supersedes)
-			}
+		target, err := p.supersededQuestion(o.Supersedes, items)
+		if err != nil {
+			return err
 		}
 		err = l.edit(q.File, func(lines []string) ([]string, error) {
 			return settle(lines, qid, state, o.Answer, "", o.Supersedes, now)
@@ -76,13 +70,7 @@ func (p Plan) Decide(qid string, o DecideOptions, now time.Time) (Decided, error
 			return err
 		}
 		if o.Supersedes != "" {
-			err = l.edit(target.File, func(lines []string) ([]string, error) {
-				at := headingWithID(lines, o.Supersedes)
-				if at < 0 {
-					return nil, fmt.Errorf("%s left %s while being superseded", o.Supersedes, target.File)
-				}
-				return setKeyword(lines, at, kwSuperseded, fileKeywords(strings.Join(lines, "\n")), now), nil
-			})
+			err = l.supersede(target, o.Supersedes, now)
 			if err != nil {
 				return err
 			}
@@ -149,4 +137,29 @@ func (c Config) StatusLine(input []byte) string {
 		return "1 open question · /questions"
 	}
 	return fmt.Sprintf("%d open questions · /questions", len(qs))
+}
+
+func (p Plan) supersededQuestion(id string, items map[string]item) (item, error) {
+	var target item
+	var ok bool
+	if id != "" {
+		target, ok = items[id]
+		switch {
+		case !ok || !questionID.MatchString(id) || target.Keyword == "":
+			return item{}, refusal.New("%q is not a question of %s. Pass the ID of the decision this one replaces, as `agent-plan decisions %s --all` lists it", id, p.Name, p.file(""))
+		case !target.Done:
+			return item{}, refusal.New("%s is still open, so there is no decision to supersede. Drop it with `agent-plan decide %s %s --drop --answer 'why'`", id, p.file(""), id)
+		}
+	}
+	return target, nil
+}
+
+func (l *lockedPlan) supersede(target item, id string, now time.Time) error {
+	return l.edit(target.File, func(lines []string) ([]string, error) {
+		at := headingWithID(lines, id)
+		if at < 0 {
+			return nil, fmt.Errorf("%s left %s while being superseded", id, target.File)
+		}
+		return setKeyword(lines, at, kwSuperseded, fileKeywords(strings.Join(lines, "\n")), now), nil
+	})
 }

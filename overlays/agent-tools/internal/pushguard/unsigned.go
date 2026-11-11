@@ -85,22 +85,47 @@ func CheckUnsigned(remote, url string, updates []Update) error {
 	if err != nil {
 		return timedOut(err)
 	}
-	var mine []string
-	names := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Split(line, "\x00")
-		if len(fields) == 3 && strings.EqualFold(fields[2], me) {
-			mine = append(mine, fields[0])
-			names[fields[0]] = fields[1]
-		}
-	}
+	mine, names := committedBy(out, me)
 	if len(mine) == 0 {
 		return nil
 	}
 
-	signed, err := withSignature(ctx, mine)
+	refused, err := unsignedCommits(ctx, mine, names)
 	if err != nil {
 		return timedOut(err)
+	}
+
+	if len(refused) == 0 {
+		return nil
+	}
+
+	list := refused
+	if len(list) > listed {
+		list = append(list[:listed:listed], fmt.Sprintf("and %d more", len(refused)-listed))
+	}
+	return refusal.New("this push publishes commits to %s that were committed as %s and are not signed:\n  %s\n"+
+		"Sign them with the signing pass, `git sign-pass`, and push again; an agent hands that to the operator.\n"+
+		"To publish them unsigned, for this push only: git -c %s=true push ...",
+		url, me, strings.Join(list, "\n  "), UnsignedKey)
+}
+
+func committedBy(log []byte, email string) ([]string, map[string]string) {
+	var mine []string
+	names := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+		fields := strings.Split(line, "\x00")
+		if len(fields) == 3 && strings.EqualFold(fields[2], email) {
+			mine = append(mine, fields[0])
+			names[fields[0]] = fields[1]
+		}
+	}
+	return mine, names
+}
+
+func unsignedCommits(ctx context.Context, mine []string, names map[string]string) ([]string, error) {
+	signed, err := withSignature(ctx, mine)
+	if err != nil {
+		return nil, err
 	}
 	var refused, check []string
 	for _, oid := range mine {
@@ -114,7 +139,7 @@ func CheckUnsigned(remote, url string, updates []Update) error {
 		out, err := git.BytesContext(ctx, []byte(strings.Join(check, "\n")+"\n"),
 			"log", "--no-walk=unsorted", "--stdin", "--format=%H %G?")
 		if err != nil {
-			return timedOut(err)
+			return nil, err
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if oid, status, _ := strings.Cut(line, " "); status == "B" {
@@ -122,18 +147,7 @@ func CheckUnsigned(remote, url string, updates []Update) error {
 			}
 		}
 	}
-	if len(refused) == 0 {
-		return nil
-	}
-
-	list := refused
-	if len(list) > listed {
-		list = append(list[:listed:listed], fmt.Sprintf("and %d more", len(refused)-listed))
-	}
-	return refusal.New("this push publishes commits to %s that were committed as %s and are not signed:\n  %s\n"+
-		"Sign them with the signing pass, `git sign-pass`, and push again; an agent hands that to the operator.\n"+
-		"To publish them unsigned, for this push only: git -c %s=true push ...",
-		url, me, strings.Join(list, "\n  "), UnsignedKey)
+	return refused, nil
 }
 
 // trackingRefs are rev-list arguments for the remote-tracking refs of

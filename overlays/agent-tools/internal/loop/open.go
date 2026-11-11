@@ -145,14 +145,7 @@ func checkLocal(repo *Repo, branch, base, baseOid, local string, onGitHub bool) 
 // default branch, that local contains and the base's commits (baseCommits)
 // lack: the nearest one, when there are several. It is "" when there is none.
 func unmergedParent(repo *Repo, remotes []string, branch, base, local string, baseCommits []string) (string, error) {
-	if len(baseCommits) == 0 {
-		// The base's tip is not in this checkout; what was fetched of it stands in.
-		for _, name := range remotes {
-			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+base) {
-				baseCommits = append(baseCommits, "refs/remotes/"+name+"/"+base)
-			}
-		}
-	}
+	baseCommits = fetchedBaseCommits(remotes, base, baseCommits)
 	best, bestCount := "", 0
 	for _, name := range remotes {
 		refs, err := git.Run("for-each-ref", "--format=%(refname)", "refs/remotes/"+name+"/")
@@ -177,6 +170,18 @@ func unmergedParent(repo *Repo, remotes []string, branch, base, local string, ba
 		}
 	}
 	return best, nil
+}
+
+func fetchedBaseCommits(remotes []string, base string, baseCommits []string) []string {
+	if len(baseCommits) == 0 {
+		// The base's tip is not in this checkout; what was fetched of it stands in.
+		for _, name := range remotes {
+			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+base) {
+				baseCommits = append(baseCommits, "refs/remotes/"+name+"/"+base)
+			}
+		}
+	}
+	return baseCommits
 }
 
 // lintNew refuses unless the commits local has and known lacks pass
@@ -336,20 +341,9 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	}
 	local := o.local
 
-	calls, refID := 0, ""
-	if !o.onGitHub {
-		if calls, err = o.objects.upload(repo.Slug); err != nil {
-			return nil, err
-		}
-		var created struct {
-			CreateRef struct{ Ref struct{ ID string } }
-		}
-		err = graphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
-			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
-		if err != nil {
-			return nil, err
-		}
-		calls, refID = calls+1, created.CreateRef.Ref.ID
+	calls, refID, err := o.createBranch(repo, branch)
+	if err != nil {
+		return nil, err
 	}
 	var opened struct {
 		CreatePullRequest struct {
@@ -393,4 +387,25 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 		result[k] = v
 	}
 	return result, nil
+}
+
+func (o *opening) createBranch(repo *Repo, branch string) (int, string, error) {
+	local := o.local
+	var err error
+	calls, refID := 0, ""
+	if !o.onGitHub {
+		if calls, err = o.objects.upload(repo.Slug); err != nil {
+			return 0, "", err
+		}
+		var created struct {
+			CreateRef struct{ Ref struct{ ID string } }
+		}
+		err = graphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
+			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
+		if err != nil {
+			return 0, "", err
+		}
+		calls, refID = calls+1, created.CreateRef.Ref.ID
+	}
+	return calls, refID, nil
 }

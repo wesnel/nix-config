@@ -41,54 +41,11 @@ func lineAt(text string, at int) int { return strings.Count(text[:min(at, len(te
 // among the units, with `#2` and on for a key an earlier unit has.
 func nixUnits(text string) map[string]nixUnit {
 	sets, _ := pinscan.NixSets(text)
-	has := func(s pinscan.NixSet, names ...string) bool {
-		return slices.ContainsFunc(names, func(n string) bool { _, ok := s.Attrs[n]; return ok })
-	}
-	unitOf := map[int]bool{}
-	for i, s := range sets {
-		if !has(s, nixVersions...) {
-			continue
-		}
-		u := i
-		// The file's own bindings are a unit only for what they pin
-		// themselves.
-		for j, up := i, 0; j > 0 && up <= 2; j, up = sets[j].Parent, up+1 {
-			if has(sets[j], "pname", "version") {
-				u = j
-				break
-			}
-		}
-		unitOf[u] = true
-	}
-	inside := func(i, root int) bool {
-		for ; i >= 0; i = sets[i].Parent {
-			if i == root {
-				return true
-			}
-		}
-		return false
-	}
+	unitOf := nixUnitRoots(sets)
 	units := map[string]nixUnit{}
 	count := map[string]int{}
 	for _, root := range slices.Sorted(maps.Keys(unitOf)) {
-		u := nixUnit{attrs: map[string]string{}, at: map[string]int{}}
-		for i, s := range sets {
-			if !inside(i, root) {
-				continue
-			}
-			// A set inside another unit is that unit's.
-			if i != root && unitOf[i] {
-				continue
-			}
-			for name, v := range s.Attrs {
-				if _, ok := u.attrs[name]; !ok {
-					u.attrs[name], u.at[name] = v, s.At[name]
-				}
-			}
-			if strings.HasSuffix(s.Call, "fetchFromGitHub") && s.Attrs["owner"] != "" && s.Attrs["repo"] != "" && u.owner == "" {
-				u.owner, u.repo, u.githubRev, u.githubTg = s.Attrs["owner"], s.Attrs["repo"], s.Attrs["rev"], s.Attrs["tag"]
-			}
-		}
+		u := collectNixUnit(sets, unitOf, root)
 		key := u.attrs["pname"]
 		if u.owner != "" {
 			key = u.owner + "/" + u.repo
@@ -112,6 +69,60 @@ func nixUnits(text string) map[string]nixUnit {
 		units[key] = u
 	}
 	return units
+}
+
+func nixUnitRoots(sets []pinscan.NixSet) map[int]bool {
+	has := func(s pinscan.NixSet, names ...string) bool {
+		return slices.ContainsFunc(names, func(n string) bool { _, ok := s.Attrs[n]; return ok })
+	}
+	unitOf := map[int]bool{}
+	for i, s := range sets {
+		if !has(s, nixVersions...) {
+			continue
+		}
+		u := i
+		// The file's own bindings are a unit only for what they pin
+		// themselves.
+		for j, up := i, 0; j > 0 && up <= 2; j, up = sets[j].Parent, up+1 {
+			if has(sets[j], "pname", "version") {
+				u = j
+				break
+			}
+		}
+		unitOf[u] = true
+	}
+	return unitOf
+}
+
+func nixInside(sets []pinscan.NixSet, i, root int) bool {
+	for ; i >= 0; i = sets[i].Parent {
+		if i == root {
+			return true
+		}
+	}
+	return false
+}
+
+func collectNixUnit(sets []pinscan.NixSet, unitOf map[int]bool, root int) nixUnit {
+	u := nixUnit{attrs: map[string]string{}, at: map[string]int{}}
+	for i, s := range sets {
+		if !nixInside(sets, i, root) {
+			continue
+		}
+		// A set inside another unit is that unit's.
+		if i != root && unitOf[i] {
+			continue
+		}
+		for name, v := range s.Attrs {
+			if _, ok := u.attrs[name]; !ok {
+				u.attrs[name], u.at[name] = v, s.At[name]
+			}
+		}
+		if strings.HasSuffix(s.Call, "fetchFromGitHub") && s.Attrs["owner"] != "" && s.Attrs["repo"] != "" && u.owner == "" {
+			u.owner, u.repo, u.githubRev, u.githubTg = s.Attrs["owner"], s.Attrs["repo"], s.Attrs["rev"], s.Attrs["tag"]
+		}
+	}
+	return u
 }
 
 // nixPins are the pinned things of a Nix file whose pin attributes differ
@@ -161,24 +172,7 @@ func nixPins(file, old, next string) []Pin {
 // before it; the rest pair by key.
 func nixUnitPins(file, old, next string) ([]Pin, []nixUnit, []nixUnit) {
 	a, b := nixUnits(old), nixUnits(next)
-	same := func(x, y nixUnit) bool {
-		return !slices.ContainsFunc(nixVersions, func(attr string) bool { return x.attrs[attr] != y.attrs[attr] })
-	}
-	for k, ua := range a {
-		if ub, ok := b[k]; ok && same(ua, ub) {
-			delete(a, k)
-			delete(b, k)
-		}
-	}
-	for _, ka := range slices.Sorted(maps.Keys(a)) {
-		for _, kb := range slices.Sorted(maps.Keys(b)) {
-			if same(a[ka], b[kb]) {
-				delete(a, ka)
-				delete(b, kb)
-				break
-			}
-		}
-	}
+	dropUnchangedNixUnits(a, b)
 	keys := map[string]bool{}
 	for k := range a {
 		keys[k] = true
@@ -192,13 +186,7 @@ func nixUnitPins(file, old, next string) ([]Pin, []nixUnit, []nixUnit) {
 		ua, inA := a[key]
 		ub, inB := b[key]
 		p := Pin{Key: file + "#" + key, File: file, Kind: "nix"}
-		moved := ""
-		for _, attr := range nixVersions {
-			if ua.attrs[attr] != ub.attrs[attr] {
-				moved = attr
-				break
-			}
-		}
+		moved := ua.changedAttribute(ub)
 		if moved == "" {
 			continue
 		}
@@ -220,18 +208,49 @@ func nixUnitPins(file, old, next string) ([]Pin, []nixUnit, []nixUnit) {
 		}
 		if inA && inB && ua.owner != "" && strings.EqualFold(ua.owner, ub.owner) && strings.EqualFold(ua.repo, ub.repo) {
 			p.Owner, p.Repo = ub.owner, ub.repo
-			ref := func(u nixUnit) string {
-				r := strings.ReplaceAll(cmp.Or(u.githubRev, u.githubTg), "${version}", u.attrs["version"])
-				if strings.Contains(r, "${") {
-					return ""
-				}
-				return r
-			}
-			p.OldRef, p.NewRef = ref(ua), ref(ub)
+			p.OldRef, p.NewRef = ua.ref(), ub.ref()
 			p.OldTag, p.NewTag = tagOf(p.OldRef), tagOf(p.NewRef)
 			p.OldHash, p.NewHash = cmp.Or(ua.attrs["hash"], ua.attrs["sha256"]), cmp.Or(ub.attrs["hash"], ub.attrs["sha256"])
 		}
 		pins = append(pins, p)
 	}
 	return pins, unitsA, unitsB
+}
+
+func (u nixUnit) changedAttribute(next nixUnit) string {
+	for _, attr := range nixVersions {
+		if u.attrs[attr] != next.attrs[attr] {
+			return attr
+		}
+	}
+	return ""
+}
+
+func dropUnchangedNixUnits(a, b map[string]nixUnit) {
+	same := func(x, y nixUnit) bool {
+		return !slices.ContainsFunc(nixVersions, func(attr string) bool { return x.attrs[attr] != y.attrs[attr] })
+	}
+	for k, ua := range a {
+		if ub, ok := b[k]; ok && same(ua, ub) {
+			delete(a, k)
+			delete(b, k)
+		}
+	}
+	for _, ka := range slices.Sorted(maps.Keys(a)) {
+		for _, kb := range slices.Sorted(maps.Keys(b)) {
+			if same(a[ka], b[kb]) {
+				delete(a, ka)
+				delete(b, kb)
+				break
+			}
+		}
+	}
+}
+
+func (u nixUnit) ref() string {
+	r := strings.ReplaceAll(cmp.Or(u.githubRev, u.githubTg), "${version}", u.attrs["version"])
+	if strings.Contains(r, "${") {
+		return ""
+	}
+	return r
 }

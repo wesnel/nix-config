@@ -54,17 +54,7 @@ func conforms(schema map[string]any, v any, at string, skip ...string) error {
 		where = "the reply"
 	}
 	if t, ok := schema["type"]; ok {
-		var types []string
-		switch t := t.(type) {
-		case string:
-			types = []string{t}
-		case []any:
-			for _, x := range t {
-				if s, ok := x.(string); ok {
-					types = append(types, s)
-				}
-			}
-		}
+		types := schemaTypes(t)
 		if !slices.ContainsFunc(types, func(t string) bool { return hasType(v, t) }) {
 			return fmt.Errorf("%s is %s, not %s", where, typeOf(v), strings.Join(types, " or "))
 		}
@@ -74,28 +64,7 @@ func conforms(schema map[string]any, v any, at string, skip ...string) error {
 	}
 	switch v := v.(type) {
 	case map[string]any:
-		props, _ := schema["properties"].(map[string]any)
-		if required, ok := schema["required"].([]any); ok {
-			for _, r := range required {
-				if name, _ := r.(string); name != "" {
-					if _, ok := v[name]; !ok {
-						return fmt.Errorf("%s lacks %q", where, name)
-					}
-				}
-			}
-		}
-		for key, value := range v {
-			sub, known := props[key].(map[string]any)
-			if !known {
-				if schema["additionalProperties"] == false {
-					return fmt.Errorf("%s has %q, which its schema does not name", where, key)
-				}
-				continue
-			}
-			if err := conforms(sub, value, at+"."+key, skip...); err != nil {
-				return err
-			}
-		}
+		return conformsObject(schema, v, at, where, skip)
 	case []any:
 		if slices.Contains(skip, at) {
 			return nil
@@ -105,6 +74,47 @@ func conforms(schema map[string]any, v any, at string, skip ...string) error {
 			if err := conforms(items, x, fmt.Sprintf("%s[%d]", at, i), skip...); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func schemaTypes(t any) []string {
+	var types []string
+	switch t := t.(type) {
+	case string:
+		types = []string{t}
+	case []any:
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				types = append(types, s)
+			}
+		}
+	}
+	return types
+}
+
+func conformsObject(schema, v map[string]any, at, where string, skip []string) error {
+	props, _ := schema["properties"].(map[string]any)
+	if required, ok := schema["required"].([]any); ok {
+		for _, r := range required {
+			if name, _ := r.(string); name != "" {
+				if _, ok := v[name]; !ok {
+					return fmt.Errorf("%s lacks %q", where, name)
+				}
+			}
+		}
+	}
+	for key, value := range v {
+		sub, known := props[key].(map[string]any)
+		if !known {
+			if schema["additionalProperties"] == false {
+				return fmt.Errorf("%s has %q, which its schema does not name", where, key)
+			}
+			continue
+		}
+		if err := conforms(sub, value, at+"."+key, skip...); err != nil {
+			return err
 		}
 	}
 	return nil

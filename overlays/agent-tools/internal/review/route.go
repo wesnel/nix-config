@@ -30,28 +30,13 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 		base = r.base
 	}
 	found := map[string]*routes.Route{}
-	add := func(route, why string, commits []string) {
-		rt := found[route]
-		if rt == nil {
-			rt = &routes.Route{Route: route}
-			found[route] = rt
-		}
-		if !slices.Contains(rt.Why, why) {
-			rt.Why = append(rt.Why, why)
-		}
-		for _, c := range commits {
-			if !slices.Contains(rt.Commits, c) {
-				rt.Commits = append(rt.Commits, c)
-			}
-		}
-	}
 	scanned, err := routes.Scan(r.top, base, r.tip, rules)
 	if err != nil {
 		fmt.Fprintf(log, "%s: the change's commits could not be scanned for the reviews they need: %v\n", name, err)
 	}
 	for _, rt := range scanned {
 		for _, why := range rt.Why {
-			add(rt.Route, why, rt.Commits)
+			addRoute(found, rt.Route, why, rt.Commits)
 		}
 	}
 	if out != nil {
@@ -61,7 +46,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 				fmt.Fprintf(log, "%s: the reviewer named the route %q, which no focused review exists for; it is left out\n", name, p.Route)
 				continue
 			}
-			add(p.Route, "the reviewer: "+strings.TrimSpace(p.Why), touching(r, reviewed, p.Paths))
+			addRoute(found, p.Route, "the reviewer: "+strings.TrimSpace(p.Why), touching(r, reviewed, p.Paths))
 		}
 	}
 	all, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", base+".."+r.tip)
@@ -73,6 +58,22 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 		list = append(list, *rt)
 	}
 	return list
+}
+
+func addRoute(found map[string]*routes.Route, route, why string, commits []string) {
+	rt := found[route]
+	if rt == nil {
+		rt = &routes.Route{Route: route}
+		found[route] = rt
+	}
+	if !slices.Contains(rt.Why, why) {
+		rt.Why = append(rt.Why, why)
+	}
+	for _, c := range commits {
+		if !slices.Contains(rt.Commits, c) {
+			rt.Commits = append(rt.Commits, c)
+		}
+	}
 }
 
 // touching are the commits of reviewed that change one of paths, or a

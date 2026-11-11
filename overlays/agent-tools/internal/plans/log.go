@@ -126,32 +126,16 @@ func (p Plan) check(e Event) error {
 			return err
 		}
 	}
-	if e.Revision != "" || e.Repository != "" || e.OldRevision != "" {
-		if !repositoryPattern.MatchString(e.Repository) || !revisionPattern.MatchString(e.Revision) {
-			return refusal.New("a commit identity needs a repository owner/name and full revision")
-		}
-		if e.OldRevision != "" && !revisionPattern.MatchString(e.OldRevision) {
-			return refusal.New("a rewritten commit needs its full original revision")
-		}
-		if e.Kind != "committed" && e.Kind != "done" && e.Kind != "verified" && e.Kind != "commit-rewritten" {
-			return refusal.New("commit identities belong to committed, done, verified or commit-rewritten events")
-		}
-		if (e.Kind == "commit-rewritten") != (e.OldRevision != "") {
-			return refusal.New("only a rewrite event carries an original revision")
-		}
+	if err := e.checkCommitIdentity(); err != nil {
+		return err
 	}
 	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir, "base": e.Base} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
 	}
-	switch {
-	case (e.Command != "" || e.Dir != "") && e.Kind != handedBack:
-		return refusal.New("--command and --dir name what the operator runs after a hand-back. Log them with `--kind %s`", handedBack)
-	case e.Dir != "" && e.Command == "":
-		return refusal.New("--dir is where the operator runs --command. Pass the command too, as `--command 'git sign-pass --push' --dir DIR`")
-	case e.Dir != "" && !filepath.IsAbs(e.Dir):
-		return refusal.New("--dir %q is not absolute, and the operator runs it from anywhere. Pass the full path, as `--dir /path/to/worktree`", e.Dir)
+	if err := e.checkCommand(); err != nil {
+		return err
 	}
 	switch {
 	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
@@ -173,6 +157,18 @@ func (p Plan) check(e Event) error {
 	}
 	if _, ok := items[e.Item]; !ok {
 		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
+	}
+	return nil
+}
+
+func (e Event) checkCommand() error {
+	switch {
+	case (e.Command != "" || e.Dir != "") && e.Kind != handedBack:
+		return refusal.New("--command and --dir name what the operator runs after a hand-back. Log them with `--kind %s`", handedBack)
+	case e.Dir != "" && e.Command == "":
+		return refusal.New("--dir is where the operator runs --command. Pass the command too, as `--command 'git sign-pass --push' --dir DIR`")
+	case e.Dir != "" && !filepath.IsAbs(e.Dir):
+		return refusal.New("--dir %q is not absolute, and the operator runs it from anywhere. Pass the full path, as `--dir /path/to/worktree`", e.Dir)
 	}
 	return nil
 }
@@ -506,14 +502,7 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 		if text == string(before) {
 			return nil
 		}
-		if err := checkStructure(file, string(before), text); err != nil {
-			return err
-		}
-		events, err := l.p.Events()
-		if err != nil {
-			return err
-		}
-		if err := checkKeywords(file, string(before), text, events); err != nil {
+		if err := l.checkEdit(file, string(before), text); err != nil {
 			return err
 		}
 		err = replaceFile(file, text, func() bool {
@@ -625,4 +614,36 @@ func (p Plan) Events() ([]Event, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+func (e Event) checkCommitIdentity() error {
+	if e.Revision != "" || e.Repository != "" || e.OldRevision != "" {
+		if !repositoryPattern.MatchString(e.Repository) || !revisionPattern.MatchString(e.Revision) {
+			return refusal.New("a commit identity needs a repository owner/name and full revision")
+		}
+		if e.OldRevision != "" && !revisionPattern.MatchString(e.OldRevision) {
+			return refusal.New("a rewritten commit needs its full original revision")
+		}
+		if e.Kind != "committed" && e.Kind != "done" && e.Kind != "verified" && e.Kind != "commit-rewritten" {
+			return refusal.New("commit identities belong to committed, done, verified or commit-rewritten events")
+		}
+		if (e.Kind == "commit-rewritten") != (e.OldRevision != "") {
+			return refusal.New("only a rewrite event carries an original revision")
+		}
+	}
+	return nil
+}
+
+func (l *lockedPlan) checkEdit(file, before, text string) error {
+	if err := checkStructure(file, before, text); err != nil {
+		return err
+	}
+	events, err := l.p.Events()
+	if err != nil {
+		return err
+	}
+	if err := checkKeywords(file, before, text, events); err != nil {
+		return err
+	}
+	return nil
 }

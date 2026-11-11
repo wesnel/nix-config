@@ -52,6 +52,10 @@ func checkLoopStart(c call, dir string) string {
 	if !c.expands[0] && harnessLoopStart(c, dir) {
 		return loopStart
 	}
+	return checkLoopAssignment(c)
+}
+
+func checkLoopAssignment(c call) string {
 	setter := !c.expands[0] && (base(c.words[0]) == "set" || base(c.words[0]) == "launchctl")
 	namer := !c.expands[0] && namers[c.words[0]]
 	printf := !c.expands[0] && base(c.words[0]) == "printf"
@@ -103,23 +107,28 @@ func harnessLoopStart(c call, dir string) bool {
 				return true
 			}
 		}
-		var named bool
-		switch {
-		case option == "--config":
-			named = namesLoopVar(value)
-		case option == "--settings" && strings.HasPrefix(strings.TrimSpace(value), "{"):
-			named = namesLoopVar(value)
-		case option == "--settings":
-			named = fileNamesLoopVar(expandPath(value, dir))
-		case option == "--profile":
-			codexHome, known := codexHome(c.env, dir)
-			named = !known || fileNamesLoopVar(filepath.Join(codexHome, value+".config.toml"))
-		}
+		named := harnessOptionNamesLoop(option, value, c.env, dir)
 		if named {
 			return true
 		}
 	}
 	return false
+}
+
+func harnessOptionNamesLoop(option, value string, env []string, dir string) bool {
+	var named bool
+	switch {
+	case option == "--config":
+		named = namesLoopVar(value)
+	case option == "--settings" && strings.HasPrefix(strings.TrimSpace(value), "{"):
+		named = namesLoopVar(value)
+	case option == "--settings":
+		named = fileNamesLoopVar(expandPath(value, dir))
+	case option == "--profile":
+		codexHome, known := codexHome(env, dir)
+		named = !known || fileNamesLoopVar(filepath.Join(codexHome, value+".config.toml"))
+	}
+	return named
 }
 
 // harnessOption names the option word w gives harness, "--settings",
@@ -229,19 +238,7 @@ func settingsFile(path string) bool {
 			return true
 		}
 	}
-	roots := []string{home}
-	for q := filepath.Dir(at); ; q = filepath.Dir(q) {
-		roots = append(roots, q)
-		if q == filepath.Dir(q) {
-			break
-		}
-	}
-	var targets []string
-	for _, root := range roots {
-		for _, name := range []string{"settings.json", "settings.local.json"} {
-			targets = append(targets, filepath.Join(root, ".claude", name))
-		}
-	}
+	targets := claudeSettingTargets(at)
 	targets = append(targets, filepath.Join(home, ".codex", "config.toml"), filepath.Join(home, ".codex", "hooks.json"),
 		repos.Path())
 	for _, t := range targets {
@@ -259,4 +256,21 @@ func settingsFile(path string) bool {
 		}
 	}
 	return false
+}
+
+func claudeSettingTargets(at string) []string {
+	roots := []string{home}
+	for q := filepath.Dir(at); ; q = filepath.Dir(q) {
+		roots = append(roots, q)
+		if q == filepath.Dir(q) {
+			break
+		}
+	}
+	var targets []string
+	for _, root := range roots {
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			targets = append(targets, filepath.Join(root, ".claude", name))
+		}
+	}
+	return targets
 }

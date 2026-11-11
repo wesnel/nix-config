@@ -208,25 +208,8 @@ func checkWords(what string, values []string) error {
 // YYYYMMDDHHMMSS, with -2, -3 and so on for a slug this host already used
 // that second.
 func (c Config) New(o NewOptions, now time.Time) (Created, error) {
-	if strings.TrimSpace(o.Title) == "" {
-		return Created{}, refusal.New("a plan needs a title. Pass one with `--title`")
-	}
-	if err := checkLine("title", o.Title); err != nil {
+	if err := o.validate(); err != nil {
 		return Created{}, err
-	}
-	for what, values := range map[string][]string{"repo": o.Repos, "branch": o.Branches, "worktree": o.Worktrees,
-		"session": o.Sessions} {
-		if err := checkWords(what, values); err != nil {
-			return Created{}, err
-		}
-	}
-	if o.Harness != "" {
-		if err := checkWords("harness", []string{o.Harness}); err != nil {
-			return Created{}, err
-		}
-	}
-	if (o.Parent != "" || o.Part != "") && o.Template != "" {
-		return Created{}, refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
 	}
 	if o.Parent != "" || o.Part != "" {
 		return c.newPart(o, now)
@@ -242,21 +225,9 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if ws.ID != "" {
 		extra["WORKSTREAM"] = ws.link()
 	}
-	var sections map[string][]string
-	if o.Template != "" {
-		var err error
-		if sections, err = c.template(o.Template); err != nil {
-			return Created{}, err
-		}
-	}
-	if o.Goal != "" {
-		if err := checkLine("goal", o.Goal); err != nil {
-			return Created{}, err
-		}
-		if sections == nil {
-			sections = map[string][]string{}
-		}
-		sections["Goal"] = append([]string{o.Goal}, sections["Goal"]...)
+	sections, err := c.newSections(o)
+	if err != nil {
+		return Created{}, err
 	}
 	// A plan is written even where the notes repository could not be
 	// cloned, unsynced, with Init's note as the warning. The plan then
@@ -270,24 +241,9 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			return Created{}, err
 		}
 	}
-	base := now.Format(nameTimeLayout) + "-" + o.Slug
-	var p Plan
-	for i := 1; p.Name == "" && i < 1000; i++ {
-		try := base
-		if i > 1 {
-			try = fmt.Sprintf("%s-%d", base, i)
-		}
-		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
-		text := withTemplate(planText(o, candidate.Name, c.Host, extra, true), sections)
-		switch err := writeNew(candidate.file(""), text); {
-		case err == nil:
-			p = candidate
-		case !errors.Is(err, fs.ErrExist):
-			return Created{}, err
-		}
-	}
-	if p.Name == "" {
-		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
+	p, err := c.createPlanFile(o, now, extra, sections)
+	if err != nil {
+		return Created{}, err
 	}
 	err = p.withLock(func(l *lockedPlan) error {
 		if err := l.append("#+title: Log of " + p.Name + "\n"); err != nil {
@@ -815,18 +771,7 @@ func HostBranches() []string {
 			continue
 		}
 		for _, f := range files {
-			props, err := planHeading(f)
-			if err != nil {
-				continue
-			}
-			for _, v := range strings.Fields(props["BRANCHES"]) {
-				if _, b, ok := strings.Cut(v, ".."); ok {
-					v = b
-				}
-				if v != "" && !slices.Contains(out, v) {
-					out = append(out, v)
-				}
-			}
+			out = appendHostBranches(out, f)
 		}
 	}
 	return out
@@ -867,51 +812,145 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 			continue
 		}
 		for _, f := range files {
-			data, err := readPlan(f)
-			if err != nil {
-				continue
+			if f, ok := p.findFile(f, o, worktree); ok {
+				found = append(found, f)
 			}
-			var top heading
-			for _, h := range parseOrg(string(data)) {
-				if h.Level == 1 && sectionTitle(h) == "Plan" {
-					top = h
-					break
-				}
-			}
-			var matched []string
-			for _, v := range strings.Fields(top.Props["SESSIONS"]) {
-				if o.Session != "" && (v == o.Session || strings.HasSuffix(v, ":"+o.Session)) {
-					matched = append(matched, "session")
-					break
-				}
-			}
-			worktrees := strings.Fields(top.Props["WORKTREES"])
-			for _, pair := range strings.Fields(top.Props["OWNERS"]) {
-				if wt, _, ok := strings.Cut(pair, "="); ok {
-					worktrees = append(worktrees, wt)
-				}
-			}
-			for _, v := range worktrees {
-				if worktree != "" && filepath.Clean(v) == worktree {
-					matched = append(matched, "worktree")
-					break
-				}
-			}
-			for _, v := range strings.Fields(top.Props["BRANCHES"]) {
-				if _, branch, ok := strings.Cut(v, ".."); ok {
-					v = branch
-				}
-				if o.Branch != "" && v == o.Branch {
-					matched = append(matched, "branch")
-					break
-				}
-			}
-			if len(matched) == 0 {
-				continue
-			}
-			found = append(found, Found{Plan: p.file(""), File: f, Part: partOf(f), Title: orgTitle(string(data)),
-				State: top.Props["STATUS"], Matched: matched})
 		}
 	}
 	return found, nil
+}
+
+func (o NewOptions) validate() error {
+	if strings.TrimSpace(o.Title) == "" {
+		return refusal.New("a plan needs a title. Pass one with `--title`")
+	}
+	if err := checkLine("title", o.Title); err != nil {
+		return err
+	}
+	for what, values := range map[string][]string{"repo": o.Repos, "branch": o.Branches, "worktree": o.Worktrees,
+		"session": o.Sessions} {
+		if err := checkWords(what, values); err != nil {
+			return err
+		}
+	}
+	if o.Harness != "" {
+		if err := checkWords("harness", []string{o.Harness}); err != nil {
+			return err
+		}
+	}
+	if (o.Parent != "" || o.Part != "") && o.Template != "" {
+		return refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
+	}
+	return nil
+}
+
+func (c Config) createPlanFile(o NewOptions, now time.Time, extra map[string]string, sections map[string][]string) (Plan, error) {
+	base := now.Format(nameTimeLayout) + "-" + o.Slug
+	var p Plan
+	for i := 1; p.Name == "" && i < 1000; i++ {
+		try := base
+		if i > 1 {
+			try = fmt.Sprintf("%s-%d", base, i)
+		}
+		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
+		text := withTemplate(planText(o, candidate.Name, c.Host, extra, true), sections)
+		switch err := writeNew(candidate.file(""), text); {
+		case err == nil:
+			p = candidate
+		case !errors.Is(err, fs.ErrExist):
+			return Plan{}, err
+		}
+	}
+	if p.Name == "" {
+		return Plan{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
+	}
+	return p, nil
+}
+
+func appendHostBranches(out []string, f string) []string {
+	props, err := planHeading(f)
+	if err != nil {
+		return out
+	}
+	for _, v := range strings.Fields(props["BRANCHES"]) {
+		if _, b, ok := strings.Cut(v, ".."); ok {
+			v = b
+		}
+		if v != "" && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func matchPlan(props map[string]string, o FindOptions, worktree string) []string {
+	var matched []string
+	for _, v := range strings.Fields(props["SESSIONS"]) {
+		if o.Session != "" && (v == o.Session || strings.HasSuffix(v, ":"+o.Session)) {
+			matched = append(matched, "session")
+			break
+		}
+	}
+	worktrees := strings.Fields(props["WORKTREES"])
+	for _, pair := range strings.Fields(props["OWNERS"]) {
+		if wt, _, ok := strings.Cut(pair, "="); ok {
+			worktrees = append(worktrees, wt)
+		}
+	}
+	for _, v := range worktrees {
+		if worktree != "" && filepath.Clean(v) == worktree {
+			matched = append(matched, "worktree")
+			break
+		}
+	}
+	for _, v := range strings.Fields(props["BRANCHES"]) {
+		if _, branch, ok := strings.Cut(v, ".."); ok {
+			v = branch
+		}
+		if o.Branch != "" && v == o.Branch {
+			matched = append(matched, "branch")
+			break
+		}
+	}
+	return matched
+}
+
+func (p Plan) findFile(f string, o FindOptions, worktree string) (Found, bool) {
+	data, err := readPlan(f)
+	if err != nil {
+		return Found{}, false
+	}
+	var top heading
+	for _, h := range parseOrg(string(data)) {
+		if h.Level == 1 && sectionTitle(h) == "Plan" {
+			top = h
+			break
+		}
+	}
+	matched := matchPlan(top.Props, o, worktree)
+	if len(matched) == 0 {
+		return Found{}, false
+	}
+	return Found{Plan: p.file(""), File: f, Part: partOf(f), Title: orgTitle(string(data)),
+		State: top.Props["STATUS"], Matched: matched}, true
+}
+
+func (c Config) newSections(o NewOptions) (map[string][]string, error) {
+	var sections map[string][]string
+	if o.Template != "" {
+		var err error
+		if sections, err = c.template(o.Template); err != nil {
+			return nil, err
+		}
+	}
+	if o.Goal != "" {
+		if err := checkLine("goal", o.Goal); err != nil {
+			return nil, err
+		}
+		if sections == nil {
+			sections = map[string][]string{}
+		}
+		sections["Goal"] = append([]string{o.Goal}, sections["Goal"]...)
+	}
+	return sections, nil
 }

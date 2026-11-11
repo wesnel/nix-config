@@ -296,32 +296,9 @@ func TodayOf(c plans.Config, now time.Time) (Today, error) {
 		repo = filepath.Dir(c.Dir)
 	}
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	type found struct {
-		day  time.Time
-		kind string
-		file string
-	}
-	var all []found
-	for _, year := range []int{now.Year() - 1, now.Year()} {
-		dir := filepath.Join(repo, "digests", strconv.Itoa(year))
-		if !realDir(filepath.Join(repo, "digests")) || !realDir(dir) {
-			continue
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return t, err
-		}
-		for _, entry := range entries {
-			m := digestFile.FindStringSubmatch(entry.Name())
-			if m == nil || !entry.Type().IsRegular() {
-				continue
-			}
-			day, err := time.ParseInLocation("2006-01-02", fmt.Sprintf("%d-%s-%s", year, m[1], m[2]), now.Location())
-			if err != nil || day.After(today) || day.Before(today.AddDate(0, 0, -7)) {
-				continue
-			}
-			all = append(all, found{day, "demo", filepath.Join(dir, entry.Name())})
-		}
+	all, err := recentDigests(repo, now, today)
+	if err != nil {
+		return t, err
 	}
 	var newest time.Time
 	for _, f := range all {
@@ -347,6 +324,38 @@ func TodayOf(c plans.Config, now time.Time) (Today, error) {
 		t.Date = newest.Format("2006-01-02")
 	}
 	return t, errors.Join(errs...)
+}
+
+type digestCandidate struct {
+	day  time.Time
+	kind string
+	file string
+}
+
+func recentDigests(repo string, now, today time.Time) ([]digestCandidate, error) {
+	var all []digestCandidate
+	for _, year := range []int{now.Year() - 1, now.Year()} {
+		dir := filepath.Join(repo, "digests", strconv.Itoa(year))
+		if !realDir(filepath.Join(repo, "digests")) || !realDir(dir) {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			m := digestFile.FindStringSubmatch(entry.Name())
+			if m == nil || !entry.Type().IsRegular() {
+				continue
+			}
+			day, err := time.ParseInLocation("2006-01-02", fmt.Sprintf("%d-%s-%s", year, m[1], m[2]), now.Location())
+			if err != nil || day.After(today) || day.Before(today.AddDate(0, 0, -7)) {
+				continue
+			}
+			all = append(all, digestCandidate{day, "demo", filepath.Join(dir, entry.Name())})
+		}
+	}
+	return all, nil
 }
 
 // realDir reports whether dir is a directory and not a link to one.
@@ -443,21 +452,7 @@ func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Tim
 	if err != nil {
 		return Plan{}, err
 	}
-	ready := map[string]bool{}
-	for _, id := range st.ReadySteps {
-		ready[id] = true
-	}
-	for _, s := range st.Steps {
-		if !steps[s.ID] || len(plan.Steps) == maxSteps {
-			continue
-		}
-		keyword := s.Keyword
-		if !keywords[keyword] {
-			keyword = "unknown"
-		}
-		plan.Steps = append(plan.Steps, Step{ID: s.ID, Order: len(plan.Steps), Title: text(s.Title, short),
-			Keyword: keyword, Ready: ready[s.ID]})
-	}
+	plan.Steps = planSteps(st, steps)
 	ds, err := p.Decisions(true)
 	if err != nil {
 		return Plan{}, err
@@ -471,20 +466,7 @@ func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Tim
 	}
 	askable := plans.Askable(qs)
 	for _, q := range askable[:min(len(askable), maxQuestions)] {
-		question := Question{ID: q.ID, Text: text(q.Question, medium), Context: text(q.Context, long), Options: []Option{}}
-		if priority.MatchString(q.Priority) {
-			question.Priority = q.Priority
-		}
-		answers := append([]string{q.Recommendation}, q.Alternatives...)
-		for i, a := range answers {
-			if a == "" || len(question.Options) == maxOptions {
-				continue
-			}
-			label, why, _ := strings.Cut(a, " :: ")
-			question.Options = append(question.Options, Option{Key: string(rune('A' + i)), Label: text(label, short),
-				Why: text(why, medium), Recommended: i == 0})
-		}
-		plan.Questions = append(plan.Questions, question)
+		plan.Questions = append(plan.Questions, questionOf(q))
 	}
 	items, err := p.OpenItems(now)
 	if err != nil {
@@ -496,6 +478,43 @@ func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Tim
 		}
 	}
 	return plan, nil
+}
+
+func planSteps(st plans.Status, steps map[string]bool) []Step {
+	out := []Step{}
+	ready := map[string]bool{}
+	for _, id := range st.ReadySteps {
+		ready[id] = true
+	}
+	for _, s := range st.Steps {
+		if !steps[s.ID] || len(out) == maxSteps {
+			continue
+		}
+		keyword := s.Keyword
+		if !keywords[keyword] {
+			keyword = "unknown"
+		}
+		out = append(out, Step{ID: s.ID, Order: len(out), Title: text(s.Title, short),
+			Keyword: keyword, Ready: ready[s.ID]})
+	}
+	return out
+}
+
+func questionOf(q plans.Question) Question {
+	question := Question{ID: q.ID, Text: text(q.Question, medium), Context: text(q.Context, long), Options: []Option{}}
+	if priority.MatchString(q.Priority) {
+		question.Priority = q.Priority
+	}
+	answers := append([]string{q.Recommendation}, q.Alternatives...)
+	for i, a := range answers {
+		if a == "" || len(question.Options) == maxOptions {
+			continue
+		}
+		label, why, _ := strings.Cut(a, " :: ")
+		question.Options = append(question.Options, Option{Key: string(rune('A' + i)), Label: text(label, short),
+			Why: text(why, medium), Recommended: i == 0})
+	}
+	return question
 }
 
 // updated is Plan.Updated of p: a log's times carry no zone, so only this

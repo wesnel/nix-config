@@ -82,28 +82,15 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	out := []OpenItem{}
 	errs := []error{err}
 	for _, p := range ps {
-		items, err := p.OpenItems(now)
-		if err == nil {
-			var ws WorkstreamRef
-			if ws, err = p.Workstream(); ws.ID != "" && titles[ws.ID] != "" {
-				ws.Title = titles[ws.ID]
-			}
-			for i := range items {
-				items[i].Workstream, items[i].WorkstreamID = ws.Title, ws.ID
-			}
-		}
+		items, err := p.openItemsInWorkstream(now, titles)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
 			continue
 		}
 		for _, it := range items {
-			if f.Kind != "" && it.Kind != f.Kind {
-				continue
+			if f.includes(it, now.Location()) {
+				out = append(out, it)
 			}
-			if at, err := time.ParseInLocation(logTime, it.Time, now.Location()); !f.Since.IsZero() && (err != nil || at.Before(f.Since)) {
-				continue
-			}
-			out = append(out, it)
 		}
 	}
 	rank := map[string]int{"": len(out)}
@@ -140,32 +127,7 @@ func (p Plan) OpenItems(now time.Time) ([]OpenItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	first := map[string]string{}
-	for _, e := range events {
-		if first[e.Item] == "" {
-			first[e.Item] = e.Time
-		}
-	}
-	created := ""
-	if len(events) > 0 {
-		created = events[0].Time
-	}
-	// at is the time of item id's first event of kind, or "" for any
-	// kind; else its plan's first event's.
-	at := func(id, kind string) string {
-		if kind == "" {
-			if t := first[id]; t != "" {
-				return t
-			}
-			return created
-		}
-		for _, e := range events {
-			if e.Item == id && e.Kind == kind {
-				return e.Time
-			}
-		}
-		return created
-	}
+	at := eventTimes(events)
 	byID := map[string]item{}
 	for _, it := range list {
 		byID[it.ID] = it
@@ -265,4 +227,55 @@ func OpenItemsOrg(items []OpenItem) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func (f OpenFilter) includes(it OpenItem, loc *time.Location) bool {
+	if f.Kind != "" && it.Kind != f.Kind {
+		return false
+	}
+	at, err := time.ParseInLocation(logTime, it.Time, loc)
+	return f.Since.IsZero() || err == nil && !at.Before(f.Since)
+}
+
+// eventTimes looks up an item's first event of kind, or any kind for "";
+// an item without one uses its plan's first event.
+func eventTimes(events []Event) func(string, string) string {
+	first := map[string]string{}
+	for _, e := range events {
+		if first[e.Item] == "" {
+			first[e.Item] = e.Time
+		}
+	}
+	created := ""
+	if len(events) > 0 {
+		created = events[0].Time
+	}
+	return func(id, kind string) string {
+		if kind == "" {
+			if t := first[id]; t != "" {
+				return t
+			}
+			return created
+		}
+		for _, e := range events {
+			if e.Item == id && e.Kind == kind {
+				return e.Time
+			}
+		}
+		return created
+	}
+}
+
+func (p Plan) openItemsInWorkstream(now time.Time, titles map[string]string) ([]OpenItem, error) {
+	items, err := p.OpenItems(now)
+	if err == nil {
+		var ws WorkstreamRef
+		if ws, err = p.Workstream(); ws.ID != "" && titles[ws.ID] != "" {
+			ws.Title = titles[ws.ID]
+		}
+		for i := range items {
+			items[i].Workstream, items[i].WorkstreamID = ws.Title, ws.ID
+		}
+	}
+	return items, err
 }

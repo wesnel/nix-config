@@ -85,8 +85,20 @@ func envSearch(text string, calls []call) bool {
 		grep.words[0] != "grep" {
 		return false
 	}
-	fold := false
-	syntax := map[byte]bool{} // 'G' basic, 'E' extended, 'F' fixed strings
+	re, ok := environmentPattern(grep)
+	if !ok {
+		return false
+	}
+	for _, kv := range environ() {
+		if name, _, _ := strings.Cut(kv, "="); secretName.MatchString(name) && re.MatchString(kv) {
+			return false
+		}
+	}
+	return true
+}
+
+func grepSearchArgs(grep call) (patterns []string, syntax map[byte]bool, fold bool, ok bool) {
+	syntax = map[byte]bool{}
 	flag := func(f byte) {
 		switch f {
 		case 'i', 'y':
@@ -95,11 +107,10 @@ func envSearch(text string, calls []call) bool {
 			syntax[f] = true
 		}
 	}
-	var patterns []string
 	for i, w := range grep.words[1:] {
 		switch {
 		case grep.expands[i+1]:
-			return false
+			return nil, nil, false, false
 		case w == "--ignore-case":
 			fold = true
 		case w == "--extended-regexp":
@@ -113,20 +124,35 @@ func envSearch(text string, calls []call) bool {
 				flag(w[1])
 			}
 		case strings.HasPrefix(w, "--"):
-			return false
+			return nil, nil, false, false
 		case strings.HasPrefix(w, "-") && w != "-":
-			for _, f := range []byte(w[1:]) {
-				if f != 'i' && f != 'y' && !grepFlags["-"+string(f)] {
-					return false
-				}
-				flag(f)
+			if !grepSearchFlags(w[1:], flag) {
+				return nil, nil, false, false
 			}
 		default:
 			patterns = append(patterns, w)
 		}
 	}
+	return patterns, syntax, fold, true
+}
+
+func grepSearchFlags(flags string, flag func(byte)) bool {
+	for _, f := range []byte(flags) {
+		if f != 'i' && f != 'y' && !grepFlags["-"+string(f)] {
+			return false
+		}
+		flag(f)
+	}
+	return true
+}
+
+func environmentPattern(grep call) (*regexp.Regexp, bool) {
+	patterns, syntax, fold, ok := grepSearchArgs(grep)
+	if !ok {
+		return nil, false
+	}
 	if len(patterns) != 1 || len(syntax) > 1 || strings.ContainsAny(patterns[0], "\\{\n") {
-		return false
+		return nil, false
 	}
 	p := patterns[0]
 	switch {
@@ -134,10 +160,10 @@ func envSearch(text string, calls []call) bool {
 		p = regexp.QuoteMeta(p)
 	case !syntax['E']:
 		if i := strings.LastIndex(p, "^"); i > 0 {
-			return false
+			return nil, false
 		}
 		if i := strings.Index(p, "$"); i >= 0 && i != len(p)-1 {
-			return false
+			return nil, false
 		}
 		var quoted strings.Builder
 		for _, c := range p {
@@ -154,14 +180,9 @@ func envSearch(text string, calls []call) bool {
 	}
 	re, err := regexp.Compile(p)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	for _, kv := range environ() {
-		if name, _, _ := strings.Cut(kv, "="); secretName.MatchString(name) && re.MatchString(kv) {
-			return false
-		}
-	}
-	return true
+	return re, true
 }
 
 // guardFile reports whether path holds the hooks that run the guard, or
@@ -209,11 +230,34 @@ func rawPath(word, dir string) string {
 // The program is the named call's; the paths and redirections are read
 // from every word.
 func checkSession(c call, dir string) string {
-	words, p := c.words, c.named()
+	p := c.named()
 	name, args := base(p.words[0]), p.words[1:]
 	if versionedEmacsclient.MatchString(name) {
 		name = "emacsclient"
 	}
+	if reason := checkSessionPaths(c, name, args, dir); reason != "" {
+		return reason
+	}
+	if versionedEmacs.MatchString(name) {
+		name = "emacs"
+	}
+	if reason := checkSessionProgram(name, args, c, p, dir); reason != "" {
+		return reason
+	}
+	if name == "rm" || name == "unlink" || name == "find" && hasFlag(args, "-delete") {
+		if slices.Contains(loadSettings().ExcludedCommands, "trash-scratch *") {
+			return "The configured trash-scratch wrapper moves validated untracked worktree and session scratch paths to the Trash. " +
+				"Run `trash-scratch PATH...` as a command of its own in place of rm, unlink or find -delete."
+		}
+		if trashOnPath() {
+			return useTrash
+		}
+	}
+	return ""
+}
+
+func checkSessionPaths(c call, name string, args []string, dir string) string {
+	words := c.words
 	for _, w := range words {
 		if reason := checkSecretPath(w, dir); reason != "" {
 			return reason
@@ -253,34 +297,34 @@ func checkSession(c call, dir string) string {
 	if gitConfigShellWrite(name, args, redirected, dir) {
 		return gitConfigShell
 	}
-	has := func(flags ...string) bool {
-		for _, a := range args {
-			for _, f := range flags {
-				if a == f || strings.HasPrefix(a, f+"=") {
-					return true
-				}
-			}
-		}
-		return false
+	return ""
+}
+
+func checkSessionProgram(name string, args []string, c, p call, dir string) string {
+	switch name {
+	case "sudo", "doas", "su", "pkexec", "run0", "osascript":
+		return checkSessionPrivilege(name, args)
+	case "env", "printenv", "export", "declare", "typeset", "set":
+		return checkSessionEnvironment(name, args)
+	case "security", "git-credential-osxkeychain", "sops", "op", "pass":
+		return checkSessionCredentials(name, args)
+	case "ngrok", "darwin-rebuild", "nixos-rebuild", "home-manager", "nh", "activate", "activate-user", "nix", "nix-env", "nix-collect-garbage", "cachix":
+		return checkSessionSystem(name, args, p)
+	case "npm", "pnpm", "yarn", "bun", "cargo", "vsce", "twine", "gem", "docker", "podman", "goreleaser":
+		return checkSessionPublishing(name, args)
+	case "pkill", "killall", "kill", "gpgconf", "ssh", "scp", "sftp", "launchctl":
+		return checkSessionProcesses(name, args, dir)
+	case "emacsclient", "emacs", "Emacs":
+		return checkSessionEmacs(name, args, c, dir)
+	case "rm", "trash", "trash-scratch", "chmod", "chown", "chgrp", "mv", "find", "tee", "cp", "ln", "install", "truncate", "dd", "sed", "perl":
+		return checkSessionFiles(name, args, dir)
+	case "claude", "codex":
+		return checkSessionPermissions(name, args)
 	}
-	positional := func() []string {
-		var out []string
-		for _, a := range args {
-			if !strings.HasPrefix(a, "-") {
-				out = append(out, a)
-			}
-		}
-		return out
-	}
-	first := func() string {
-		if p := positional(); len(p) > 0 {
-			return p[0]
-		}
-		return ""
-	}
-	if versionedEmacs.MatchString(name) {
-		name = "emacs"
-	}
+	return ""
+}
+
+func checkSessionPrivilege(name string, args []string) string {
 	switch name {
 	case "sudo", "doas", "su", "pkexec", "run0":
 		return rootCommand
@@ -288,8 +332,14 @@ func checkSession(c call, dir string) string {
 		if strings.Contains(strings.ToLower(strings.Join(args, " ")), "with administrator privileges") {
 			return rootCommand
 		}
+	}
+	return ""
+}
+
+func checkSessionEnvironment(name string, args []string) string {
+	switch name {
 	case "env", "printenv":
-		names := positional()
+		names := bareArgs(args)
 		if len(names) == 0 {
 			return secretRead
 		}
@@ -299,50 +349,61 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "export", "declare", "typeset":
-		if len(args) == 0 || has("-p") {
+		if len(args) == 0 || hasFlag(args, "-p") {
 			return secretRead
 		}
 	case "set":
 		if len(args) == 0 {
 			return secretRead
 		}
+	}
+	return ""
+}
+
+func checkSessionCredentials(name string, args []string) string {
+	switch name {
 	case "security":
-		switch first() {
-		case "dump-keychain", "export":
-			return secretRead
-		case "find-generic-password", "find-internet-password":
-			for _, a := range args {
-				if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a[1:], "wg") {
-					return secretRead
-				}
-			}
-		}
+		return checkKeychain(args)
 	case "git-credential-osxkeychain":
 		return secretRead
 	case "sops":
-		if has("-d", "--decrypt") || first() == "decrypt" || first() == "exec-env" || first() == "exec-file" {
+		if hasFlag(args, "-d", "--decrypt") || firstBareArg(args) == "decrypt" || firstBareArg(args) == "exec-env" || firstBareArg(args) == "exec-file" {
 			return secretRead
 		}
 	case "op":
-		p := positional()
+		p := bareArgs(args)
 		if len(p) > 0 && (p[0] == "read" || p[0] == "inject" || (p[0] == "item" && len(p) > 1 && p[1] == "get")) {
 			return secretRead
 		}
 	case "pass":
-		switch p := positional(); {
+		switch p := bareArgs(args); {
 		case len(p) == 0:
 		case p[0] == "ls" || p[0] == "list" || p[0] == "find" || p[0] == "search" || p[0] == "help" || p[0] == "version":
 		default:
 			return secretRead
 		}
-	case "ngrok":
-		if p := positional(); len(p) > 0 && p[0] == "api" {
-			for _, w := range p[1:] {
-				if ngrokWrites[w] {
-					return ngrokWrite
-				}
+	}
+	return ""
+}
+
+func checkKeychain(args []string) string {
+	switch firstBareArg(args) {
+	case "dump-keychain", "export":
+		return secretRead
+	case "find-generic-password", "find-internet-password":
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a[1:], "wg") {
+				return secretRead
 			}
 		}
+	}
+	return ""
+}
+
+func checkSessionSystem(name string, args []string, p call) string {
+	switch name {
+	case "ngrok":
+		return checkNgrokAPI(args)
 	case "darwin-rebuild", "nixos-rebuild", "home-manager", "nh":
 		for _, a := range args {
 			if switchVerbs[name][a] {
@@ -354,23 +415,7 @@ func checkSession(c call, dir string) string {
 			return systemSwitch
 		}
 	case "nix":
-		p := positional()
-		switch {
-		case len(p) > 1 && p[0] == "profile" && set("install", "add", "remove", "upgrade", "rollback", "wipe-history")[p[1]]:
-			return systemSwitch
-		case len(p) > 0 && p[0] == "copy":
-			for i, a := range args {
-				to := strings.TrimPrefix(a, "--to=")
-				if a == "--to" && i+1 < len(args) {
-					to = args[i+1]
-				} else if to == a {
-					continue
-				}
-				if strings.Contains(to, "://") && !strings.HasPrefix(to, "file://") {
-					return systemSwitch
-				}
-			}
-		}
+		return checkNixActivation(args)
 	case "nix-env":
 		for _, a := range args {
 			if set("--install", "--uninstall", "--upgrade", "--set", "--rollback", "--switch-generation", "--delete-generations")[a] ||
@@ -379,45 +424,85 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "nix-collect-garbage":
-		if has("-d", "--delete-old", "--delete-older-than") {
+		if hasFlag(args, "-d", "--delete-old", "--delete-older-than") {
 			return systemSwitch
 		}
 	case "cachix":
-		if first() == "push" {
+		if firstBareArg(args) == "push" {
 			return systemSwitch
 		}
-	case "npm", "pnpm", "yarn", "bun":
-		for _, p := range positional() {
-			if p == "publish" {
-				return publishing
+	}
+	return ""
+}
+
+func checkNgrokAPI(args []string) string {
+	if p := bareArgs(args); len(p) > 0 && p[0] == "api" {
+		for _, w := range p[1:] {
+			if ngrokWrites[w] {
+				return ngrokWrite
 			}
 		}
+	}
+	return ""
+}
+
+func checkNixActivation(args []string) string {
+	p := bareArgs(args)
+	switch {
+	case len(p) > 1 && p[0] == "profile" && set("install", "add", "remove", "upgrade", "rollback", "wipe-history")[p[1]]:
+		return systemSwitch
+	case len(p) > 0 && p[0] == "copy":
+		for i, a := range args {
+			to := strings.TrimPrefix(a, "--to=")
+			if a == "--to" && i+1 < len(args) {
+				to = args[i+1]
+			} else if to == a {
+				continue
+			}
+			if strings.Contains(to, "://") && !strings.HasPrefix(to, "file://") {
+				return systemSwitch
+			}
+		}
+	}
+	return ""
+}
+
+func checkSessionPublishing(name string, args []string) string {
+	switch name {
+	case "npm", "pnpm", "yarn", "bun":
+		if slices.Contains(bareArgs(args), "publish") {
+			return publishing
+		}
 	case "cargo", "vsce":
-		if first() == "publish" {
+		if firstBareArg(args) == "publish" {
 			return publishing
 		}
 	case "twine":
-		if first() == "upload" {
+		if firstBareArg(args) == "upload" {
 			return publishing
 		}
 	case "gem":
-		if first() == "push" {
+		if firstBareArg(args) == "push" {
 			return publishing
 		}
 	case "docker", "podman":
-		for _, p := range positional() {
-			if p == "push" {
-				return publishing
-			}
+		if slices.Contains(bareArgs(args), "push") {
+			return publishing
 		}
-		if has("--push") {
+		if hasFlag(args, "--push") {
 			return publishing
 		}
 	case "goreleaser":
-		if !set("check", "build", "healthcheck", "init", "jsonschema", "completion", "help", "man")[first()] &&
-			!has("-h", "--help", "-v", "--version") {
+		if !set("check", "build", "healthcheck", "init", "jsonschema", "completion", "help", "man")[firstBareArg(args)] &&
+			!hasFlag(args, "-h", "--help", "-v", "--version") {
 			return publishing
 		}
+	}
+	return ""
+}
+
+func checkSessionProcesses(name string, args []string, dir string) string {
+	switch name {
 	case "pkill", "killall":
 		for _, a := range args {
 			if !strings.HasPrefix(a, "-") {
@@ -427,27 +512,38 @@ func checkSession(c call, dir string) string {
 	case "kill":
 		return checkKill(args)
 	case "gpgconf":
-		if has("--kill") {
+		if hasFlag(args, "--kill") {
 			return killing
 		}
 	case "ssh", "scp", "sftp":
-		for i, a := range args {
-			if name == "ssh" && ((a == "-O" && i+1 < len(args) && (args[i+1] == "exit" || args[i+1] == "stop")) || a == "-Oexit" || a == "-Ostop") {
-				return killing
-			}
-		}
-		if sshTouch(name, args, dir) {
-			return keyTouch
-		}
+		return checkSSHSession(name, args, dir)
 	case "launchctl":
-		switch first() {
+		switch firstBareArg(args) {
 		case "bootout", "unload", "remove":
 			return killing
 		case "kickstart":
-			if has("-k") {
+			if hasFlag(args, "-k") {
 				return killing
 			}
 		}
+	}
+	return ""
+}
+
+func checkSSHSession(name string, args []string, dir string) string {
+	for i, a := range args {
+		if name == "ssh" && ((a == "-O" && i+1 < len(args) && (args[i+1] == "exit" || args[i+1] == "stop")) || a == "-Oexit" || a == "-Ostop") {
+			return killing
+		}
+	}
+	if sshTouch(name, args, dir) {
+		return keyTouch
+	}
+	return ""
+}
+
+func checkSessionEmacs(name string, args []string, c call, dir string) string {
+	switch name {
 	case "emacsclient":
 		_, _, alternate, ok := emacsclientSockets(args)
 		fallback, set := envValue(c.env, "ALTERNATE_EDITOR")
@@ -467,8 +563,8 @@ func checkSession(c call, dir string) string {
 		// A batch Emacs with none of the operator's init is how elisp is
 		// checked: a sandboxed command reaches no Emacs daemon. Anything
 		// else starts an Emacs that runs the operator's init, or a daemon.
-		quick := has("-Q", "--quick")
-		batch := has("--batch", "-batch", "--script", "-script")
+		quick := hasFlag(args, "-Q", "--quick")
+		batch := hasFlag(args, "--batch", "-batch", "--script", "-script")
 		daemon := slices.ContainsFunc(args, emacsDaemonFlag)
 		if !quick || !batch || daemon {
 			return "Only a batch Emacs with none of the operator's init checks elisp here: no daemon is reachable from " +
@@ -479,36 +575,16 @@ func checkSession(c call, dir string) string {
 		if emacsBatchServerCall(emacsBatchLisp(args, dir)) {
 			return emacsBatchServer
 		}
+	}
+	return ""
+}
+
+func checkSessionFiles(name string, args []string, dir string) string {
+	switch name {
 	case "rm", "trash", "trash-scratch", "chmod", "chown", "chgrp", "mv":
-		recursive := name == "trash" || name == "trash-scratch" || name == "mv"
-		for _, a := range args {
-			recursive = recursive || a == "--recursive" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "rR"))
-		}
-		// Only paths named literally, or by ~ or $HOME: the guard does not
-		// resolve a relative path, which would put every build under /nix.
-		for _, a := range positional() {
-			if protectedTree(expandPath(a, ""), recursive) {
-				return destroying
-			}
-		}
-		if name != "chmod" && name != "chown" && name != "chgrp" {
-			for _, a := range positional() {
-				if guardFile(expandPath(a, dir)) {
-					return guardOff
-				}
-			}
-		}
+		return checkProtectedRemoval(name, args, dir)
 	case "find":
-		if has("-delete") || strings.Contains(strings.Join(args, " "), "-exec rm") {
-			for _, a := range args {
-				if strings.HasPrefix(a, "-") {
-					break
-				}
-				if protectedTree(expandPath(a, ""), true) {
-					return destroying
-				}
-			}
-		}
+		return checkFindRemoval(args)
 	case "tee", "cp", "ln", "install", "truncate", "dd", "sed", "perl":
 		if (name == "sed" || name == "perl") && !inPlace(name, args) {
 			break
@@ -518,8 +594,50 @@ func checkSession(c call, dir string) string {
 				return guardOff
 			}
 		}
+	}
+	return ""
+}
+
+func checkProtectedRemoval(name string, args []string, dir string) string {
+	recursive := name == "trash" || name == "trash-scratch" || name == "mv"
+	for _, a := range args {
+		recursive = recursive || a == "--recursive" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "rR"))
+	}
+	// Only paths named literally, or by ~ or $HOME: the guard does not
+	// resolve a relative path, which would put every build under /nix.
+	for _, a := range bareArgs(args) {
+		if protectedTree(expandPath(a, ""), recursive) {
+			return destroying
+		}
+	}
+	if name != "chmod" && name != "chown" && name != "chgrp" {
+		for _, a := range bareArgs(args) {
+			if guardFile(expandPath(a, dir)) {
+				return guardOff
+			}
+		}
+	}
+	return ""
+}
+
+func checkFindRemoval(args []string) string {
+	if hasFlag(args, "-delete") || strings.Contains(strings.Join(args, " "), "-exec rm") {
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") {
+				break
+			}
+			if protectedTree(expandPath(a, ""), true) {
+				return destroying
+			}
+		}
+	}
+	return ""
+}
+
+func checkSessionPermissions(name string, args []string) string {
+	switch name {
 	case "claude":
-		if has("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions") ||
+		if hasFlag(args, "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions") ||
 			strings.Contains(strings.Join(args, " "), "bypassPermissions") {
 			return guardOff
 		}
@@ -528,15 +646,6 @@ func checkSession(c call, dir string) string {
 			if strings.HasPrefix(a, "--dangerously-bypass") {
 				return guardOff
 			}
-		}
-	}
-	if name == "rm" || name == "unlink" || name == "find" && has("-delete") {
-		if slices.Contains(loadSettings().ExcludedCommands, "trash-scratch *") {
-			return "The configured trash-scratch wrapper moves validated untracked worktree and session scratch paths to the Trash. " +
-				"Run `trash-scratch PATH...` as a command of its own in place of rm, unlink or find -delete."
-		}
-		if trashOnPath() {
-			return useTrash
 		}
 	}
 	return ""
@@ -548,25 +657,16 @@ func checkSession(c call, dir string) string {
 // value ends the cluster; for awk, gawk's inplace extension (-i inplace,
 // --include=inplace).
 func inPlace(name string, args []string) bool {
-	values := map[string]string{"sed": "efl", "perl": "eEMmIxCdDF"}[name]
-	for i, a := range args {
-		switch name {
-		case "sed", "perl":
-			if a == "--in-place" || strings.HasPrefix(a, "--in-place=") {
+	switch name {
+	case "sed", "perl":
+		values := map[string]string{"sed": "efl", "perl": "eEMmIxCdDF"}[name]
+		for _, a := range args {
+			if editsInPlace(a, values) {
 				return true
 			}
-			if !strings.HasPrefix(a, "-") || strings.HasPrefix(a, "--") {
-				continue
-			}
-			for _, c := range a[1:] {
-				if c == 'i' {
-					return true
-				}
-				if strings.ContainsRune(values, c) {
-					break
-				}
-			}
-		case "awk", "gawk":
+		}
+	case "awk", "gawk":
+		for i, a := range args {
 			var ext string
 			switch {
 			case a == "-i" || a == "--include":
@@ -581,6 +681,24 @@ func inPlace(name string, args []string) bool {
 			if strings.TrimSuffix(ext, ".awk") == "inplace" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func editsInPlace(a, values string) bool {
+	if a == "--in-place" || strings.HasPrefix(a, "--in-place=") {
+		return true
+	}
+	if !strings.HasPrefix(a, "-") || strings.HasPrefix(a, "--") {
+		return false
+	}
+	for _, c := range a[1:] {
+		if c == 'i' {
+			return true
+		}
+		if strings.ContainsRune(values, c) {
+			break
 		}
 	}
 	return false
@@ -602,66 +720,77 @@ func writeTargets(name string, args []string) []string {
 		}
 		return out
 	case "cp", "ln", "install":
-		// Their short options that take a value, besides -t.
-		values := map[string]string{"cp": "S", "ln": "S", "install": "gmoS"}[name]
-		var target string
-		var paths []string
-		options := true
-		for i := 0; i < len(args); i++ {
-			a := args[i]
-			next := func() string {
-				if i+1 < len(args) {
-					i++
-					return args[i]
-				}
-				return ""
-			}
-			switch {
-			case !options || a == "-" || !strings.HasPrefix(a, "-"):
-				paths = append(paths, a)
-			case a == "--":
-				options = false
-			case a == "--target-directory":
-				target = next()
-			case strings.HasPrefix(a, "--target-directory="):
-				target = strings.TrimPrefix(a, "--target-directory=")
-			case a == "--suffix" || a == "--mode" || a == "--owner" || a == "--group":
-				next()
-			case strings.HasPrefix(a, "--"):
-			default:
-				// A cluster of short options, which -t DIR or another
-				// option's value ends, attached or as the next word.
-				for j := 1; j < len(a); j++ {
-					c := a[j]
-					if c != 't' && !strings.ContainsRune(values, rune(c)) {
-						continue
-					}
-					v := a[j+1:]
-					if v == "" {
-						v = next()
-					}
-					if c == 't' {
-						target = v
-					}
-					break
-				}
-			}
-		}
-		sources := paths
-		var out []string
-		if target == "" {
-			if len(paths) == 0 {
-				return nil
-			}
-			target, sources = paths[len(paths)-1], paths[:len(paths)-1]
-			out = append(out, target)
-		}
-		for _, s := range sources {
-			out = append(out, filepath.Join(target, filepath.Base(s)))
-		}
-		return out
+		return copyTargets(name, args)
 	}
 	return args
+}
+
+func copyTargets(name string, args []string) []string {
+	target, paths := copyOperands(name, args)
+	sources := paths
+	var out []string
+	if target == "" {
+		if len(paths) == 0 {
+			return nil
+		}
+		target, sources = paths[len(paths)-1], paths[:len(paths)-1]
+		out = append(out, target)
+	}
+	for _, s := range sources {
+		out = append(out, filepath.Join(target, filepath.Base(s)))
+	}
+	return out
+}
+
+func copyOperands(name string, args []string) (target string, paths []string) {
+	// Their short options that take a value, besides -t.
+	values := map[string]string{"cp": "S", "ln": "S", "install": "gmoS"}[name]
+	options := true
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		next := func() string {
+			if i+1 < len(args) {
+				i++
+				return args[i]
+			}
+			return ""
+		}
+		switch {
+		case !options || a == "-" || !strings.HasPrefix(a, "-"):
+			paths = append(paths, a)
+		case a == "--":
+			options = false
+		case a == "--target-directory":
+			target = next()
+		case strings.HasPrefix(a, "--target-directory="):
+			target = strings.TrimPrefix(a, "--target-directory=")
+		case a == "--suffix" || a == "--mode" || a == "--owner" || a == "--group":
+			next()
+		case strings.HasPrefix(a, "--"):
+		default:
+			// A cluster of short options, which -t DIR or another
+			// option's value ends, attached or as the next word.
+			if flag, v, found := copyOptionValue(a, values, next); found && flag == 't' {
+				target = v
+			}
+		}
+	}
+	return target, paths
+}
+
+func copyOptionValue(a, values string, next func() string) (byte, string, bool) {
+	for j := 1; j < len(a); j++ {
+		c := a[j]
+		if c != 't' && !strings.ContainsRune(values, rune(c)) {
+			continue
+		}
+		v := a[j+1:]
+		if v == "" {
+			v = next()
+		}
+		return c, v, true
+	}
+	return 0, "", false
 }
 
 const realEnvironment = "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, which is the operator's to act on. " +
@@ -767,26 +896,17 @@ func terminalReader(text string) bool {
 	if found == nil || len(found.words) == 0 || found.expands[0] {
 		return false
 	}
+	return callReadsTerminal(*found)
+}
+
+func callReadsTerminal(found call) bool {
 	name, args := base(found.words[0]), found.words[1:]
-	var positional []string
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			positional = append(positional, a)
-		}
-	}
-	has := func(flags ...string) bool {
-		for _, a := range args {
-			if set(flags...)[strings.SplitN(a, "=", 2)[0]] {
-				return true
-			}
-		}
-		return false
-	}
+	positional := bareArgs(args)
 	switch {
 	case shells[name], name == "ruby", name == "perl", name == "lua":
 		return len(positional) == 0
 	case strings.HasPrefix(name, "python"), name == "node":
-		return has("-i", "--interactive") || len(positional) == 0
+		return hasFlag(args, "-i", "--interactive") || len(positional) == 0
 	case name == "irb", name == "ghci":
 		return true
 	case name == "nix":
@@ -794,7 +914,7 @@ func terminalReader(text string) bool {
 	case name == "sqlite3":
 		return len(positional) <= 1
 	case name == "psql", name == "mysql":
-		return !has("-c", "--command", "-f", "--file", "-e", "--execute")
+		return !hasFlag(args, "-c", "--command", "-f", "--file", "-e", "--execute")
 	case name == "cat":
 		for _, p := range positional {
 			if p != "-" {
@@ -942,13 +1062,6 @@ func emacsBatchServerCall(text string) bool {
 // or server-force-delete, which the server check reads.
 func lispCode(text string) string {
 	b := []byte(text)
-	blank := func(from, to int) {
-		for k := from; k < to; k++ {
-			if b[k] != '\n' {
-				b[k] = ' '
-			}
-		}
-	}
 	for i := 0; i < len(b); i++ {
 		switch b[i] {
 		case '?':
@@ -962,24 +1075,36 @@ func lispCode(text string) string {
 			for end < len(b) && b[end] != '\n' {
 				end++
 			}
-			blank(i, end)
+			blankLisp(b, i, end)
 			i = end
 		case '"':
-			end := i + 1
-			for end < len(b) && b[end] != '"' {
-				if b[end] == '\\' {
-					end++
-				}
-				end++
-			}
+			end := lispStringEnd(b, i+1)
 			before := strings.TrimRight(string(b[:i]), " \t\n")
 			if !strings.HasSuffix(before, "server-name") && !strings.HasSuffix(before, "server-force-delete") {
-				blank(i+1, min(end, len(b)))
+				blankLisp(b, i+1, min(end, len(b)))
 			}
 			i = end
 		}
 	}
 	return string(b)
+}
+
+func blankLisp(b []byte, from, to int) {
+	for k := from; k < to; k++ {
+		if b[k] != '\n' {
+			b[k] = ' '
+		}
+	}
+}
+
+func lispStringEnd(b []byte, end int) int {
+	for end < len(b) && b[end] != '"' {
+		if b[end] == '\\' {
+			end++
+		}
+		end++
+	}
+	return end
 }
 
 var (
@@ -1046,71 +1171,88 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 			i++
 			return args[i], true
 		}
-		switch {
-		case a == "--":
+		if a == "--" {
 			return sockets, serverFile, alternate, true
-		case a == "-nw":
+		}
+		if a == "-nw" {
+			continue
+		}
+		var name, value string
+		valid := true
+		switch {
 		case strings.HasPrefix(a, "--"):
-			name, value, hasValue := strings.Cut(a[2:], "=")
-			var matches []string
-			for o := range emacsclientOptions {
-				if o == name {
-					matches = []string{o}
-					break
-				}
-				if strings.HasPrefix(o, name) {
-					matches = append(matches, o)
-				}
-			}
-			if len(matches) != 1 {
-				return nil, false, nil, false
-			}
-			o := matches[0]
-			if !emacsclientOptions[o] {
-				continue
-			}
-			if !hasValue {
-				if value, hasValue = next(); !hasValue {
-					return nil, false, nil, false
-				}
-			}
-			switch o {
-			case "socket-name":
-				sockets = append(sockets, value)
-			case "server-file":
-				serverFile = true
-			case "alternate-editor":
-				alternate = &value
-			}
+			name, value, valid = emacsclientLongOption(a, next)
 		case strings.HasPrefix(a, "-") && len(a) > 1:
-			for j := 1; j < len(a); j++ {
-				c := a[j]
-				if strings.IndexByte(emacsclientFlags, c) >= 0 {
-					continue
-				}
-				if strings.IndexByte(emacsclientValued, c) < 0 {
-					return nil, false, nil, false
-				}
-				value := a[j+1:]
-				if value == "" {
-					var has bool
-					if value, has = next(); !has {
-						return nil, false, nil, false
-					}
-				}
-				switch c {
-				case 's':
-					sockets = append(sockets, value)
-				case 'f':
-					serverFile = true
-				case 'a':
-					alternate = &value
-				}
-				break
-			}
+			name, value, valid = emacsclientShortOption(a, next)
+		}
+		if !valid {
+			return nil, false, nil, false
+		}
+		switch name {
+		case "socket-name":
+			sockets = append(sockets, value)
+		case "server-file":
+			serverFile = true
+		case "alternate-editor":
+			alternate = &value
 		}
 	}
 	return sockets, serverFile, alternate, true
+}
+
+func emacsclientLongName(name string) string {
+	var matches []string
+	for o := range emacsclientOptions {
+		if o == name {
+			matches = []string{o}
+			break
+		}
+		if strings.HasPrefix(o, name) {
+			matches = append(matches, o)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
+}
+
+func emacsclientLongOption(a string, next func() (string, bool)) (string, string, bool) {
+	name, value, hasValue := strings.Cut(a[2:], "=")
+	name = emacsclientLongName(name)
+	if name == "" {
+		return "", "", false
+	}
+	if !emacsclientOptions[name] {
+		return "", "", true
+	}
+	if !hasValue {
+		if value, hasValue = next(); !hasValue {
+			return "", "", false
+		}
+	}
+	return name, value, true
+}
+
+func emacsclientShortOption(a string, next func() (string, bool)) (string, string, bool) {
+	for j := 1; j < len(a); j++ {
+		c := a[j]
+		if strings.IndexByte(emacsclientFlags, c) >= 0 {
+			continue
+		}
+		if strings.IndexByte(emacsclientValued, c) < 0 {
+			return "", "", false
+		}
+		value := a[j+1:]
+		if value == "" {
+			var has bool
+			if value, has = next(); !has {
+				return "", "", false
+			}
+		}
+		return map[byte]string{'s': "socket-name", 'f': "server-file", 'a': "alternate-editor"}[c], value, true
+	}
+	return "", "", true
 }
 
 // testEmacsSocket reports whether an emacsclient call reaches only a test
@@ -1483,6 +1625,44 @@ func nearPlans(path string) (inside, holds bool) {
 // tar or unzip extracting there, or a ditto copying there. changedFiles
 // names only the directory.
 func checkCopyIntoPlans(name string, args []string, dir string) string {
+	unpackInto := unpackTargets(name, args)
+	for _, d := range unpackInto {
+		if inside, _ := nearPlans(expandPath(d, dir)); inside {
+			return planWrite
+		}
+	}
+	if !set("cp", "mv", "install", "ln", "rsync")[name] {
+		return ""
+	}
+	var positional []string
+	recursive := name == "rsync"
+	for _, a := range args {
+		switch {
+		case a == "-r" || a == "-R" || a == "-a" || a == "--recursive" || a == "--archive" ||
+			len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "rRa"):
+			recursive = true
+		case !strings.HasPrefix(a, "-"):
+			positional = append(positional, a)
+		}
+	}
+	dests, sources := targetDirectories(args), positional
+	if len(dests) == 0 && len(positional) > 1 {
+		dests, sources = positional[len(positional)-1:], positional[:len(positional)-1]
+	}
+	for _, d := range dests {
+		if inside, _ := nearPlans(expandPath(d, dir)); !inside {
+			continue
+		}
+		for _, s := range sources {
+			if reason := copiedPlanSource(s, recursive, dir); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
+func unpackTargets(name string, args []string) []string {
 	var unpackInto []string
 	switch name {
 	case "tar", "gtar", "bsdtar":
@@ -1510,48 +1690,19 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 			unpackInto = positional[len(positional)-1:]
 		}
 	}
-	for _, d := range unpackInto {
-		if inside, _ := nearPlans(expandPath(d, dir)); inside {
-			return planWrite
-		}
+	return unpackInto
+}
+
+func copiedPlanSource(s string, recursive bool, dir string) string {
+	base := filepath.Base(s)
+	if plans.IsLog(base) {
+		return appendOnly
 	}
-	if !set("cp", "mv", "install", "ln", "rsync")[name] {
-		return ""
+	if plans.IsPlan(base) || plans.IsWorkstream(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
+		return planWrite
 	}
-	if !set("cp", "mv", "install", "ln", "rsync")[name] {
-		return ""
-	}
-	var positional []string
-	recursive := name == "rsync"
-	for _, a := range args {
-		switch {
-		case a == "-r" || a == "-R" || a == "-a" || a == "--recursive" || a == "--archive" ||
-			len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "rRa"):
-			recursive = true
-		case !strings.HasPrefix(a, "-"):
-			positional = append(positional, a)
-		}
-	}
-	dests, sources := targetDirectories(args), positional
-	if len(dests) == 0 && len(positional) > 1 {
-		dests, sources = positional[len(positional)-1:], positional[:len(positional)-1]
-	}
-	for _, d := range dests {
-		if inside, _ := nearPlans(expandPath(d, dir)); !inside {
-			continue
-		}
-		for _, s := range sources {
-			base := filepath.Base(s)
-			if plans.IsLog(base) {
-				return appendOnly
-			}
-			if plans.IsPlan(base) || plans.IsWorkstream(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
-				return planWrite
-			}
-			if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {
-				return planWrite
-			}
-		}
+	if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {
+		return planWrite
 	}
 	return ""
 }
@@ -1651,26 +1802,9 @@ func changedFiles(name string, args, redirected []string) []string {
 			targets = append(targets, positional[1:]...)
 		}
 	case "cp", "install", "ln", "rsync":
-		var dirs []string
-		if name != "rsync" { // rsync's -t keeps times
-			dirs = targetDirectories(args)
-		}
-		switch {
-		case len(dirs) > 0:
-			targets = append(targets, dirs...)
-		case name == "install" && contains(args, "-d"):
-			targets = append(targets, positional...)
-		case name == "ln" && len(positional) == 1:
-			targets = append(targets, ".") // the link, named as its target, where ln runs
-		case len(positional) > 0:
-			targets = append(targets, positional[len(positional)-1])
-		}
+		targets = append(targets, copyDestinations(name, args, positional)...)
 	case "dd":
-		for _, a := range args {
-			if of, ok := strings.CutPrefix(a, "of="); ok {
-				targets = append(targets, of)
-			}
-		}
+		targets = append(targets, writeTargets(name, args)...)
 	case "tar", "gtar", "bsdtar":
 		if tarExtracts(args) {
 			targets = append(targets, dirOr("-C", "--directory")...)
@@ -1701,6 +1835,24 @@ func changedFiles(name string, args, redirected []string) []string {
 		targets = append(targets, formatWrites(name, args, positional)...)
 	}
 	return targets
+}
+
+func copyDestinations(name string, args, positional []string) []string {
+	var dirs []string
+	if name != "rsync" { // rsync's -t keeps times
+		dirs = targetDirectories(args)
+	}
+	switch {
+	case len(dirs) > 0:
+		return dirs
+	case name == "install" && contains(args, "-d"):
+		return positional
+	case name == "ln" && len(positional) == 1:
+		return []string{"."} // the link, named as its target, where ln runs
+	case len(positional) > 0:
+		return positional[len(positional)-1:]
+	}
+	return nil
 }
 
 // goFormatValues are gofmt's and goimports' options whose value is the
@@ -1843,22 +1995,7 @@ func goWrites(args []string) []string {
 	if len(args) == 0 {
 		return nil
 	}
-	var out []string
-	output := false
-	for i, a := range args[1:] {
-		name, value, attached := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		if !strings.HasPrefix(a, "-") || !set("o", "coverprofile", "cpuprofile", "memprofile", "blockprofile",
-			"mutexprofile", "trace", "outputdir")[name] {
-			continue
-		}
-		if !attached && i+2 < len(args) {
-			value = args[i+2]
-		}
-		if value != "" {
-			out = append(out, value)
-			output = output || name == "o"
-		}
-	}
+	out, output := goOutputFiles(args)
 	switch args[0] {
 	case "generate", "fmt", "fix", "get", "work":
 		out = append(out, ".")
@@ -1884,6 +2021,26 @@ func goWrites(args []string) []string {
 		}
 	}
 	return out
+}
+
+func goOutputFiles(args []string) ([]string, bool) {
+	var out []string
+	output := false
+	for i, a := range args[1:] {
+		name, value, attached := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || !set("o", "coverprofile", "cpuprofile", "memprofile", "blockprofile",
+			"mutexprofile", "trace", "outputdir")[name] {
+			continue
+		}
+		if !attached && i+2 < len(args) {
+			value = args[i+2]
+		}
+		if value != "" {
+			out = append(out, value)
+			output = output || name == "o"
+		}
+	}
+	return out, output
 }
 
 // goDir is the directory the environment variable names, or the one under
@@ -2169,41 +2326,48 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		return unreadable
 	}
 	for _, c := range changes {
-		path := expandPath(c.path, dir)
-		if reason := checkSecretPath(path, dir); reason != "" {
+		if reason := checkFileChange(c, dir); reason != "" {
 			return reason
 		}
-		if reason := checkSecretWrite(path, dir); reason != "" {
-			return reason
-		}
-		if planLog(path) {
-			return appendOnly
-		}
-		if planFile(path) {
-			return planWrite
-		}
-		if reason := checkFileAgentSettings(path, dir); reason != "" {
-			return reason
-		}
-		if spaceStateFile(path) {
-			return spaceState
-		}
-		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
-			return reason
-		}
-		switch {
-		case unscanned(path, dir):
-			return configUnscanned
-		case sharedConfigFile(path, dir):
-			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
-			return guardOff
-		case guardFile(path):
-			existing, _ := os.ReadFile(path)
-			for _, text := range []string{c.text, string(existing)} {
-				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
-					return guardOff
-				}
+	}
+	return ""
+}
+
+func checkFileChange(c change, dir string) string {
+	path := expandPath(c.path, dir)
+	if reason := checkSecretPath(path, dir); reason != "" {
+		return reason
+	}
+	if reason := checkSecretWrite(path, dir); reason != "" {
+		return reason
+	}
+	if planLog(path) {
+		return appendOnly
+	}
+	if planFile(path) {
+		return planWrite
+	}
+	if reason := checkFileAgentSettings(path, dir); reason != "" {
+		return reason
+	}
+	if spaceStateFile(path) {
+		return spaceState
+	}
+	if reason := gitConfigAlias(path, dir, c.text); reason != "" {
+		return reason
+	}
+	switch {
+	case unscanned(path, dir):
+		return configUnscanned
+	case sharedConfigFile(path, dir):
+		return sharedConfig
+	case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
+		return guardOff
+	case guardFile(path):
+		existing, _ := os.ReadFile(path)
+		for _, text := range []string{c.text, string(existing)} {
+			if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
+				return guardOff
 			}
 		}
 	}
@@ -2414,75 +2578,10 @@ func (g gitState) submoduleURLs() []string {
 // reach one over SSH: fetch, pull, ls-remote, clone, archive --remote, the
 // remote verbs that read the remote, and submodule update and add.
 func overSSH(sub string, rest []string, g gitState) bool {
-	has := func(flags ...string) bool {
-		for _, w := range rest {
-			if set(flags...)[strings.SplitN(w, "=", 2)[0]] {
-				return true
-			}
-		}
+	if hasFlag(rest, "-h", "--help") {
 		return false
 	}
-	if has("-h", "--help") {
-		return false
-	}
-	p := positionals(sub, rest)
-	var repos []string // remotes' names, groups or URLs; "" the default remote
-	switch sub {
-	case "fetch", "pull":
-		switch {
-		case has("--all"):
-			repos = g.allRemotes()
-		case has("--multiple"):
-			repos = p
-		case len(p) == 0:
-			repos = []string{""}
-		default:
-			repos = p[:1]
-		}
-	case "ls-remote":
-		if has("--get-url") {
-			return false
-		}
-		repos = append(p, "")[:1]
-	case "clone":
-		repos = p[:min(1, len(p))]
-	case "archive":
-		for i, w := range rest {
-			if r, ok := strings.CutPrefix(w, "--remote="); ok {
-				repos = append(repos, r)
-			} else if w == "--remote" && i+1 < len(rest) {
-				repos = append(repos, rest[i+1])
-			}
-		}
-	case "remote":
-		if len(p) == 0 {
-			return false
-		}
-		switch names := p[1:]; p[0] {
-		case "update":
-			repos = names
-			if len(repos) == 0 {
-				repos = g.allRemotes()
-			}
-		case "show":
-			if !has("-n") {
-				repos = names
-			}
-		case "prune":
-			repos = names
-		case "set-head":
-			if has("-a", "--auto") {
-				repos = names[:min(1, len(names))]
-			}
-		}
-	case "submodule":
-		switch {
-		case len(p) > 1 && p[0] == "add":
-			repos = p[1:2]
-		case len(p) > 0 && p[0] == "update":
-			repos = g.submoduleURLs()
-		}
-	}
+	repos := gitRemoteOperands(sub, rest, g)
 	for _, repo := range repos {
 		names := []string{repo}
 		if repo != "" && !sshURL(repo) {
@@ -2497,6 +2596,73 @@ func overSSH(sub string, rest []string, g gitState) bool {
 	return false
 }
 
+func gitRemoteOperands(sub string, rest []string, g gitState) []string {
+	p := positionals(sub, rest)
+	var repos []string // remotes' names, groups or URLs; "" the default remote
+	switch sub {
+	case "fetch", "pull":
+		switch {
+		case hasFlag(rest, "--all"):
+			repos = g.allRemotes()
+		case hasFlag(rest, "--multiple"):
+			repos = p
+		case len(p) == 0:
+			repos = []string{""}
+		default:
+			repos = p[:1]
+		}
+	case "ls-remote":
+		if hasFlag(rest, "--get-url") {
+			return nil
+		}
+		repos = append(p, "")[:1]
+	case "clone":
+		repos = p[:min(1, len(p))]
+	case "archive":
+		for i, w := range rest {
+			if r, ok := strings.CutPrefix(w, "--remote="); ok {
+				repos = append(repos, r)
+			} else if w == "--remote" && i+1 < len(rest) {
+				repos = append(repos, rest[i+1])
+			}
+		}
+	case "remote":
+		repos = gitRemoteContacts(p, rest, g)
+	case "submodule":
+		switch {
+		case len(p) > 1 && p[0] == "add":
+			repos = p[1:2]
+		case len(p) > 0 && p[0] == "update":
+			repos = g.submoduleURLs()
+		}
+	}
+	return repos
+}
+
+func gitRemoteContacts(p, rest []string, g gitState) (repos []string) {
+	if len(p) == 0 {
+		return nil
+	}
+	switch names := p[1:]; p[0] {
+	case "update":
+		repos = names
+		if len(repos) == 0 {
+			repos = g.allRemotes()
+		}
+	case "show":
+		if !hasFlag(rest, "-n") {
+			repos = names
+		}
+	case "prune":
+		repos = names
+	case "set-head":
+		if hasFlag(rest, "-a", "--auto") {
+			repos = names[:min(1, len(names))]
+		}
+	}
+	return repos
+}
+
 // sshValueFlags are the options of ssh, scp and sftp whose value is the
 // next word, or the rest of the word.
 var sshValueFlags = map[string]string{"ssh": "BbcDEeFIiJLlmOopQRSWw", "scp": "cDFiJloPSX", "sftp": "BbcDFiJloPRSsX"}
@@ -2505,37 +2671,9 @@ var sshValueFlags = map[string]string{"ssh": "BbcDEeFIiJLlmOopQRSWw", "scp": "cD
 // one of touchHosts, by the name given or the HostName ssh's config gives
 // it.
 func sshTouch(name string, args []string, dir string) bool {
-	values := sshValueFlags[name]
-	var config []string // -F, for ssh -G
-	var destinations []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--" {
-			destinations = append(destinations, args[i+1:]...)
-			break
-		}
-		if !strings.HasPrefix(a, "-") || a == "-" {
-			destinations = append(destinations, a)
-			continue
-		}
-		for j := 1; j < len(a); j++ {
-			flag := a[j]
-			if name == "ssh" && (flag == 'G' || flag == 'V' || flag == 'Q') {
-				return false // prints and exits without connecting
-			}
-			if !strings.ContainsRune(values, rune(flag)) {
-				continue
-			}
-			value := a[j+1:]
-			if value == "" && i+1 < len(args) {
-				i++
-				value = args[i]
-			}
-			if flag == 'F' {
-				config = []string{"-F", expandPath(value, dir)}
-			}
-			break
-		}
+	config, destinations, connects := sshDestinations(name, args, dir)
+	if !connects {
+		return false
 	}
 	if name != "scp" && len(destinations) > 1 {
 		destinations = destinations[:1] // the rest is ssh's command
@@ -2559,6 +2697,48 @@ func sshTouch(name string, args []string, dir string) bool {
 		}
 	}
 	return false
+}
+
+func sshDestinations(name string, args []string, dir string) (config, destinations []string, connects bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			destinations = append(destinations, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			destinations = append(destinations, a)
+			continue
+		}
+		flag, value, used, connects := sshOption(name, a, args[i+1:])
+		if !connects {
+			return nil, nil, false
+		}
+		i += used
+		if flag == 'F' {
+			config = []string{"-F", expandPath(value, dir)}
+		}
+	}
+	return config, destinations, true
+}
+
+func sshOption(name, a string, rest []string) (flag byte, value string, used int, connects bool) {
+	values := sshValueFlags[name]
+	for j := 1; j < len(a); j++ {
+		flag = a[j]
+		if name == "ssh" && (flag == 'G' || flag == 'V' || flag == 'Q') {
+			return 0, "", 0, false
+		}
+		if !strings.ContainsRune(values, rune(flag)) {
+			continue
+		}
+		value = a[j+1:]
+		if value == "" && len(rest) > 0 {
+			value, used = rest[0], 1
+		}
+		return flag, value, used, true
+	}
+	return 0, "", 0, true
 }
 
 // sshHost is the host a destination of ssh, scp or sftp names, and whether
@@ -2696,32 +2876,6 @@ func (g gitState) main() bool {
 // session that need the repository's state: destroying the main checkout's
 // work and losing history.
 func checkGitSession(sub string, rest []string, g gitState) string {
-	has := func(flags ...string) bool {
-		for _, w := range rest {
-			for _, f := range flags {
-				if w == f || strings.HasPrefix(w, f+"=") {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	short := func(letter string) bool {
-		for _, w := range rest {
-			if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, letter) {
-				return true
-			}
-		}
-		return false
-	}
-	everything := func() bool {
-		for _, w := range rest {
-			if w == "." || w == "./" || w == ":/" || w == "*" || w == ":(top)" {
-				return true
-			}
-		}
-		return false
-	}
 	first := ""
 	if len(rest) > 0 {
 		first = rest[0]
@@ -2731,22 +2885,17 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		return sharedStash
 	case sub == "stash" && untaggedStash(rest):
 		return untagged
-	case sub == "worktree" && first == "add" && (has("--force") || short("f")):
+	case sub == "worktree" && first == "add" && (hasFlag(rest, "--force") || shortFlag(rest, "f")):
 		return "--force adds a worktree on a branch another worktree has, or over a path git keeps for one, which can take another session's place. " +
 			"Add a worktree of your own without it (`git worktree add -b NEW ../PATH BRANCH`), or ask the operator."
-	case (sub == "switch" || sub == "checkout") && has("--ignore-other-worktrees"):
+	case (sub == "switch" || sub == "checkout") && hasFlag(rest, "--ignore-other-worktrees"):
 		return "A branch checked out in another worktree belongs to whoever works there, and checking it out here too moves it under them. " +
 			"Work on a branch of your own in a worktree of your own (`git worktree add -b NEW ../PATH BRANCH`), or ask the operator."
-	case sub == "reset" && has("--hard"),
-		sub == "checkout" && (has("-f", "--force") || everything()),
-		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
-		sub == "switch" && has("-f", "--force", "--discard-changes"),
-		sub == "clean" && (short("f") || has("--force")),
-		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
+	case discardsCheckout(sub, rest):
 		if g.main() {
 			return mainCheckout
 		}
-	case sub == "add" && (has("-A", "--all") || everything()):
+	case sub == "add" && (hasFlag(rest, "-A", "--all") || allPaths(rest)):
 		if g.main() {
 			return sweeping
 		}
@@ -2755,34 +2904,87 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			return "Changing branch in the repository's main checkout moves the operator's working tree under them. " +
 				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask the operator."
 		}
+	default:
+		return checkGitHistory(sub, rest, g)
+	}
+	return ""
+}
+
+func shortFlag(args []string, letter string) bool {
+	for _, w := range args {
+		if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, letter) {
+			return true
+		}
+	}
+	return false
+}
+
+func allPaths(args []string) bool {
+	for _, w := range args {
+		if w == "." || w == "./" || w == ":/" || w == "*" || w == ":(top)" {
+			return true
+		}
+	}
+	return false
+}
+
+func discardsCheckout(sub string, rest []string) bool {
+	switch {
+	case sub == "reset" && hasFlag(rest, "--hard"),
+		sub == "checkout" && (hasFlag(rest, "-f", "--force") || allPaths(rest)),
+		sub == "restore" && allPaths(rest) && (!hasFlag(rest, "--staged", "-S") || hasFlag(rest, "--worktree", "-W")),
+		sub == "switch" && hasFlag(rest, "-f", "--force", "--discard-changes"),
+		sub == "clean" && (shortFlag(rest, "f") || hasFlag(rest, "--force")),
+		sub == "stash" && hasFlag(rest, "-u", "--include-untracked", "-a", "--all"):
+		return true
+	}
+	return false
+}
+
+func checkGitHistory(sub string, rest []string, g gitState) string {
+	first := ""
+	if len(rest) > 0 {
+		first = rest[0]
+	}
+	switch {
 	case sub == "reflog" && (first == "expire" || first == "delete"),
-		sub == "gc" && (has("--prune=now") || has("--prune=all")),
+		sub == "gc" && (hasFlag(rest, "--prune=now") || hasFlag(rest, "--prune=all")),
 		sub == "prune", sub == "filter-branch", sub == "filter-repo",
 		sub == "worktree" && first == "prune":
 		return historyLoss
-	case sub == "update-ref" && has("-d"):
+	case sub == "update-ref" && hasFlag(rest, "-d"):
 		for _, w := range rest {
 			if strings.HasPrefix(w, "refs/heads/") {
 				return historyLoss
 			}
 		}
-	case sub == "branch" && (has("-D") || (has("-d", "--delete") && has("-f", "--force")) || short("D")):
-		for _, b := range rest {
-			if strings.HasPrefix(b, "-") {
-				continue
-			}
-			if g.unpushed("refs/heads/" + b) {
-				return historyLoss
-			}
+	case sub == "branch" && (hasFlag(rest, "-D") || (hasFlag(rest, "-d", "--delete") && hasFlag(rest, "-f", "--force")) || shortFlag(rest, "D")):
+		return checkUnpushedBranches(rest, g)
+	case sub == "worktree" && first == "remove" && hasFlag(rest, "-f", "--force"):
+		return checkDirtyWorktrees(rest[1:], g)
+	}
+	return ""
+}
+
+func checkUnpushedBranches(rest []string, g gitState) string {
+	for _, b := range rest {
+		if strings.HasPrefix(b, "-") {
+			continue
 		}
-	case sub == "worktree" && first == "remove" && has("-f", "--force"):
-		for _, p := range rest[1:] {
-			if strings.HasPrefix(p, "-") {
-				continue
-			}
-			if (gitState{dir: expandPath(p, g.dir)}).dirty() {
-				return historyLoss
-			}
+		if g.unpushed("refs/heads/" + b) {
+			return historyLoss
+		}
+	}
+	return ""
+}
+
+func checkDirtyWorktrees(paths []string, g gitState) string {
+	for _, p := range paths {
+		if strings.HasPrefix(p, "-") {
+			continue
+		}
+		if (gitState{dir: expandPath(p, g.dir)}).dirty() {
+			return historyLoss
 		}
 	}
 	return ""
@@ -2889,3 +3091,31 @@ func changesBranch(sub string, args []string, g gitState) bool {
 
 // sharedKeys are the git config keys whose shared value is the operator's.
 var sharedKeys = regexp.MustCompile(`^(core\.(bare|worktree|hookspath|fsmonitor|sshcommand|pager|editor)|include(if)?\..*|filter\..*|diff\..*\.textconv|remote\..*|url\..*|credential(\..*)?)$`)
+
+func hasFlag(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f || strings.HasPrefix(a, f+"=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func bareArgs(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func firstBareArg(args []string) string {
+	if p := bareArgs(args); len(p) > 0 {
+		return p[0]
+	}
+	return ""
+}

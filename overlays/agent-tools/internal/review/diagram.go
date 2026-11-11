@@ -189,136 +189,25 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 		r.base + " " + r.tip + "` shows the change."
 	out := &Output{Reviewer: "diagram", Range: r.given, Tip: r.tip, Findings: []*Finding{}, Dropped: []Dropped{},
 		Unverified: []string{}, Diagrams: []DiagramResult{}}
-	drop := func(what any, why string) {
-		raw, _ := json.Marshal(what)
-		out.Dropped = append(out.Dropped, Dropped{Finding: raw, Reason: why})
-	}
 	blob := func(path string) ([]byte, error) { return diagram.GitRepo(r.top).Blob(r.tip, path) }
 
-	// draw returns the diagrams the diagrammer replied with.
-	draw := func(prompt string) ([]json.RawMessage, error) {
-		var lastErr error
-		for attempt := 0; attempt < 2; attempt++ {
-			wt, remove, err := worktree(ctx, s, r)
-			if err != nil {
-				return nil, err
-			}
-			reply, err := ClaudeRun(ctx, Claude{Checkout: wt, Agent: "diagrammer", Prompt: prompt, Schema: drawSchema(),
-				Timeout: timeout, Log: log, availability: base.availability})
-			remove()
-			var bad badReply
-			switch {
-			case errors.As(err, &bad):
-			case err != nil:
-				return nil, err
-			default:
-				run.model = reply.Model
-				var parsed struct {
-					Diagrams   []json.RawMessage `json:"diagrams"`
-					Unverified []string          `json:"unverified"`
-				}
-				if err = json.Unmarshal([]byte(reply.Text), &parsed); err == nil && parsed.Diagrams != nil {
-					out.Unverified = append(out.Unverified, parsed.Unverified...)
-					return parsed.Diagrams, nil
-				}
-				err = fmt.Errorf("the reply is not the diagrams the schema describes (%v)", err)
-			}
-			lastErr = err
-			run.failures = append(run.failures, "The diagrammer's reply could not be used: "+err.Error())
-			prompt += "\n## Your last reply\n\nYour last reply could not be used: " + err.Error() +
-				". Reply again with the JSON the schema describes, and nothing else.\n"
-		}
-		return nil, lastErr
-	}
-	// checked parses and checks one drawn diagram, or says why it is dropped.
-	checked := func(raw json.RawMessage) (*diagram.Diagram, diagram.Result, string) {
-		d, err := diagram.Parse(raw)
-		if err != nil {
-			return nil, diagram.Result{}, err.Error()
-		}
-		if d.At != r.tip {
-			return nil, diagram.Result{}, fmt.Sprintf("it is drawn at %s, not TIP %s", d.At, r.tip)
-		}
-		res := diagram.Check(d, blob, nil)
-		if len(res.Failures) > 0 {
-			var why []string
-			for _, f := range res.Failures {
-				why = append(why, f.Element+": "+f.Reason)
-			}
-			return nil, res, "it does not hold to the code at TIP: " + strings.Join(why, "; ")
-		}
-		return d, res, ""
-	}
-	// critique has Codex read the code against d, and returns its findings,
-	// and why it is inconclusive when it faults nothing yet passes nothing:
-	// it left elements unverified, or each finding it gave was dropped.
-	critique := func(d *diagram.Diagram, res diagram.Result) ([]*Finding, string, error) {
-		wt, remove, err := worktree(ctx, s, r)
-		if err != nil {
-			return nil, "", err
-		}
-		defer remove()
-		fc := &focus{checks: diagramChecks, categories: d.IDs()}
-		ci := critiqueInputs{r: r, d: d, checked: res, where: in.where}
-		reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: critiquePrompt(ci), Schema: fc.schema(), Model: model,
-			Timeout: timeout, Log: log, Git: worktreeGit(ctx, wt), availability: base.availability})
-		if err != nil {
-			return nil, "", err
-		}
-		crit, err := validate(reply.Text, r, wt, "diagram", fc)
-		if err != nil {
-			return nil, "", err
-		}
-		crit, dropped := critiqueFindings(crit, d)
-		out.Dropped = append(out.Dropped, crit.Dropped...)
-		out.Dropped = append(out.Dropped, dropped...)
-		inconclusive := ""
-		switch {
-		case len(crit.Findings) > 0:
-		case len(crit.Unverified) > 0:
-			inconclusive = "the critic could not verify: " + strings.Join(crit.Unverified, "; ")
-		case len(crit.Dropped)+len(dropped) > 0:
-			inconclusive = "each of the critique's findings was dropped"
-		}
-		return crit.Findings, inconclusive, nil
-	}
-	// keep adds d to the record with verdict, and an unresolved one's
-	// critique as findings about it.
-	keep := func(d *diagram.Diagram, verdict, why string, findings []*Finding) {
-		out.diagrams = append(out.diagrams, record.Diagram{Title: d.Title, DrawnBy: "claude", CritiquedBy: "codex",
-			Verdict: verdict, JSON: string(d.JSON())})
-		out.Diagrams = append(out.Diagrams, DiagramResult{Title: d.Title, Verdict: verdict, Why: why})
-		if why != "" {
-			out.Unverified = append(out.Unverified, fmt.Sprintf("The diagram %q is unresolved: %s", d.Title, why))
-		}
-		for _, f := range findings {
-			about := fmt.Sprintf("the diagram %q", d.Title)
-			if f.About != nil {
-				about = fmt.Sprintf("%s of the diagram %q", *f.About, d.Title)
-			}
-			f.About = &about
-			out.Findings = append(out.Findings, f)
-		}
-	}
+	drawing := Claude{Agent: "diagrammer", Timeout: timeout, Log: log, availability: base.availability}
 
-	drawn, err := draw(drawPrompt(in, ""))
+	critic := Codex{Model: model, Timeout: timeout, Log: log, availability: base.availability}
+
+	drawn, err := drawDiagrams(ctx, s, r, run, out, drawing, drawPrompt(in, ""))
 	if err != nil {
 		run.why = err.Error()
 		return run
 	}
-	if len(drawn) > maxDiagrams {
-		for _, raw := range drawn[maxDiagrams:] {
-			drop(raw, fmt.Sprintf("more than %d diagrams were drawn", maxDiagrams))
-		}
-		drawn = drawn[:maxDiagrams]
-	}
+	drawn = out.limitDiagrams(drawn)
 	for _, raw := range drawn {
-		d, res, why := checked(raw)
+		d, res, why := checkedDiagram(raw, r.tip, blob)
 		if why != "" {
-			drop(raw, why)
+			out.dropDiagram(raw, why)
 			continue
 		}
-		findings, inconclusive, err := critique(d, res)
+		findings, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d, checked: res, where: in.where}, critic)
 		var unconfined Unconfined
 		var unavailable providerUnavailable
 		if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
@@ -326,52 +215,20 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 			return run
 		}
 		if err != nil {
-			drop(raw, "its critique could not be used: "+err.Error())
+			out.dropDiagram(raw, "its critique could not be used: "+err.Error())
 			continue
 		}
 		if len(findings) == 0 {
 			if inconclusive != "" {
-				keep(d, "unresolved", inconclusive, nil)
+				out.keepDiagram(d, "unresolved", inconclusive, nil)
 			} else {
-				keep(d, "holds", "", nil)
+				out.keepDiagram(d, "holds", "", nil)
 			}
 			continue
 		}
-		text, _ := json.MarshalIndent(findings, "", "  ")
-		redrawn, err := draw(drawPrompt(in, "```json\n"+string(d.JSON())+"\n```\n\nThe critic's findings:\n\n```json\n"+
-			string(text)+"\n```"))
-		if errors.As(err, &unavailable) {
+		if err := redrawDiagram(ctx, s, in, run, out, drawing, critic, d, findings); err != nil {
 			run.why = err.Error()
 			return run
-		}
-		if err != nil || len(redrawn) != 1 {
-			keep(d, "unresolved", fmt.Sprintf("the critic found it untrue, and it was not redrawn as one diagram (%v)", err),
-				findings)
-			continue
-		}
-		d2, res2, why := checked(redrawn[0])
-		if why != "" {
-			drop(redrawn[0], "the redraw of a diagram the critic found untrue: "+why)
-			keep(d, "unresolved", "the critic found it untrue, and its redraw does not hold to the code at TIP", findings)
-			continue
-		}
-		again, inconclusive, err := critique(d2, res2)
-		if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
-			run.why = err.Error()
-			return run
-		}
-		switch {
-		case err != nil:
-			keep(d, "unresolved", "the critic found it untrue, and its redraw's critique could not be used: "+err.Error(),
-				findings)
-		case len(again) > 0:
-			drop(redrawn[0], "the critic found the redraw untrue too")
-			keep(d, "unresolved", "the critic found it untrue, and its redraw too", findings)
-		case inconclusive != "":
-			drop(redrawn[0], "the redraw's critique is inconclusive: "+inconclusive)
-			keep(d, "unresolved", "the critic found it untrue, and its redraw's critique is inconclusive", findings)
-		default:
-			keep(d2, "corrected", "", nil)
 		}
 	}
 	run.out = out
@@ -402,4 +259,166 @@ func replaceDiagrams(old, drawn []record.Diagram) []record.Diagram {
 		out = append(out, d)
 	}
 	return out
+}
+
+func drawDiagrams(ctx context.Context, s *source, r *span, run *typeRun, out *Output, c Claude, prompt string) ([]json.RawMessage, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		wt, remove, err := worktree(ctx, s, r)
+		if err != nil {
+			return nil, err
+		}
+		c.Checkout, c.Prompt, c.Schema = wt, prompt, drawSchema()
+		reply, err := ClaudeRun(ctx, c)
+		remove()
+		var bad badReply
+		switch {
+		case errors.As(err, &bad):
+		case err != nil:
+			return nil, err
+		default:
+			run.model = reply.Model
+			var parsed struct {
+				Diagrams   []json.RawMessage `json:"diagrams"`
+				Unverified []string          `json:"unverified"`
+			}
+			if err = json.Unmarshal([]byte(reply.Text), &parsed); err == nil && parsed.Diagrams != nil {
+				out.Unverified = append(out.Unverified, parsed.Unverified...)
+				return parsed.Diagrams, nil
+			}
+			err = fmt.Errorf("the reply is not the diagrams the schema describes (%v)", err)
+		}
+		lastErr = err
+		run.failures = append(run.failures, "The diagrammer's reply could not be used: "+err.Error())
+		prompt += "\n## Your last reply\n\nYour last reply could not be used: " + err.Error() +
+			". Reply again with the JSON the schema describes, and nothing else.\n"
+	}
+	return nil, lastErr
+}
+
+// checkedDiagram parses one drawing and checks its citations against TIP.
+func checkedDiagram(raw json.RawMessage, tip string, blob func(string) ([]byte, error)) (*diagram.Diagram, diagram.Result, string) {
+	d, err := diagram.Parse(raw)
+	if err != nil {
+		return nil, diagram.Result{}, err.Error()
+	}
+	if d.At != tip {
+		return nil, diagram.Result{}, fmt.Sprintf("it is drawn at %s, not TIP %s", d.At, tip)
+	}
+	res := diagram.Check(d, blob, nil)
+	if len(res.Failures) > 0 {
+		var why []string
+		for _, f := range res.Failures {
+			why = append(why, f.Element+": "+f.Reason)
+		}
+		return nil, res, "it does not hold to the code at TIP: " + strings.Join(why, "; ")
+	}
+	return d, res, ""
+}
+
+// critiqueDiagram returns the critic's findings and why an empty critique is inconclusive.
+func critiqueDiagram(ctx context.Context, s *source, out *Output, ci critiqueInputs, c Codex) ([]*Finding, string, error) {
+	r, d := ci.r, ci.d
+	wt, remove, err := worktree(ctx, s, r)
+	if err != nil {
+		return nil, "", err
+	}
+	defer remove()
+	fc := &focus{checks: diagramChecks, categories: d.IDs()}
+	c.Checkout, c.Prompt, c.Schema, c.Git = wt, critiquePrompt(ci), fc.schema(), worktreeGit(ctx, wt)
+	reply, err := CodexRun(ctx, c)
+	if err != nil {
+		return nil, "", err
+	}
+	crit, err := validate(reply.Text, r, wt, "diagram", fc)
+	if err != nil {
+		return nil, "", err
+	}
+	crit, dropped := critiqueFindings(crit, d)
+	out.Dropped = append(out.Dropped, crit.Dropped...)
+	out.Dropped = append(out.Dropped, dropped...)
+	inconclusive := ""
+	switch {
+	case len(crit.Findings) > 0:
+	case len(crit.Unverified) > 0:
+		inconclusive = "the critic could not verify: " + strings.Join(crit.Unverified, "; ")
+	case len(crit.Dropped)+len(dropped) > 0:
+		inconclusive = "each of the critique's findings was dropped"
+	}
+	return crit.Findings, inconclusive, nil
+}
+
+// keepDiagram records the verdict and turns unresolved critique into findings about the diagram.
+func (out *Output) keepDiagram(d *diagram.Diagram, verdict, why string, findings []*Finding) {
+	out.diagrams = append(out.diagrams, record.Diagram{Title: d.Title, DrawnBy: "claude", CritiquedBy: "codex",
+		Verdict: verdict, JSON: string(d.JSON())})
+	out.Diagrams = append(out.Diagrams, DiagramResult{Title: d.Title, Verdict: verdict, Why: why})
+	if why != "" {
+		out.Unverified = append(out.Unverified, fmt.Sprintf("The diagram %q is unresolved: %s", d.Title, why))
+	}
+	for _, f := range findings {
+		about := fmt.Sprintf("the diagram %q", d.Title)
+		if f.About != nil {
+			about = fmt.Sprintf("%s of the diagram %q", *f.About, d.Title)
+		}
+		f.About = &about
+		out.Findings = append(out.Findings, f)
+	}
+}
+
+func redrawDiagram(ctx context.Context, s *source, in inputs, run *typeRun, out *Output, drawing Claude, critic Codex, d *diagram.Diagram, findings []*Finding) error {
+	r := in.r
+	blob := func(path string) ([]byte, error) { return diagram.GitRepo(r.top).Blob(r.tip, path) }
+	var unavailable providerUnavailable
+	var unconfined Unconfined
+	text, _ := json.MarshalIndent(findings, "", "  ")
+	redrawn, err := drawDiagrams(ctx, s, r, run, out, drawing, drawPrompt(in, "```json\n"+string(d.JSON())+"\n```\n\nThe critic's findings:\n\n```json\n"+
+		string(text)+"\n```"))
+	if errors.As(err, &unavailable) {
+		return err
+	}
+	if err != nil || len(redrawn) != 1 {
+		out.keepDiagram(d, "unresolved", fmt.Sprintf("the critic found it untrue, and it was not redrawn as one diagram (%v)", err),
+			findings)
+		return nil
+	}
+	d2, res2, why := checkedDiagram(redrawn[0], r.tip, blob)
+	if why != "" {
+		out.dropDiagram(redrawn[0], "the redraw of a diagram the critic found untrue: "+why)
+		out.keepDiagram(d, "unresolved", "the critic found it untrue, and its redraw does not hold to the code at TIP", findings)
+		return nil
+	}
+	again, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d2, checked: res2, where: in.where}, critic)
+	if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
+		return err
+	}
+	switch {
+	case err != nil:
+		out.keepDiagram(d, "unresolved", "the critic found it untrue, and its redraw's critique could not be used: "+err.Error(),
+			findings)
+	case len(again) > 0:
+		out.dropDiagram(redrawn[0], "the critic found the redraw untrue too")
+		out.keepDiagram(d, "unresolved", "the critic found it untrue, and its redraw too", findings)
+	case inconclusive != "":
+		out.dropDiagram(redrawn[0], "the redraw's critique is inconclusive: "+inconclusive)
+		out.keepDiagram(d, "unresolved", "the critic found it untrue, and its redraw's critique is inconclusive", findings)
+	default:
+		out.keepDiagram(d2, "corrected", "", nil)
+	}
+	return nil
+}
+
+func (out *Output) limitDiagrams(drawn []json.RawMessage) []json.RawMessage {
+	if len(drawn) > maxDiagrams {
+		for _, raw := range drawn[maxDiagrams:] {
+			out.dropDiagram(raw, fmt.Sprintf("more than %d diagrams were drawn", maxDiagrams))
+		}
+		drawn = drawn[:maxDiagrams]
+	}
+	return drawn
+}
+
+func (out *Output) dropDiagram(what any, why string) {
+	raw, _ := json.Marshal(what)
+	out.Dropped = append(out.Dropped, Dropped{Finding: raw, Reason: why})
 }

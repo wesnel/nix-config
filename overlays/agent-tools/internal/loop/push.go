@@ -47,76 +47,13 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 		}
 		branches = []string{current}
 	}
-	for b := range leases {
-		if !slices.Contains(branches, b) {
-			return nil, refuse("--lease names %s, which is not pushed here; name the branch too, or drop its lease", b)
-		}
+	if err := orderPush(repo, prs, branches, leases); err != nil {
+		return nil, err
 	}
-	for _, b := range branches {
-		if _, err := checkBranch(repo, prs, b); err != nil {
-			return nil, err
-		}
-	}
-	order := stackOrder(prs, branches[0])
-	for _, b := range branches {
-		if !slices.Contains(order, b) {
-			return nil, refuse("%s is not in the stack of %s, and one push moves one stack, bottom up; push it on its own", b, branches[0])
-		}
-	}
-	slices.SortStableFunc(branches, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
 
-	type update struct{ branch, after, before string }
-	var updates []update
-	known := []string{}
-	for _, b := range branches {
-		pr := prs[b]
-		expected, leased := leases[b]
-		if leased {
-			if expected, err = fullOid(expected); err != nil {
-				return nil, err
-			}
-		} else if expected, err = remoteHead(repo, b); err != nil {
-			return nil, err
-		}
-		if pr.HeadRefOid != expected {
-			return nil, refuse("%s on GitHub is at %.12s, not %.12s as expected, so someone else pushed; fetch it, look at what "+
-				"changed, then push again with `--lease %s=%s` if it is still to be replaced", b, pr.HeadRefOid, expected, b, pr.HeadRefOid)
-		}
-		local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b)
-		if err != nil {
-			return nil, refuse("no local branch %s; check it out, or leave it out of the push", b)
-		}
-		if !leased && !git.OK("merge-base", "--is-ancestor", expected, local) {
-			return nil, refuse("local %s does not contain %.12s, its head on GitHub, so pushing would drop commits; if it was "+
-				"rebased on purpose, push it with `--lease %s=%s`", b, expected, b, expected)
-		}
-		remoteParent, localParent, err := parents(repo, prs, pr.BaseRefName)
-		if err != nil {
-			return nil, err
-		}
-		if !pr.IsDraft {
-			before, err := commitsBetween(remoteParent, expected)
-			if err != nil {
-				return nil, err
-			}
-			now, err := commitsBetween(localParent, local)
-			if err != nil {
-				return nil, err
-			}
-			if err := checkFixups(b, own(before), now); err != nil {
-				return nil, err
-			}
-			if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {
-				return nil, err
-			}
-		}
-		known = append(known, expected)
-		if git.OK("cat-file", "-e", remoteParent+"^{commit}") {
-			known = append(known, remoteParent)
-		}
-		if local != expected {
-			updates = append(updates, update{b, local, expected})
-		}
+	updates, known, err := planPush(repo, prs, branches, leases)
+	if err != nil {
+		return nil, err
 	}
 	if len(updates) == 0 {
 		return map[string]any{"pushed": map[string]string{}}, nil
@@ -148,9 +85,18 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 	// workflows twice when one push moves it and its base together. Each
 	// branch moved updates its tracking ref at once, so a call that fails
 	// leaves the next push to carry on from it.
+	pushed, err := updatePushRefs(repo, branches, updates)
+	if err != nil {
+		return nil, err
+	}
+	logEvent(plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(branches, pushed)})
+	return map[string]any{"pushed": pushed, "apiCalls": calls}, nil
+}
+
+func updatePushRefs(repo *Repo, branches []string, updates []pushUpdate) (map[string]string, error) {
 	pushed := map[string]string{}
 	for _, u := range updates {
-		err = graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
+		err := graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
 			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "refUpdates": []map[string]any{
 				{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}}}}, nil)
 		if err != nil {
@@ -164,8 +110,103 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 		}
 		pushed[u.branch] = u.after
 	}
-	logEvent(plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(branches, pushed)})
-	return map[string]any{"pushed": pushed, "apiCalls": calls}, nil
+	return pushed, nil
+}
+
+type pushUpdate struct{ branch, after, before string }
+
+func orderPush(repo *Repo, prs map[string]*PR, branches []string, leases map[string]string) error {
+	for b := range leases {
+		if !slices.Contains(branches, b) {
+			return refuse("--lease names %s, which is not pushed here; name the branch too, or drop its lease", b)
+		}
+	}
+	for _, b := range branches {
+		if _, err := checkBranch(repo, prs, b); err != nil {
+			return err
+		}
+	}
+	order := stackOrder(prs, branches[0])
+	for _, b := range branches {
+		if !slices.Contains(order, b) {
+			return refuse("%s is not in the stack of %s, and one push moves one stack, bottom up; push it on its own", b, branches[0])
+		}
+	}
+	slices.SortStableFunc(branches, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
+
+	return nil
+}
+
+func planPush(repo *Repo, prs map[string]*PR, branches []string, leases map[string]string) ([]pushUpdate, []string, error) {
+	var updates []pushUpdate
+	known := []string{}
+	for _, b := range branches {
+		u, remoteParent, err := preparePush(repo, prs, b, leases)
+		if err != nil {
+			return nil, nil, err
+		}
+		known = append(known, u.before)
+		if git.OK("cat-file", "-e", remoteParent+"^{commit}") {
+			known = append(known, remoteParent)
+		}
+		if u.after != u.before {
+			updates = append(updates, u)
+		}
+	}
+	return updates, known, nil
+}
+
+func preparePush(repo *Repo, prs map[string]*PR, b string, leases map[string]string) (pushUpdate, string, error) {
+	var err error
+	pr := prs[b]
+	expected, leased := leases[b]
+	if leased {
+		if expected, err = fullOid(expected); err != nil {
+			return pushUpdate{}, "", err
+		}
+	} else if expected, err = remoteHead(repo, b); err != nil {
+		return pushUpdate{}, "", err
+	}
+	if pr.HeadRefOid != expected {
+		return pushUpdate{}, "", refuse("%s on GitHub is at %.12s, not %.12s as expected, so someone else pushed; fetch it, look at what "+
+			"changed, then push again with `--lease %s=%s` if it is still to be replaced", b, pr.HeadRefOid, expected, b, pr.HeadRefOid)
+	}
+	local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b)
+	if err != nil {
+		return pushUpdate{}, "", refuse("no local branch %s; check it out, or leave it out of the push", b)
+	}
+	if !leased && !git.OK("merge-base", "--is-ancestor", expected, local) {
+		return pushUpdate{}, "", refuse("local %s does not contain %.12s, its head on GitHub, so pushing would drop commits; if it was "+
+			"rebased on purpose, push it with `--lease %s=%s`", b, expected, b, expected)
+	}
+	remoteParent, localParent, err := parents(repo, prs, pr.BaseRefName)
+	if err != nil {
+		return pushUpdate{}, "", err
+	}
+	if !pr.IsDraft {
+		if err := checkReadyPush(b, remoteParent, expected, localParent, local); err != nil {
+			return pushUpdate{}, "", err
+		}
+	}
+	return pushUpdate{b, local, expected}, remoteParent, nil
+}
+
+func checkReadyPush(b, remoteParent, expected, localParent, local string) error {
+	before, err := commitsBetween(remoteParent, expected)
+	if err != nil {
+		return err
+	}
+	now, err := commitsBetween(localParent, local)
+	if err != nil {
+		return err
+	}
+	if err := checkFixups(b, own(before), now); err != nil {
+		return err
+	}
+	if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {
+		return err
+	}
+	return nil
 }
 
 // remoteHead is branch's head as this checkout last saw it on GitHub: its

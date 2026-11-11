@@ -58,17 +58,7 @@ func reviewOf(repo string, number int, budget *int) reviewSummary {
 	owner, name, _ := strings.Cut(repo, "/")
 	if rec, _, err := record.NewestRange(owner, name, number, ""); err == nil && rec != nil {
 		out.exists = true
-		for _, s := range states {
-			n := 0
-			for _, f := range rec.Findings {
-				if f.State == s {
-					n++
-				}
-			}
-			if n > 0 {
-				out.findings = append(out.findings, FindingCount{State: string(s), Count: n})
-			}
-		}
+		out.findings = findingCounts(rec.Findings)
 		for _, d := range rec.Diagrams {
 			if len(out.diagrams) == maxDiagrams {
 				break
@@ -87,6 +77,22 @@ func reviewOf(repo string, number int, budget *int) reviewSummary {
 		if p, err := record.ReadPR(path); err == nil {
 			c := p.Counts()
 			out.threads, out.unanswered, out.drafted = len(p.Threads), c.Unanswered, c.Drafted
+		}
+	}
+	return out
+}
+
+func findingCounts(findings []record.Finding) []FindingCount {
+	out := []FindingCount{}
+	for _, s := range states {
+		n := 0
+		for _, f := range findings {
+			if f.State == s {
+				n++
+			}
+		}
+		if n > 0 {
+			out = append(out, FindingCount{State: string(s), Count: n})
 		}
 	}
 	return out

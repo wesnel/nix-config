@@ -165,6 +165,27 @@ type visitor struct {
 // unwrap takes the wrappers, keywords and assignments off a simple command
 // and hands the command they run, or the script, to v.
 func unwrap(c call, v visitor) string {
+	c = unwrapAssignments(c)
+	if len(c.words) == 0 || c.expands[0] {
+		return v.call(c)
+	}
+	name := base(c.words[0])
+	args := c.words[1:]
+	if w, ok := wrappers[name]; ok {
+		i := options(args, w.values) + w.operands
+		switch {
+		case name == "command" && (contains(args[:min(i, len(args))], "-v") || contains(args[:min(i, len(args))], "-V")):
+			return "" // prints where the command is
+		case name == "watch":
+			// watch runs its words, joined, with sh -c.
+			return v.script(strings.Join(args[min(i, len(args)):], " "))
+		}
+		return unwrap(wrapperRest(c, i), v)
+	}
+	return unwrapProgram(c, v)
+}
+
+func unwrapAssignments(c call) call {
 	for len(c.words) > 0 {
 		w := c.words[0]
 		switch {
@@ -181,26 +202,18 @@ func unwrap(c call, v visitor) string {
 		}
 		break
 	}
-	if len(c.words) == 0 || c.expands[0] {
-		return v.call(c)
-	}
+	return c
+}
+
+func wrapperRest(c call, from int) call {
+	args, expands := c.words[1:], c.expands[1:]
+	from = min(from, len(args))
+	return call{words: args[from:], expands: expands[from:], env: c.env, fed: c.fed || base(c.words[0]) == "xargs"}
+}
+
+func unwrapProgram(c call, v visitor) string {
 	name := base(c.words[0])
 	args, expands := c.words[1:], c.expands[1:]
-	rest := func(from int) call {
-		from = min(from, len(args))
-		return call{words: args[from:], expands: expands[from:], env: c.env, fed: c.fed || name == "xargs"}
-	}
-	if w, ok := wrappers[name]; ok {
-		i := options(args, w.values) + w.operands
-		switch {
-		case name == "command" && (contains(args[:min(i, len(args))], "-v") || contains(args[:min(i, len(args))], "-V")):
-			return "" // prints where the command is
-		case name == "watch":
-			// watch runs its words, joined, with sh -c.
-			return v.script(strings.Join(args[min(i, len(args)):], " "))
-		}
-		return unwrap(rest(i), v)
-	}
 	switch {
 	case name == "env":
 		return unwrapEnv(c.env, args, expands, v)
@@ -210,7 +223,7 @@ func unwrap(c call, v visitor) string {
 		}
 		return unwrapGit(c.env, args, expands, v)
 	case name == "direnv" && len(args) > 0 && args[0] == "exec":
-		return unwrap(rest(2), v)
+		return unwrap(wrapperRest(c, 2), v)
 	case name == "nwrap":
 		return unwrapNwrap(c, v)
 	case shells[name]:
@@ -226,40 +239,62 @@ func unwrap(c call, v visitor) string {
 				return v.script(args[i+1])
 			}
 		}
-	case name == "nix" && len(args) > 0 && (args[0] == "shell" || args[0] == "develop"):
-		for i, a := range args {
-			if a == "-c" || a == "--command" {
-				return unwrap(rest(i+1), v)
-			}
-		}
-	case name == "nix" && len(args) > 0 && args[0] == "run":
-		return unwrapNixRun(c.env, args[1:], expands[1:], v)
+	case name == "nix":
+		return unwrapNix(c, v)
 	case name == "find":
-		for i := 0; i < len(args); i++ {
-			if args[i] != "-exec" && args[i] != "-execdir" && args[i] != "-ok" && args[i] != "-okdir" {
-				continue
-			}
-			end := i + 1
-			for end < len(args) && args[end] != ";" && args[end] != "+" {
-				end++
-			}
-			if reason := unwrap(call{words: args[i+1 : end], expands: expands[i+1 : end], env: c.env}, v); reason != "" {
-				return reason
-			}
-			i = end
-		}
-	case name == "export" || name == "declare" || name == "typeset" || name == "local" || name == "readonly":
-		env := c.env
-		for _, a := range args {
-			if assignment.MatchString(a) {
-				env = append(env, a)
-			}
-		}
-		if reason := v.call(call{words: c.words, expands: c.expands, env: env}); reason != "" {
+		if reason := unwrapFind(c, v); reason != "" {
 			return reason
 		}
-		// An exported alias reaches every later git.
-		return envAliases(env, v)
+	case name == "export" || name == "declare" || name == "typeset" || name == "local" || name == "readonly":
+		return unwrapExports(c, v)
+	}
+	return v.call(c)
+}
+
+func unwrapFind(c call, v visitor) string {
+	args, expands := c.words[1:], c.expands[1:]
+	for i := 0; i < len(args); i++ {
+		if args[i] != "-exec" && args[i] != "-execdir" && args[i] != "-ok" && args[i] != "-okdir" {
+			continue
+		}
+		end := i + 1
+		for end < len(args) && args[end] != ";" && args[end] != "+" {
+			end++
+		}
+		if reason := unwrap(call{words: args[i+1 : end], expands: expands[i+1 : end], env: c.env}, v); reason != "" {
+			return reason
+		}
+		i = end
+	}
+	return ""
+}
+
+func unwrapExports(c call, v visitor) string {
+	args := c.words[1:]
+	env := c.env
+	for _, a := range args {
+		if assignment.MatchString(a) {
+			env = append(env, a)
+		}
+	}
+	if reason := v.call(call{words: c.words, expands: c.expands, env: env}); reason != "" {
+		return reason
+	}
+	// An exported alias reaches every later git.
+	return envAliases(env, v)
+}
+
+func unwrapNix(c call, v visitor) string {
+	args, expands := c.words[1:], c.expands[1:]
+	switch {
+	case len(args) > 0 && (args[0] == "shell" || args[0] == "develop"):
+		for i, a := range args {
+			if a == "-c" || a == "--command" {
+				return unwrap(wrapperRest(c, i+1), v)
+			}
+		}
+	case len(args) > 0 && args[0] == "run":
+		return unwrapNixRun(c.env, args[1:], expands[1:], v)
 	}
 	return v.call(c)
 }
@@ -394,7 +429,57 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 	if reason := envAliases(env, v); reason != "" {
 		return reason
 	}
-	i := 0
+	i, reason := unwrapGitOptions(env, args, expands, v)
+	if reason != "" {
+		return reason
+	}
+	if i >= len(args) {
+		return ""
+	}
+	sub, rest, x := args[i], args[i+1:], expands[i+1:]
+	switch {
+	case sub == "bisect" && len(rest) > 1 && rest[0] == "run":
+		return unwrap(call{words: rest[1:], expands: x[1:], env: env}, v)
+	case sub == "submodule":
+		return unwrapSubmodule(rest, v)
+	case sub == "rebase":
+		return unwrapRebase(rest, v)
+	}
+	return ""
+}
+
+func unwrapSubmodule(rest []string, v visitor) string {
+	for j, w := range rest {
+		if w != "foreach" {
+			continue
+		}
+		k := j + 1
+		for k < len(rest) && strings.HasPrefix(rest[k], "-") {
+			k++
+		}
+		return v.script(strings.Join(rest[k:], " "))
+	}
+	return ""
+}
+
+func unwrapRebase(rest []string, v visitor) string {
+	for j, w := range rest {
+		switch {
+		case (w == "-x" || w == "--exec") && j+1 < len(rest):
+			if reason := v.script(rest[j+1]); reason != "" {
+				return reason
+			}
+		case strings.HasPrefix(w, "--exec="):
+			if reason := v.script(strings.TrimPrefix(w, "--exec=")); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
+func unwrapGitOptions(env, args []string, expands []bool, v visitor) (i int, reason string) {
+	i = 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
 		var entry string // KEY=VALUE, as -c or --config-env gives it
 		expanded := false
@@ -409,52 +494,28 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 			key, variable, _ := strings.Cut(spec, "=")
 			value, ok := envValue(env, variable)
 			if !ok && aliasKey(key) {
-				return aliasUnknown
+				return i, aliasUnknown
 			}
 			entry = key + "=" + value
 		}
-		if key, _, _ := strings.Cut(entry, "="); strings.ContainsAny(key, "$`") {
-			return aliasUnknown // a key from a variable may be an alias's
-		}
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			if reason := aliasScript(key, value, expanded, v); reason != "" {
-				return reason
-			}
+		if reason := unwrapAliasEntry(entry, expanded, v); reason != "" {
+			return i, reason
 		}
 		if gitValueFlags[args[i]] {
 			i++
 		}
 		i++
 	}
-	if i >= len(args) {
-		return ""
+	return i, ""
+}
+
+func unwrapAliasEntry(entry string, expanded bool, v visitor) string {
+	if key, _, _ := strings.Cut(entry, "="); strings.ContainsAny(key, "$`") {
+		return aliasUnknown // a key from a variable may be an alias's
 	}
-	sub, rest, x := args[i], args[i+1:], expands[i+1:]
-	switch {
-	case sub == "bisect" && len(rest) > 1 && rest[0] == "run":
-		return unwrap(call{words: rest[1:], expands: x[1:], env: env}, v)
-	case sub == "submodule":
-		for j, w := range rest {
-			if w == "foreach" {
-				k := j + 1
-				for k < len(rest) && strings.HasPrefix(rest[k], "-") {
-					k++
-				}
-				return v.script(strings.Join(rest[k:], " "))
-			}
-		}
-	case sub == "rebase":
-		for j, w := range rest {
-			switch {
-			case (w == "-x" || w == "--exec") && j+1 < len(rest):
-				if reason := v.script(rest[j+1]); reason != "" {
-					return reason
-				}
-			case strings.HasPrefix(w, "--exec="):
-				if reason := v.script(strings.TrimPrefix(w, "--exec=")); reason != "" {
-					return reason
-				}
-			}
+	if key, value, ok := strings.Cut(entry, "="); ok {
+		if reason := aliasScript(key, value, expanded, v); reason != "" {
+			return reason
 		}
 	}
 	return ""
@@ -514,6 +575,16 @@ func segments(text string) []string {
 	return out
 }
 
+type shellFrame struct {
+	cur      strings.Builder
+	quote    byte  // the quote this frame is inside, if any
+	backtick bool  // the frame is a backquoted substitution
+	parens   int   // subshells open inside a $( ) frame
+	sub      bool  // the frame is a substitution
+	groups   []int // where each subshell open in the frame starts in out
+	closed   int   // where the subshell that just closed started, or -1
+}
+
 // backgroundSegments is segments, with whether each runs in the
 // background (it, or the subshell it is in, ends with a lone &), what
 // ends each: "&&", "||", ";", "|", "&", a newline, "(" or ")" where a
@@ -521,17 +592,8 @@ func segments(text string) []string {
 // at the end of the line, and whether each is nested in a subshell or a
 // command substitution.
 func backgroundSegments(text string) (out []string, background []bool, ends []string, nested []bool) {
-	type frame struct {
-		cur      strings.Builder
-		quote    byte  // the quote this frame is inside, if any
-		backtick bool  // the frame is a backquoted substitution
-		parens   int   // subshells open inside a $( ) frame
-		sub      bool  // the frame is a substitution
-		groups   []int // where each subshell open in the frame starts in out
-		closed   int   // where the subshell that just closed started, or -1
-	}
-	stack := []*frame{{closed: -1}}
-	top := func() *frame { return stack[len(stack)-1] }
+	stack := []*shellFrame{{closed: -1}}
+	top := func() *shellFrame { return stack[len(stack)-1] }
 	flush := func(end string) {
 		f := top()
 		out = append(out, f.cur.String())
@@ -542,7 +604,7 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 	}
 	open := func(backtick bool) {
 		top().cur.WriteString("$_")
-		stack = append(stack, &frame{backtick: backtick, sub: true, closed: -1})
+		stack = append(stack, &shellFrame{backtick: backtick, sub: true, closed: -1})
 	}
 	closeSub := func() {
 		flush("$")
@@ -550,15 +612,12 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 	}
 	for i := 0; i < len(text); i++ {
 		c, f := text[i], top()
-		if c != ' ' && c != '\t' && c != '&' {
+		if !strings.ContainsRune(" \t&", rune(c)) {
 			f.closed = -1
 		}
 		switch {
 		case f.quote == '\'':
-			if c == '\'' {
-				f.quote = 0
-			}
-			f.cur.WriteByte(c)
+			f.quotedByte(c)
 		case c == '\\' && i+1 < len(text):
 			f.cur.WriteByte(c)
 			i++
@@ -571,10 +630,7 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 		case c == '`':
 			open(true)
 		case f.quote == '"':
-			if c == '"' {
-				f.quote = 0
-			}
-			f.cur.WriteByte(c)
+			f.quotedByte(c)
 		case c == '\'' || c == '"':
 			f.quote = c
 			f.cur.WriteByte(c)
@@ -587,27 +643,18 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 		case c == ')':
 			f.parens = max(0, f.parens-1)
 			flush(")")
-			if n := len(f.groups); n > 0 {
-				f.closed, f.groups = f.groups[n-1], f.groups[:n-1]
-			}
-		case c == '&' && i > 0 && (text[i-1] == '>' || text[i-1] == '<'),
-			c == '&' && i+1 < len(text) && text[i+1] == '>':
+			f.popGroup()
+		case c == '&' && redirectAmpersand(text, i):
 			// A redirection: >&2, 2>&1, <&3, &>file.
 			f.cur.WriteByte(c)
-		case c == '&' && (i == 0 || text[i-1] != '&' && text[i-1] != '|') && (i+1 == len(text) || text[i+1] != '&'):
-			whole := strings.TrimSpace(f.cur.String()) == "" && f.closed >= 0
+		case c == '&' && backgroundAmpersand(text, i):
+			from := f.backgroundFrom(len(out))
 			flush("&")
-			from := len(out) - 1
-			if whole {
-				from = f.closed
-			}
-			for j := from; j < len(out); j++ {
-				background[j] = true
-			}
+			markBackground(background, from)
 			f.closed = -1
 		case c == ';' || c == '\n' || c == '|' || c == '&':
 			end := string(c)
-			if (c == '&' || c == '|') && i+1 < len(text) && text[i+1] == c {
+			if pairedSeparator(text, i) {
 				end += end // the second of the pair ends an empty segment
 			}
 			flush(end)
@@ -620,6 +667,45 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 	}
 	flush("")
 	return out, background, ends, nested
+}
+
+func (f *shellFrame) quotedByte(c byte) {
+	if c == f.quote {
+		f.quote = 0
+	}
+	f.cur.WriteByte(c)
+}
+
+func (f *shellFrame) popGroup() {
+	if n := len(f.groups); n > 0 {
+		f.closed, f.groups = f.groups[n-1], f.groups[:n-1]
+	}
+}
+
+func (f *shellFrame) backgroundFrom(next int) int {
+	if strings.TrimSpace(f.cur.String()) == "" && f.closed >= 0 {
+		return f.closed
+	}
+	return next
+}
+
+func markBackground(background []bool, from int) {
+	for j := from; j < len(background); j++ {
+		background[j] = true
+	}
+}
+
+func redirectAmpersand(text string, i int) bool {
+	return i > 0 && (text[i-1] == '>' || text[i-1] == '<') || i+1 < len(text) && text[i+1] == '>'
+}
+
+func backgroundAmpersand(text string, i int) bool {
+	return (i == 0 || text[i-1] != '&' && text[i-1] != '|') && (i+1 == len(text) || text[i+1] != '&')
+}
+
+func pairedSeparator(text string, i int) bool {
+	c := text[i]
+	return (c == '&' || c == '|') && i+1 < len(text) && text[i+1] == c
 }
 
 // topLevel reports for each segment of a line, as backgroundSegments
@@ -716,28 +802,12 @@ func envAliases(env []string, v visitor) string {
 		name, value, _ := strings.Cut(kv, "=")
 		switch {
 		case name == "GIT_CONFIG_GLOBAL" || name == "GIT_CONFIG_SYSTEM" || name == "GIT_CONFIG":
-			if value == "/dev/null" {
-				continue
-			}
-			entries, reason := configFileEntries(shellPath(value, true))
-			if reason != "" {
+			if reason := fileAliases(value, v); reason != "" {
 				return reason
 			}
-			for _, e := range entries {
-				if reason := aliasScript(e[0], e[1], false, v); reason != "" {
-					return reason
-				}
-			}
 		case name == "GIT_CONFIG_PARAMETERS":
-			words, expands := split(value)
-			for j, w := range words {
-				key, val, _ := strings.Cut(w, "=")
-				if strings.ContainsAny(key, "$`") {
-					return aliasUnknown
-				}
-				if reason := aliasScript(key, val, expands[j], v); reason != "" {
-					return reason
-				}
+			if reason := parameterAliases(value, v); reason != "" {
+				return reason
 			}
 		case strings.HasPrefix(name, "GIT_CONFIG_KEY_") && strings.ContainsAny(value, "$`"):
 			return aliasUnknown
@@ -749,6 +819,36 @@ func envAliases(env []string, v visitor) string {
 			if reason := aliasScript(value, val, true, v); reason != "" {
 				return reason
 			}
+		}
+	}
+	return ""
+}
+
+func fileAliases(value string, v visitor) string {
+	if value == "/dev/null" {
+		return ""
+	}
+	entries, reason := configFileEntries(shellPath(value, true))
+	if reason != "" {
+		return reason
+	}
+	for _, e := range entries {
+		if reason := aliasScript(e[0], e[1], false, v); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func parameterAliases(value string, v visitor) string {
+	words, expands := split(value)
+	for j, w := range words {
+		key, val, _ := strings.Cut(w, "=")
+		if strings.ContainsAny(key, "$`") {
+			return aliasUnknown
+		}
+		if reason := aliasScript(key, val, expands[j], v); reason != "" {
+			return reason
 		}
 	}
 	return ""
@@ -801,14 +901,18 @@ func (w *cwds) begin(c call) {
 			w.here = slices.Clone(*w.blocks[n-1])
 		}
 	case "fi", "done", "}":
-		if n := len(w.blocks); n > 0 {
-			if outside := w.blocks[n-1]; outside != nil {
-				for _, d := range *outside {
-					w.here = addDir(w.here, d)
-				}
+		w.endBlock()
+	}
+}
+
+func (w *cwds) endBlock() {
+	if n := len(w.blocks); n > 0 {
+		if outside := w.blocks[n-1]; outside != nil {
+			for _, d := range *outside {
+				w.here = addDir(w.here, d)
 			}
-			w.blocks = w.blocks[:n-1]
 		}
+		w.blocks = w.blocks[:n-1]
 	}
 }
 
@@ -868,16 +972,14 @@ func split(segment string) (words []string, expands []bool) {
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		switch {
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote == '"' && c == '\\' && i+1 < len(segment):
+			i++
+			cur.WriteByte(segment[i])
 		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' && i+1 < len(segment) {
-				i++
-				cur.WriteByte(segment[i])
-			} else {
-				expand = expand || quote == '"' && (c == '$' || c == '`')
-				cur.WriteByte(c)
-			}
+			expand = expand || quote == '"' && (c == '$' || c == '`')
+			cur.WriteByte(c)
 		case c == '\'' || c == '"':
 			quote, in = c, true
 		case c == '\\' && i+1 < len(segment):

@@ -132,16 +132,7 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("claude stopped: %w", ctx.Err())
 	}
-	var result struct {
-		APIError       string                     `json:"api_error"`
-		APIErrorStatus int                        `json:"api_error_status"`
-		Errors         []string                   `json:"errors"`
-		Result         string                     `json:"result"`
-		Structured     json.RawMessage            `json:"structured_output"`
-		IsError        bool                       `json:"is_error"`
-		Subtype        string                     `json:"subtype"`
-		ModelUsage     map[string]json.RawMessage `json:"modelUsage"`
-	}
+	var result claudeResponse
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		if runErr != nil {
 			return nil, fmt.Errorf("claude: %w", runErr)
@@ -152,6 +143,28 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 	if models := slices.Sorted(maps.Keys(result.ModelUsage)); len(models) > 0 {
 		reply.Model = strings.Join(models, ", ")
 	}
+	if err := result.check(runErr, a); err != nil {
+		return nil, err
+	}
+	reply.Text, err = replyJSON(result.Structured, result.Result)
+	if err != nil {
+		return nil, err
+	}
+	return reply, nil
+}
+
+type claudeResponse struct {
+	APIError       string                     `json:"api_error"`
+	APIErrorStatus int                        `json:"api_error_status"`
+	Errors         []string                   `json:"errors"`
+	Result         string                     `json:"result"`
+	Structured     json.RawMessage            `json:"structured_output"`
+	IsError        bool                       `json:"is_error"`
+	Subtype        string                     `json:"subtype"`
+	ModelUsage     map[string]json.RawMessage `json:"modelUsage"`
+}
+
+func (result claudeResponse) check(runErr error, a *availability) error {
 	if result.IsError || runErr != nil {
 		if result.IsError {
 			var why shared.Reason
@@ -165,17 +178,13 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 				why = worse(why, shared.RateLimit)
 			}
 			if why != "" {
-				return nil, a.failed(shared.Claude, why)
+				return a.failed(shared.Claude, why)
 			}
 		}
-		return nil, badReply(fmt.Sprintf("the reviewer ended with %q (%v): %s", result.Subtype, runErr,
+		return badReply(fmt.Sprintf("the reviewer ended with %q (%v): %s", result.Subtype, runErr,
 			strings.TrimSpace(result.Result)))
 	}
-	reply.Text, err = replyJSON(result.Structured, result.Result)
-	if err != nil {
-		return nil, err
-	}
-	return reply, nil
+	return nil
 }
 
 // claudeEnv is the reviewer's environment: the caller's, without what

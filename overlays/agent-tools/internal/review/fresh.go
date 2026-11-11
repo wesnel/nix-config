@@ -310,32 +310,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil { //nolint:gosec // a JSON schema compiled into this program
 		return nil, err
 	}
-	run := c.Git
-	if run == nil {
-		run = func(args ...string) (string, error) { return git.Run(append([]string{"-C", c.Checkout}, args...)...) }
-	}
-	head, err := run("rev-parse", "--verify", "HEAD")
-	if err != nil {
-		return nil, err
-	}
-	admin, err := run("rev-parse", "--path-format=absolute", "--git-dir")
-	if err != nil {
-		return nil, err
-	}
-	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return nil, err
-	}
-	// Codex runs helpers in its sandbox by executing itself, from the path
-	// it was started by, so start it by a path the sandbox lets it read.
-	codex, err := exec.LookPath("codex")
-	if err == nil {
-		codex, err = filepath.EvalSymlinks(codex)
-	}
-	if err != nil {
-		return nil, err
-	}
-	confined, err := confinement(common, admin, codex)
+	head, codex, confined, err := codexConfinement(c)
 	if err != nil {
 		return nil, err
 	}
@@ -387,22 +362,59 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
-		if !events.discard {
-			events.event(events.line)
-		}
-		if events.why != "" {
-			return nil, a.failed(shared.Codex, events.why)
-		}
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("codex stopped: %w", ctx.Err())
-		}
-		return nil, fmt.Errorf("codex: %w", err)
+		return nil, events.runError(ctx, err, a)
 	}
 	data, err := os.ReadFile(reply)
 	if err != nil {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
 	return &CodexReply{Text: string(data), Model: model}, nil
+}
+
+func (events *failureEvents) runError(ctx context.Context, err error, a *availability) error {
+	if !events.discard {
+		events.event(events.line)
+	}
+	if events.why != "" {
+		return a.failed(shared.Codex, events.why)
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("codex stopped: %w", ctx.Err())
+	}
+	return fmt.Errorf("codex: %w", err)
+}
+
+func codexConfinement(c Codex) (head, codex string, confined []string, err error) {
+	run := c.Git
+	if run == nil {
+		run = func(args ...string) (string, error) { return git.Run(append([]string{"-C", c.Checkout}, args...)...) }
+	}
+	head, err = run("rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", "", nil, err
+	}
+	admin, err := run("rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return "", "", nil, err
+	}
+	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", "", nil, err
+	}
+	// Codex runs helpers in its sandbox by executing itself, from the path
+	// it was started by, so start it by a path the sandbox lets it read.
+	codex, err = exec.LookPath("codex")
+	if err == nil {
+		codex, err = filepath.EvalSymlinks(codex)
+	}
+	if err != nil {
+		return "", "", nil, err
+	}
+	confined, err = confinement(common, admin, codex)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return head, codex, confined, nil
 }
 
 // stopGroup kills the process group pgid until it is empty, or for at most
@@ -627,9 +639,14 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	if fc != nil && fc.upgrades {
 		out.Upgrades = parsed.Upgrades
 	}
+	out.addFindings(*parsed.Findings, blob, wt, focusName, allowed, item)
+	return out, nil
+}
+
+func (out *Output) addFindings(findings []json.RawMessage, blob func(string) ([]byte, error), wt, focusName string, allowed map[string]bool, item func(json.RawMessage) error) {
 	seen := map[string]bool{}
 	lines := map[string]int{}
-	for _, raw := range *parsed.Findings {
+	for _, raw := range findings {
 		f, why := normalise(raw, blob, wt, lines, allowed)
 		if why == "" {
 			if err := item(raw); err != nil {
@@ -649,7 +666,6 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 		seen[f.ID] = true
 		out.Findings = append(out.Findings, f)
 	}
-	return out, nil
 }
 
 // normalise checks one finding, returning it cleaned up or why it is
@@ -680,17 +696,7 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 		return nil, fmt.Sprintf("%s is not a path in the repository", f.Path)
 	}
 	f.Path = path
-	n, ok := lines[path]
-	if !ok {
-		n = -1
-		if data, err := blob(path); err == nil {
-			n = bytes.Count(data, []byte("\n"))
-			if len(data) > 0 && data[len(data)-1] != '\n' {
-				n++
-			}
-		}
-		lines[path] = n
-	}
+	n := fileLines(path, blob, lines)
 	switch {
 	case n < 0:
 		return nil, fmt.Sprintf("%s does not exist at TIP", path)
@@ -706,4 +712,19 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 		}
 	}
 	return &f, ""
+}
+
+func fileLines(path string, blob func(string) ([]byte, error), lines map[string]int) int {
+	n, ok := lines[path]
+	if !ok {
+		n = -1
+		if data, err := blob(path); err == nil {
+			n = bytes.Count(data, []byte("\n"))
+			if len(data) > 0 && data[len(data)-1] != '\n' {
+				n++
+			}
+		}
+		lines[path] = n
+	}
+	return n
 }

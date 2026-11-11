@@ -77,17 +77,6 @@ func (c Config) remind(input []byte) []byte {
 			"before relaying any of it, then log its part's outcome in %s: `done` once it passes, or `blocked` or `abandoned`.",
 			what, plan())
 	}
-	compacted := func() string {
-		context := fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
-			"verified, the decisions, findings and sub-agent outcomes it does not yet record.", plan())
-		if file == "" {
-			return context
-		}
-		if brief, err := found.Brief(time.Now()); err == nil {
-			context += "\n\n" + brief
-		}
-		return context
-	}
 	var context string
 	switch {
 	case in.Event == "UserPromptSubmit" && strings.HasPrefix(in.Prompt, "<task-notification>"):
@@ -103,33 +92,18 @@ func (c Config) remind(input []byte) []byte {
 		}
 		return nil
 	case in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task"):
-		var response struct {
-			IsAsync bool `json:"isAsync"`
-		}
-		var call struct {
-			Description string `json:"description"`
-		}
-		json.Unmarshal(in.ToolResponse, &response)
-		json.Unmarshal(in.ToolInput, &call)
-		if response.IsAsync {
+		what, synchronous := finishedAgent(in.ToolInput, in.ToolResponse)
+		if !synchronous {
 			return nil
-		}
-		what := ""
-		if call.Description != "" {
-			what = fmt.Sprintf("%q ", call.Description)
 		}
 		context = finished(what)
 	case in.Event == "PostToolUse" && in.ToolName == "wait_agent":
 		context = finished("")
 	case in.Event == "PreCompact":
-		if p := plan(); p != "" {
-			return []byte(fmt.Sprintf("Keep in the summary the path of the plan, %s, and everything since it was last brought "+
-				"up to date that it does not yet record: steps done or verified, decisions, findings, sub-agent outcomes and "+
-				"questions for the operator, so it can be brought up to date first thing after the compaction.", p))
-		}
-		return nil
+		return preCompactPlan(plan())
 	case in.Event == "SessionStart" && in.Source == "compact":
-		context = compacted()
+		file := plan()
+		context = compactedPlan(file, found)
 	default:
 		return nil
 	}
@@ -138,4 +112,44 @@ func (c Config) remind(input []byte) []byte {
 	}
 	data, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": in.Event, "additionalContext": context}})
 	return data
+}
+
+func compactedPlan(file string, found Plan) string {
+	context := fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
+		"verified, the decisions, findings and sub-agent outcomes it does not yet record.", file)
+	if file == "" {
+		return context
+	}
+	if brief, err := found.Brief(time.Now()); err == nil {
+		context += "\n\n" + brief
+	}
+	return context
+}
+
+func finishedAgent(inputJSON, responseJSON json.RawMessage) (string, bool) {
+	var response struct {
+		IsAsync bool `json:"isAsync"`
+	}
+	var call struct {
+		Description string `json:"description"`
+	}
+	json.Unmarshal(responseJSON, &response)
+	json.Unmarshal(inputJSON, &call)
+	if response.IsAsync {
+		return "", false
+	}
+	what := ""
+	if call.Description != "" {
+		what = fmt.Sprintf("%q ", call.Description)
+	}
+	return what, true
+}
+
+func preCompactPlan(p string) []byte {
+	if p != "" {
+		return []byte(fmt.Sprintf("Keep in the summary the path of the plan, %s, and everything since it was last brought "+
+			"up to date that it does not yet record: steps done or verified, decisions, findings, sub-agent outcomes and "+
+			"questions for the operator, so it can be brought up to date first thing after the compaction.", p))
+	}
+	return nil
 }

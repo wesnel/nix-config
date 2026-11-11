@@ -308,17 +308,23 @@ func Load(ctx context.Context) (Profile, error) {
 	if p.program, err = p.protected(p.program); err != nil {
 		return p, err
 	}
+	err = p.loadIdentity(config)
+	return p, err
+}
+
+func (p *Profile) loadIdentity(config string) error {
+	var err error
 	if p.format == "openpgp" {
 		p.exactSigner = strings.HasSuffix(p.key, "!")
 		p.fingerprint = strings.TrimPrefix(strings.TrimSuffix(p.key, "!"), "0x")
 		if !fullFingerprint.MatchString(p.fingerprint) {
-			return p, refuse("the operator OpenPGP signing key must be a full fingerprint to prove its identity; ask the operator to set user.signingkey in %s to one", config)
+			return refuse("the operator OpenPGP signing key must be a full fingerprint to prove its identity; ask the operator to set user.signingkey in %s to one", config)
 		}
 		p.fingerprint = strings.ToUpper(p.fingerprint)
 		if _, err := p.protected(filepath.Join(p.home, ".gnupg")); err != nil {
-			return p, err
+			return err
 		}
-		return p, nil
+		return nil
 	}
 	if strings.HasPrefix(p.key, "key::") {
 		p.public = []byte(strings.TrimPrefix(p.key, "key::"))
@@ -329,19 +335,19 @@ func Load(ctx context.Context) (Profile, error) {
 		}
 		public, err = p.protected(public)
 		if err != nil {
-			return p, err
+			return err
 		}
 		p.public, err = readPublicAuthority(public)
 		if err != nil {
-			return p, err
+			return err
 		}
 	}
 	fields := strings.Fields(string(p.public))
 	if len(fields) < 2 || strings.Contains(fields[0], "-cert-") {
-		return p, refuse("the operator SSH signing key is not a supported public identity; ask the operator to name a plain public key")
+		return refuse("the operator SSH signing key is not a supported public identity; ask the operator to name a plain public key")
 	}
 	p.public = []byte(fields[0] + " " + fields[1] + "\n")
-	return p, nil
+	return nil
 }
 
 // Verify refuses unless every commit tip reaches and none of have does
@@ -397,117 +403,148 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 	if len(commits) == 0 {
 		return 0, nil
 	}
+	args, err := p.verifierArgs(ctx, dir)
+	if err != nil {
+		return 0, err
+	}
+	for _, commit := range commits {
+		if err := p.verifyCommit(commit, objectFormat, args, readView); err != nil {
+			return 0, err
+		}
+	}
+	return len(commits), nil
+}
+
+func (p *Profile) verifierArgs(ctx context.Context, dir string) ([]string, error) {
+	var err error
 	args := []string{"-c", "gpg.format=" + p.format, "-c", "gpg." + p.format + ".program=" + p.program}
 	if p.format == "openpgp" {
-		keyring := filepath.Join(dir, "public-keyring")
-		if err := os.Mkdir(keyring, 0700); err != nil {
-			return 0, err
-		}
-		database := filepath.Join(p.home, ".gnupg", "public-keys.d", "pubring.db")
-		_, dbErr := os.Lstat(database)
-		if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
-			return 0, dbErr
-		}
-		copied := false
-		for _, name := range []string{"pubring.kbx", "pubring.gpg"} {
-			source := filepath.Join(p.home, ".gnupg", name)
-			if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
-				continue
-			} else if err != nil {
-				return 0, err
-			}
-			if dbErr == nil {
-				return 0, refuse("operator has both legacy and keyboxd public keys; select one authority before verification")
-			}
-			source, err = p.protected(source)
-			if err != nil {
-				return 0, err
-			}
-			data, err := readPublicAuthority(source)
-			if err != nil {
-				return 0, err
-			}
-			if err := os.WriteFile(filepath.Join(keyring, name), data, 0600); err != nil {
-				return 0, err
-			}
-			copied = true
-		}
-		if dbErr == nil {
-			data, err := p.keyboxdPublicKeys(ctx, database)
-			if err != nil {
-				return 0, err
-			}
-			if err := os.WriteFile(filepath.Join(keyring, "pubring.gpg"), data, 0600); err != nil {
-				return 0, err
-			}
-			copied = true
-		}
-		if !copied {
-			return 0, refuse("operator public keyring is unavailable or uses an unsupported layout; ask the operator to run the step")
-		}
-		// Verification uses only the acquired public rings. Environment and
-		// configuration cannot select another authority or start a daemon.
-		envProgram := defaultEnvProgram
-		if _, err := p.protected(envProgram); err != nil {
-			return 0, refuse("protected environment program is unavailable: %v", err)
-		}
-		wrapper := filepath.Join(dir, "verify-openpgp")
-		// Preserve the validated entrypoint name for multicall coreutils.
-		script := "#!/bin/sh\nexec " + quote(envProgram) + " -i"
-		for _, entry := range publicKeyEnvironment(keyring) {
-			script += " " + quote(entry)
-		}
-		script += " " + quote(p.program) + " --no-options --no-autostart --disable-dirmngr --no-auto-key-retrieve --no-auto-key-import --homedir " + quote(keyring) + " \"$@\"\n"
-		if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil { //nolint:gosec // Git executes this owner-only verifier wrapper.
-			return 0, err
+		wrapper, err := p.openPGPVerifier(ctx, dir)
+		if err != nil {
+			return nil, err
 		}
 		args = append(args, "-c", "gpg.openpgp.program="+wrapper, "-c", "gpg.program="+wrapper)
 	} else {
 		p.fingerprint, err = SSHFingerprint(string(p.public))
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		p.exactSigner = true
 		signers := filepath.Join(dir, "allowed_signers")
 		if err := os.WriteFile(signers, append([]byte("operator namespaces=\"git\" "), p.public...), 0600); err != nil {
-			return 0, err
+			return nil, err
 		}
 		args = append(args, "-c", "gpg.ssh.allowedSignersFile="+signers)
 		if revoked, err := p.setting(ctx, "gpg.ssh.revocationFile"); err != nil {
-			return 0, err
+			return nil, err
 		} else if revoked != "" {
 			path, err := p.protected(revoked)
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			args = append(args, "-c", "gpg.ssh.revocationFile="+path)
 		}
 	}
-	for _, commit := range commits {
-		raw, err := readView(nil, "cat-file", "commit", commit)
-		if err != nil {
-			return 0, err
-		}
-		// git reads an object file without checking that its content is the
-		// object it is named for.
-		if named(objectFormat, raw) != commit {
-			return 0, fmt.Errorf("hash mismatch: the object of commit %.12s holds another commit", commit)
-		}
-		if !SignedIn(raw, p.format) {
-			return 0, refuse("commit %.12s has no signature in the operator's signing format", commit)
-		}
-		check := append(append([]string{}, args...), "log", "-1", "--format=%G?%x00%GF%x00%GP", commit)
-		out, err := readView(nil, check...)
-		if err != nil {
-			return 0, err
-		}
-		fields := strings.Split(strings.TrimSuffix(string(out), "\n"), "\x00")
-		if len(fields) != 3 || fields[0] != "G" && fields[0] != "U" ||
-			!strings.EqualFold(fields[1], p.fingerprint) && (p.exactSigner || !strings.EqualFold(fields[2], p.fingerprint)) {
-			return 0, refuse("commit %.12s has no verified signature by the protected operator key", commit)
-		}
+	return args, nil
+}
+
+func (p Profile) openPGPVerifier(ctx context.Context, dir string) (string, error) {
+	keyring := filepath.Join(dir, "public-keyring")
+	if err := os.Mkdir(keyring, 0700); err != nil {
+		return "", err
 	}
-	return len(commits), nil
+	if err := p.copyPublicKeyring(ctx, keyring); err != nil {
+		return "", err
+	}
+	// Verification uses only the acquired public rings. Environment and
+	// configuration cannot select another authority or start a daemon.
+	envProgram := defaultEnvProgram
+	if _, err := p.protected(envProgram); err != nil {
+		return "", refuse("protected environment program is unavailable: %v", err)
+	}
+	wrapper := filepath.Join(dir, "verify-openpgp")
+	// Preserve the validated entrypoint name for multicall coreutils.
+	script := "#!/bin/sh\nexec " + quote(envProgram) + " -i"
+	for _, entry := range publicKeyEnvironment(keyring) {
+		script += " " + quote(entry)
+	}
+	script += " " + quote(p.program) + " --no-options --no-autostart --disable-dirmngr --no-auto-key-retrieve --no-auto-key-import --homedir " + quote(keyring) + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil { //nolint:gosec // Git executes this owner-only verifier wrapper.
+		return "", err
+	}
+	return wrapper, nil
+}
+
+func (p Profile) copyPublicKeyring(ctx context.Context, keyring string) error {
+	database := filepath.Join(p.home, ".gnupg", "public-keys.d", "pubring.db")
+	_, dbErr := os.Lstat(database)
+	if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
+		return dbErr
+	}
+	copied := false
+	for _, name := range []string{"pubring.kbx", "pubring.gpg"} {
+		source := filepath.Join(p.home, ".gnupg", name)
+		if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if dbErr == nil {
+			return refuse("operator has both legacy and keyboxd public keys; select one authority before verification")
+		}
+		source, err := p.protected(source)
+		if err != nil {
+			return err
+		}
+		data, err := readPublicAuthority(source)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(keyring, name), data, 0600); err != nil {
+			return err
+		}
+		copied = true
+	}
+	if dbErr == nil {
+		data, err := p.keyboxdPublicKeys(ctx, database)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(keyring, "pubring.gpg"), data, 0600); err != nil {
+			return err
+		}
+		copied = true
+	}
+	if !copied {
+		return refuse("operator public keyring is unavailable or uses an unsupported layout; ask the operator to run the step")
+	}
+	return nil
+}
+
+func (p Profile) verifyCommit(commit, objectFormat string, args []string, readView func([]byte, ...string) ([]byte, error)) error {
+	raw, err := readView(nil, "cat-file", "commit", commit)
+	if err != nil {
+		return err
+	}
+	// git reads an object file without checking that its content is the
+	// object it is named for.
+	if named(objectFormat, raw) != commit {
+		return fmt.Errorf("hash mismatch: the object of commit %.12s holds another commit", commit)
+	}
+	if !SignedIn(raw, p.format) {
+		return refuse("commit %.12s has no signature in the operator's signing format", commit)
+	}
+	check := append(append([]string{}, args...), "log", "-1", "--format=%G?%x00%GF%x00%GP", commit)
+	out, err := readView(nil, check...)
+	if err != nil {
+		return err
+	}
+	fields := strings.Split(strings.TrimSuffix(string(out), "\n"), "\x00")
+	if len(fields) != 3 || fields[0] != "G" && fields[0] != "U" ||
+		!strings.EqualFold(fields[1], p.fingerprint) && (p.exactSigner || !strings.EqualFold(fields[2], p.fingerprint)) {
+		return refuse("commit %.12s has no verified signature by the protected operator key", commit)
+	}
+	return nil
 }
 
 // SSHFingerprint is the SHA256 fingerprint of an SSH public key line, as

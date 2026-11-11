@@ -67,22 +67,11 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 			plan = name
 		}
 	}
-	fileRank := func(f Found) int {
-		inWorktree := slices.Contains(f.Matched, "worktree")
-		switch {
-		case inWorktree && f.Part != "":
-			return 0
-		case inWorktree:
-			return 1
-		case f.Part == "":
-			return 2
-		}
-		return 3
-	}
+
 	var pick Found
 	best := 4
 	for _, f := range found {
-		if r := fileRank(f); f.Plan == plan && r < best {
+		if r := foundFileRank(f); f.Plan == plan && r < best {
 			pick, best = f, r
 		}
 	}
@@ -276,4 +265,17 @@ func (p Plan) AddToProperty(part, name, value string, now time.Time) (bool, erro
 		}, "", now)
 	})
 	return added, err
+}
+
+func foundFileRank(f Found) int {
+	inWorktree := slices.Contains(f.Matched, "worktree")
+	switch {
+	case inWorktree && f.Part != "":
+		return 0
+	case inWorktree:
+		return 1
+	case f.Part == "":
+		return 2
+	}
+	return 3
 }

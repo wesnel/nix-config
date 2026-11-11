@@ -262,19 +262,25 @@ func fetch(ctx context.Context, now time.Time) (*GitHub, error) {
 		}
 		r := Request{Repo: p.Repository.NameWithOwner, Number: p.Number, Title: p.Title, Draft: p.IsDraft, Head: p.HeadRefOid, CI: headCI(p), Team: true,
 			Parent: requested(p)}
-		for _, n := range p.ReviewRequests.Nodes {
-			if isMe(n.RequestedReviewer) {
-				r.Team = false
-			}
-		}
-		for _, e := range p.TimelineItems.Nodes {
-			if (r.Team && e.RequestedReviewer.Typename == "Team" || !r.Team && isMe(e.RequestedReviewer)) && e.CreatedAt.After(r.Requested) {
-				r.Requested = e.CreatedAt
-			}
-		}
+		r.Team, r.Requested = requestTime(p, isMe)
 		g.Requests = append(g.Requests, r)
 	}
 	return g, nil
+}
+
+func requestTime(p searchPR, isMe func(reviewer) bool) (team bool, requested time.Time) {
+	team = true
+	for _, n := range p.ReviewRequests.Nodes {
+		if isMe(n.RequestedReviewer) {
+			team = false
+		}
+	}
+	for _, e := range p.TimelineItems.Nodes {
+		if (team && e.RequestedReviewer.Typename == "Team" || !team && isMe(e.RequestedReviewer)) && e.CreatedAt.After(requested) {
+			requested = e.CreatedAt
+		}
+	}
+	return team, requested
 }
 
 // parents is, for a pull request of nodes, the number of the one of nodes

@@ -78,27 +78,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var named []string
-	for _, n := range names {
-		if _, ok := before[n]; !ok {
-			return nil, refuse("there is no local branch %s", n)
-		}
-		if !slices.Contains(named, n) {
-			named = append(named, n)
-		}
-	}
-	// A branch inside another named branch's stack moves with it.
-	var tips []string
-	for _, n := range named {
-		inside := false
-		for _, m := range named {
-			if m != n && git.OK("merge-base", "--is-ancestor", before[n], before[m]) && (before[n] != before[m] || m < n) {
-				inside = true
-			}
-		}
-		if !inside {
-			tips = append(tips, n)
-		}
+	named, tips, err := namedTips(names, before)
+	if err != nil {
+		return nil, err
 	}
 	tips, err = orderTops(base, tips, before)
 	if err != nil {
@@ -117,77 +99,19 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	var lines, moving, allGains []string
 	touches, commits, pushBranches, pushURLs := 0, 0, 0, 0
 	for _, t := range tips {
-		s := step{Branch: t, From: -1, tip: before[t]}
-		b := base
-		if b == "" {
-			if b, err = DefaultBase(t); err != nil {
-				return nil, err
-			}
-		}
-		start, squash, err := RangeStart(b, s.tip)
+		prepared, signs, err := prepareStep(t, base, before, pl.Steps)
 		if err != nil {
 			return nil, err
 		}
-		if start == "" {
+		if prepared == nil {
 			pl.Results[t] = map[string]string{"branch": t, "signed": "every commit since the base is already signed"}
 			lines = append(lines, fmt.Sprintf("%s: already signed", t))
 			continue
 		}
-		if s.from, err = git.Run("rev-parse", start); err != nil {
-			return nil, err
-		}
-		for i, e := range pl.Steps {
-			m, err := git.Run("merge-base", s.tip, e.tip)
-			if err != nil || git.OK("merge-base", "--is-ancestor", m, e.from) {
-				continue
-			}
-			if s.From < 0 || git.OK("merge-base", "--is-ancestor", s.from, m) {
-				s.From, s.from = i, m
-			}
-		}
-		if merges, _ := git.Run("rev-list", "--merges", s.from+".."+s.tip); merges != "" {
-			return nil, refuse("%s's commits to sign include merges, which re-signing would flatten; sign them by hand", t)
-		}
-		if err := lintMessages(t, s.from, s.tip); err != nil {
-			return nil, err
-		}
-		var signs int
-		if s.From < 0 {
-			s.Base = b
-			if signs, err = rehearseStep(&s, squash); err != nil {
-				return nil, err
-			}
-		} else if signs, err = rehearseFork(&s, &pl.Steps[s.From]); err != nil {
-			return nil, err
-		}
-		stacked := stackedIn(before, t, s.from, s.tip)
-		if err := inProgress(append([]string{t}, stacked...)); err != nil {
-			return nil, err
-		}
-		if c, ok := where[t]; ok {
-			if err := checkClean(c, true); err != nil {
-				return nil, err
-			}
-			s.Dir = c.path
-		}
-		for _, m := range stacked {
-			if c, ok := where[m]; ok {
-				if err := checkClean(c, false); err != nil {
-					return nil, err
-				}
-			}
-		}
-		lands, err := landings(before, stacked, s.from)
+		s := *prepared
+		stacked, gains, err := s.stackedGains(before, where)
 		if err != nil {
 			return nil, err
-		}
-		gains, err := gaining(lands, before, s.from, s.rehearsedFrom, s.rehearsedTip)
-		if err != nil {
-			return nil, err
-		}
-		// Only a fork's later child may end with other files at its tip.
-		if mustTree(s.rehearsedTip) != mustTree(s.tip) {
-			gains = append(gains, t)
 		}
 		allGains = append(allGains, gains...)
 		touches += signatures(s.from, s.tip)
@@ -198,45 +122,14 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 
 	if push || setUpstream {
-		var unmoved []string
-		for _, n := range named {
-			if !slices.Contains(moving, n) {
-				unmoved = append(unmoved, n)
-			}
-		}
-		if pl.Unmoved, pl.Held, err = unpushed(unmoved, base, setUpstream, "run the pass again"); err != nil {
-			return nil, err
-		}
-		byRemote, skipped, err := pushTargets(slices.Concat(moving, pl.Unmoved), setUpstream, "run the pass again")
+		var pushTouches int
+		var pushLines []string
+		pushBranches, pushURLs, pushTouches, pushLines, err = pl.preparePush(named, moving, base)
 		if err != nil {
 			return nil, err
 		}
-		if err := sshmux.Check("run the pass again"); err != nil {
-			return nil, err
-		}
-		pushBranches, pushURLs = pushShare(byRemote)
-		remotes := make([]string, 0, len(byRemote))
-		for r := range byRemote {
-			remotes = append(remotes, r)
-		}
-		sort.Strings(remotes)
-		for _, r := range remotes {
-			var bs []string
-			for _, t := range byRemote[r] {
-				bs = append(bs, t.branch)
-			}
-			sort.Strings(bs)
-			urls, _ := git.Run("remote", "get-url", "--push", "--all", r)
-			n := len(strings.Fields(urls))
-			touches += n
-			lines = append(lines, fmt.Sprintf("push to %s (%d URL(s)): %s", r, n, strings.Join(bs, ", ")))
-		}
-		for _, b := range slices.Sorted(maps.Keys(skipped)) {
-			lines = append(lines, fmt.Sprintf("%s: not pushed, no upstream", b))
-		}
-		for _, b := range slices.Sorted(maps.Keys(pl.Held)) {
-			lines = append(lines, fmt.Sprintf("%s: %s", b, pl.Held[b]))
-		}
+		touches += pushTouches
+		lines = append(lines, pushLines...)
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
 	if Brief {
@@ -253,76 +146,23 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 // orderTops puts a fold's carrier before a sibling that needs its target's
 // folded copy. Shared folds and folds into a carrier's own tail need no order.
 func orderTops(base string, tips []string, before map[string]string) ([]string, error) {
-	type fold struct{ commit, target string }
-	type top struct {
-		name     string
-		commits  map[string]bool
-		folds    []fold
-		rewrites bool
-	}
 	sort.Strings(tips)
-	var tops []top
+	var tops []signingTop
 	for _, name := range tips {
-		b := base
-		if b == "" {
-			var err error
-			if b, err = DefaultBase(name); err != nil {
-				return nil, err
-			}
-		}
-		commits, err := readRange(b, before[name])
+		t, err := readSigningTop(base, name, before[name])
 		if err != nil {
 			return nil, err
 		}
-		t := top{name: name, commits: map[string]bool{}}
-		for i, c := range commits {
-			t.commits[c.sha] = true
-			t.rewrites = t.rewrites || c.unsigned
-			at, err := foldTarget(commits, i)
-			if err != nil {
-				return nil, err
-			}
-			if at >= 0 {
-				t.folds = append(t.folds, fold{c.sha, commits[at].sha})
-				t.rewrites = true
-			}
-		}
 		tops = append(tops, t)
 	}
-	predecessors := map[string]map[string]bool{}
-	for _, carrier := range tops {
-		for _, f := range carrier.folds {
-			for _, sibling := range tops {
-				if !sibling.commits[f.target] || sibling.commits[f.commit] {
-					continue
-				}
-				if !sibling.rewrites {
-					return nil, refuse("%s is already signed but needs %s's fold into %.12s; restack it onto that folded history before signing these tops together", sibling.name, carrier.name, f.target)
-				}
-				if predecessors[sibling.name] == nil {
-					predecessors[sibling.name] = map[string]bool{}
-				}
-				predecessors[sibling.name][carrier.name] = true
-			}
-		}
+	predecessors, err := foldPredecessors(tops)
+	if err != nil {
+		return nil, err
 	}
 	var ordered []string
 	done := map[string]bool{}
 	for len(ordered) < len(tops) {
-		ready := ""
-		for _, t := range tops {
-			if done[t.name] {
-				continue
-			}
-			blocked := false
-			for p := range predecessors[t.name] {
-				blocked = blocked || !done[p]
-			}
-			if !blocked {
-				ready = t.name
-				break
-			}
-		}
+		ready := readyTop(tops, done, predecessors)
 		if ready == "" {
 			var remaining []string
 			for _, t := range tops {
@@ -502,41 +342,13 @@ func runPlan(pl *plan) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		var p *pending
-		if s.From < 0 {
-			var early map[string]string
-			if p, early, err = prepare(s.Branch, s.Base); err != nil {
-				return nil, err
-			}
-			if early != nil {
-				pl.record(s, map[string]any{"result": early}, nil)
-				continue
-			}
-			s.NewFrom = p.Start
-		} else {
-			e := pl.Steps[s.From]
-			onto, err := nth(e.NewFrom, "refs/heads/"+e.Branch, s.Kept)
-			if err != nil {
-				return nil, err
-			}
-			if mustTree(onto) != s.OntoTree {
-				return nil, fmt.Errorf("the signed copy of %s's fork point, %s, does not have the files its rehearsal "+
-					"had; nothing of %s has been rewritten, so restack it by hand", s.Branch, onto, s.Branch)
-			}
-			before, err := localBranches()
-			if err != nil {
-				return nil, err
-			}
-			tip := "refs/heads/" + s.Branch
-			p = &pending{Branch: s.Branch, Start: onto, Onto: onto, Fork: s.Fork, Fixups: s.Fixups, Shape: s.Shape,
-				Before: before, Stacked: stackedIn(before, s.Branch, s.Fork, tip), Trees: map[string]string{}}
-			if p.Lands, err = landings(before, p.Stacked, s.Fork); err != nil {
-				return nil, err
-			}
-			for _, b := range append([]string{s.Branch}, p.Stacked...) {
-				p.Trees[b] = mustTree(before[b])
-			}
-			s.NewFrom = onto
+		p, early, err := pl.preparePending(s)
+		if err != nil {
+			return nil, err
+		}
+		if early != nil {
+			pl.record(s, map[string]any{"result": early}, nil)
+			continue
 		}
 		p.Plan = pl
 		if err := sign(p, path); err != nil {
@@ -553,15 +365,9 @@ func runPlan(pl *plan) (any, error) {
 	}
 	result := map[string]any{"branches": pl.Results}
 	if pl.Push || pl.SetUpstream {
-		branches := slices.Sorted(slices.Values(append(pl.Moved, pl.Unmoved...)))
-		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream})
+		pushed, err := pl.push()
 		if err != nil {
 			return nil, err
-		}
-		for b, why := range pl.Held {
-			if _, ok := pushed[b]; !ok {
-				pushed[b] = why
-			}
 		}
 		result["pushed"] = pushed
 	}
@@ -618,4 +424,300 @@ func mainWorktree() error {
 	first, _, _ := strings.Cut(list, "\n")
 	git.Dir = strings.TrimPrefix(first, "worktree ")
 	return nil
+}
+
+func (s *step) prepareFork(e step) (*pending, error) {
+
+	onto, err := nth(e.NewFrom, "refs/heads/"+e.Branch, s.Kept)
+	if err != nil {
+		return nil, err
+	}
+	if mustTree(onto) != s.OntoTree {
+		return nil, fmt.Errorf("the signed copy of %s's fork point, %s, does not have the files its rehearsal "+
+			"had; nothing of %s has been rewritten, so restack it by hand", s.Branch, onto, s.Branch)
+	}
+	before, err := localBranches()
+	if err != nil {
+		return nil, err
+	}
+	tip := "refs/heads/" + s.Branch
+	p := &pending{Branch: s.Branch, Start: onto, Onto: onto, Fork: s.Fork, Fixups: s.Fixups, Shape: s.Shape,
+		Before: before, Stacked: stackedIn(before, s.Branch, s.Fork, tip), Trees: map[string]string{}}
+	if p.Lands, err = landings(before, p.Stacked, s.Fork); err != nil {
+		return nil, err
+	}
+	for _, b := range append([]string{s.Branch}, p.Stacked...) {
+		p.Trees[b] = mustTree(before[b])
+	}
+	s.NewFrom = onto
+	return p, nil
+}
+
+func namedTips(names []string, before map[string]string) ([]string, []string, error) {
+	var named []string
+	for _, n := range names {
+		if _, ok := before[n]; !ok {
+			return nil, nil, refuse("there is no local branch %s", n)
+		}
+		if !slices.Contains(named, n) {
+			named = append(named, n)
+		}
+	}
+	// A branch inside another named branch's stack moves with it.
+	var tips []string
+	for _, n := range named {
+		inside := false
+		for _, m := range named {
+			if m != n && git.OK("merge-base", "--is-ancestor", before[n], before[m]) && (before[n] != before[m] || m < n) {
+				inside = true
+			}
+		}
+		if !inside {
+			tips = append(tips, n)
+		}
+	}
+	return named, tips, nil
+}
+
+func prepareStep(t, base string, before map[string]string, previous []step) (*step, int, error) {
+	s := step{Branch: t, From: -1, tip: before[t]}
+	var err error
+	b := base
+	if b == "" {
+		if b, err = DefaultBase(t); err != nil {
+			return nil, 0, err
+		}
+	}
+	start, squash, err := RangeStart(b, s.tip)
+	if err != nil {
+		return nil, 0, err
+	}
+	if start == "" {
+		return nil, 0, nil
+	}
+	if s.from, err = git.Run("rev-parse", start); err != nil {
+		return nil, 0, err
+	}
+	s.findFork(previous)
+	if merges, _ := git.Run("rev-list", "--merges", s.from+".."+s.tip); merges != "" {
+		return nil, 0, refuse("%s's commits to sign include merges, which re-signing would flatten; sign them by hand", t)
+	}
+	if err := lintMessages(t, s.from, s.tip); err != nil {
+		return nil, 0, err
+	}
+	var signs int
+	if s.From < 0 {
+		s.Base = b
+		if signs, err = rehearseStep(&s, squash); err != nil {
+			return nil, 0, err
+		}
+	} else if signs, err = rehearseFork(&s, &previous[s.From]); err != nil {
+		return nil, 0, err
+	}
+	return &s, signs, nil
+}
+
+func (s *step) findFork(previous []step) {
+	for i, e := range previous {
+		m, err := git.Run("merge-base", s.tip, e.tip)
+		if err != nil || git.OK("merge-base", "--is-ancestor", m, e.from) {
+			continue
+		}
+		if s.From < 0 || git.OK("merge-base", "--is-ancestor", s.from, m) {
+			s.From, s.from = i, m
+		}
+	}
+}
+
+func (s *step) checkWorktrees(stacked []string, where map[string]checkout) error {
+	if c, ok := where[s.Branch]; ok {
+		if err := checkClean(c, true); err != nil {
+			return err
+		}
+		s.Dir = c.path
+	}
+	for _, m := range stacked {
+		if c, ok := where[m]; ok {
+			if err := checkClean(c, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (pl *plan) preparePush(named, moving []string, base string) (int, int, int, []string, error) {
+	var err error
+	var lines []string
+	touches := 0
+	var unmoved []string
+	for _, n := range named {
+		if !slices.Contains(moving, n) {
+			unmoved = append(unmoved, n)
+		}
+	}
+	if pl.Unmoved, pl.Held, err = unpushed(unmoved, base, pl.SetUpstream, "run the pass again"); err != nil {
+		return 0, 0, 0, nil, err
+	}
+	byRemote, skipped, err := pushTargets(slices.Concat(moving, pl.Unmoved), pl.SetUpstream, "run the pass again")
+	if err != nil {
+		return 0, 0, 0, nil, err
+	}
+	if err := sshmux.Check("run the pass again"); err != nil {
+		return 0, 0, 0, nil, err
+	}
+	pushBranches, pushURLs := pushShare(byRemote)
+	remotes := make([]string, 0, len(byRemote))
+	for r := range byRemote {
+		remotes = append(remotes, r)
+	}
+	sort.Strings(remotes)
+	for _, r := range remotes {
+		var bs []string
+		for _, t := range byRemote[r] {
+			bs = append(bs, t.branch)
+		}
+		sort.Strings(bs)
+		urls, _ := git.Run("remote", "get-url", "--push", "--all", r)
+		n := len(strings.Fields(urls))
+		touches += n
+		lines = append(lines, fmt.Sprintf("push to %s (%d URL(s)): %s", r, n, strings.Join(bs, ", ")))
+	}
+	for _, b := range slices.Sorted(maps.Keys(skipped)) {
+		lines = append(lines, fmt.Sprintf("%s: not pushed, no upstream", b))
+	}
+	for _, b := range slices.Sorted(maps.Keys(pl.Held)) {
+		lines = append(lines, fmt.Sprintf("%s: %s", b, pl.Held[b]))
+	}
+	return pushBranches, pushURLs, touches, lines, nil
+}
+
+type topFold struct{ commit, target string }
+type signingTop struct {
+	name     string
+	commits  map[string]bool
+	folds    []topFold
+	rewrites bool
+}
+
+func readSigningTop(base, name, tip string) (signingTop, error) {
+	b := base
+	if b == "" {
+		var err error
+		if b, err = DefaultBase(name); err != nil {
+			return signingTop{}, err
+		}
+	}
+	commits, err := readRange(b, tip)
+	if err != nil {
+		return signingTop{}, err
+	}
+	t := signingTop{name: name, commits: map[string]bool{}}
+	for i, c := range commits {
+		t.commits[c.sha] = true
+		t.rewrites = t.rewrites || c.unsigned
+		at, err := foldTarget(commits, i)
+		if err != nil {
+			return signingTop{}, err
+		}
+		if at >= 0 {
+			t.folds = append(t.folds, topFold{c.sha, commits[at].sha})
+			t.rewrites = true
+		}
+	}
+	return t, nil
+}
+
+func foldPredecessors(tops []signingTop) (map[string]map[string]bool, error) {
+	predecessors := map[string]map[string]bool{}
+	for _, carrier := range tops {
+		for _, f := range carrier.folds {
+			for _, sibling := range tops {
+				if !sibling.commits[f.target] || sibling.commits[f.commit] {
+					continue
+				}
+				if !sibling.rewrites {
+					return nil, refuse("%s is already signed but needs %s's fold into %.12s; restack it onto that folded history before signing these tops together", sibling.name, carrier.name, f.target)
+				}
+				if predecessors[sibling.name] == nil {
+					predecessors[sibling.name] = map[string]bool{}
+				}
+				predecessors[sibling.name][carrier.name] = true
+			}
+		}
+	}
+	return predecessors, nil
+}
+
+func readyTop(tops []signingTop, done map[string]bool, predecessors map[string]map[string]bool) string {
+	for _, t := range tops {
+		if done[t.name] {
+			continue
+		}
+		blocked := false
+		for p := range predecessors[t.name] {
+			blocked = blocked || !done[p]
+		}
+		if !blocked {
+			return t.name
+		}
+	}
+	return ""
+}
+
+func (pl *plan) preparePending(s *step) (*pending, map[string]string, error) {
+	var p *pending
+	var err error
+	if s.From < 0 {
+		var early map[string]string
+		if p, early, err = prepare(s.Branch, s.Base); err != nil {
+			return nil, nil, err
+		}
+		if early != nil {
+			return nil, early, nil
+		}
+		s.NewFrom = p.Start
+	} else {
+		if p, err = s.prepareFork(pl.Steps[s.From]); err != nil {
+			return nil, nil, err
+		}
+	}
+	return p, nil, nil
+}
+
+func (pl *plan) push() (map[string]string, error) {
+	branches := slices.Sorted(slices.Values(append(pl.Moved, pl.Unmoved...)))
+	pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream})
+	if err != nil {
+		return nil, err
+	}
+	for b, why := range pl.Held {
+		if _, ok := pushed[b]; !ok {
+			pushed[b] = why
+		}
+	}
+	return pushed, nil
+}
+
+func (s *step) stackedGains(before map[string]string, where map[string]checkout) ([]string, []string, error) {
+	stacked := stackedIn(before, s.Branch, s.from, s.tip)
+	if err := inProgress(append([]string{s.Branch}, stacked...)); err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkWorktrees(stacked, where); err != nil {
+		return nil, nil, err
+	}
+	lands, err := landings(before, stacked, s.from)
+	if err != nil {
+		return nil, nil, err
+	}
+	gains, err := gaining(lands, before, s.from, s.rehearsedFrom, s.rehearsedTip)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Only a fork's later child may end with other files at its tip.
+	if mustTree(s.rehearsedTip) != mustTree(s.tip) {
+		gains = append(gains, s.Branch)
+	}
+	return stacked, gains, nil
 }

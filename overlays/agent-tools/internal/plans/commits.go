@@ -104,36 +104,11 @@ func (c Config) Commits(o CommitOptions) ([]CommitAssociation, error) {
 		if selected != "" && selected != p.Name {
 			continue
 		}
-		events, err := p.Events()
+		associations, err := p.commitAssociations(o, aliases, seen)
 		if err != nil {
 			return nil, err
 		}
-		items, err := p.items()
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range events {
-			if e.Revision == "" || e.OldRevision != "" || o.Repository != "" && e.Repository != o.Repository || o.Item != "" && e.Item != o.Item {
-				continue
-			}
-			if !revisionPattern.MatchString(e.Revision) || !repositoryPattern.MatchString(e.Repository) {
-				return nil, fmt.Errorf("invalid commit identity in %s", p.log())
-			}
-			resolved := aliases.resolve(e.Repository, e.Revision)
-			if o.Revision != "" && aliases.resolve(e.Repository, o.Revision) != resolved {
-				continue
-			}
-			it, ok := items[e.Item]
-			if !ok {
-				return nil, fmt.Errorf("commit association names missing item %s in %s", e.Item, p.File())
-			}
-			key := p.Name + "\x00" + e.Item + "\x00" + e.Repository + "\x00" + e.Revision
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, CommitAssociation{Plan: p.Name, File: it.File, Item: e.Item, Repository: e.Repository, Revision: resolved, OriginalRevision: e.Revision, Subject: e.Commit})
-		}
+		out = append(out, associations...)
 	}
 	return out, nil
 }
@@ -205,25 +180,7 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 	if err != nil {
 		return err
 	}
-	own := map[string]Plan{}
-	for _, p := range ps {
-		if p.Own {
-			own[p.Name] = p
-		}
-	}
-	affected := false
-	var holder *Plan
-	for _, association := range all {
-		for at := association.OriginalRevision; at != ""; at = a[repository][at] {
-			if rewrites[at] != "" {
-				affected = true
-				if p, ok := own[association.Plan]; ok && holder == nil && rewrites[at] != at {
-					holder = &p
-				}
-				break
-			}
-		}
-	}
+	affected, holder := rewriteHolder(ps, all, a, repository, rewrites)
 	if !affected {
 		return nil
 	}
@@ -263,28 +220,88 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 		}
 	}
 	return p.withLock(func(l *lockedPlan) error {
-		events, err := p.Events()
-		if err != nil {
+		return l.recordRewrites(part, top, repository, old, rewrites, now)
+	})
+}
+
+func (p Plan) commitAssociations(o CommitOptions, aliases aliases, seen map[string]bool) ([]CommitAssociation, error) {
+	out := []CommitAssociation{}
+	events, err := p.Events()
+	if err != nil {
+		return nil, err
+	}
+	items, err := p.items()
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range events {
+		if e.Revision == "" || e.OldRevision != "" || o.Repository != "" && e.Repository != o.Repository || o.Item != "" && e.Item != o.Item {
+			continue
+		}
+		if !revisionPattern.MatchString(e.Revision) || !repositoryPattern.MatchString(e.Repository) {
+			return nil, fmt.Errorf("invalid commit identity in %s", p.log())
+		}
+		resolved := aliases.resolve(e.Repository, e.Revision)
+		if o.Revision != "" && aliases.resolve(e.Repository, o.Revision) != resolved {
+			continue
+		}
+		it, ok := items[e.Item]
+		if !ok {
+			return nil, fmt.Errorf("commit association names missing item %s in %s", e.Item, p.File())
+		}
+		key := p.Name + "\x00" + e.Item + "\x00" + e.Repository + "\x00" + e.Revision
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, CommitAssociation{Plan: p.Name, File: it.File, Item: e.Item, Repository: e.Repository, Revision: resolved, OriginalRevision: e.Revision, Subject: e.Commit})
+	}
+	return out, nil
+}
+
+func rewriteHolder(ps []Plan, all []CommitAssociation, a aliases, repository string, rewrites map[string]string) (affected bool, holder *Plan) {
+	own := map[string]Plan{}
+	for _, p := range ps {
+		if p.Own {
+			own[p.Name] = p
+		}
+	}
+	for _, association := range all {
+		for at := association.OriginalRevision; at != ""; at = a[repository][at] {
+			if rewrites[at] != "" {
+				affected = true
+				if p, ok := own[association.Plan]; ok && holder == nil && rewrites[at] != at {
+					holder = &p
+				}
+				break
+			}
+		}
+	}
+	return affected, holder
+}
+
+func (l *lockedPlan) recordRewrites(part, top, repository string, old []string, rewrites map[string]string, now time.Time) error {
+	events, err := l.p.Events()
+	if err != nil {
+		return err
+	}
+	kept := map[string]string{}
+	for _, e := range events {
+		if e.Kind == "commit-rewritten" && e.Repository == repository {
+			kept[e.OldRevision] = e.Revision
+		}
+	}
+	item := part
+	if item == "" {
+		item = l.p.Name
+	}
+	for _, from := range old {
+		if kept[from] == rewrites[from] {
+			continue
+		}
+		if _, err := l.log(Event{Kind: "commit-rewritten", Item: item, Repository: repository, OldRevision: from, Revision: rewrites[from], Worktree: top}, now); err != nil {
 			return err
 		}
-		kept := map[string]string{}
-		for _, e := range events {
-			if e.Kind == "commit-rewritten" && e.Repository == repository {
-				kept[e.OldRevision] = e.Revision
-			}
-		}
-		item := part
-		if item == "" {
-			item = p.Name
-		}
-		for _, from := range old {
-			if kept[from] == rewrites[from] {
-				continue
-			}
-			if _, err := l.log(Event{Kind: "commit-rewritten", Item: item, Repository: repository, OldRevision: from, Revision: rewrites[from], Worktree: top}, now); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }

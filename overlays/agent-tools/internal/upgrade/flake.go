@@ -243,37 +243,7 @@ func flakePins(file string, old, next []byte) []Pin {
 		return []Pin{{Key: file, File: file, Kind: "flake-unreadable", Old: cmp.Or(blobID(old), "none"),
 			New: cmp.Or(blobID(next), "none"), Note: err.Error(), Line: 1}}
 	}
-	type pair struct{ before, after string }
-	var pairs []pair
-	var dropped []string
-	for _, n := range slices.Sorted(maps.Keys(a.Nodes)) {
-		if a.node(n) == nil {
-			continue
-		}
-		if b.node(n) != nil {
-			pairs = append(pairs, pair{n, n})
-		} else {
-			dropped = append(dropped, n)
-		}
-	}
-	for _, n := range slices.Sorted(maps.Keys(b.Nodes)) {
-		if b.node(n) == nil || a.node(n) != nil {
-			continue
-		}
-		i := slices.IndexFunc(dropped, func(d string) bool {
-			s := a.node(d).locked.source()
-			return s != "" && s == b.node(n).locked.source()
-		})
-		if i >= 0 {
-			pairs = append(pairs, pair{dropped[i], n})
-			dropped = slices.Delete(dropped, i, i+1)
-		} else {
-			pairs = append(pairs, pair{"", n})
-		}
-	}
-	for _, d := range dropped {
-		pairs = append(pairs, pair{d, ""})
-	}
+	pairs := pairLockNodes(a, b)
 	var pins []Pin
 	for _, pr := range pairs {
 		key := file + "#" + nodeName(cmp.Or(pr.after, pr.before))
@@ -302,6 +272,42 @@ func flakePins(file string, old, next []byte) []Pin {
 	}
 	slices.SortFunc(pins, func(x, y Pin) int { return strings.Compare(x.Key, y.Key) })
 	return pins
+}
+
+type lockPair struct{ before, after string }
+
+func pairLockNodes(a, b flakeLock) []lockPair {
+	var pairs []lockPair
+	var dropped []string
+	for _, n := range slices.Sorted(maps.Keys(a.Nodes)) {
+		if a.node(n) == nil {
+			continue
+		}
+		if b.node(n) != nil {
+			pairs = append(pairs, lockPair{n, n})
+		} else {
+			dropped = append(dropped, n)
+		}
+	}
+	for _, n := range slices.Sorted(maps.Keys(b.Nodes)) {
+		if b.node(n) == nil || a.node(n) != nil {
+			continue
+		}
+		i := slices.IndexFunc(dropped, func(d string) bool {
+			s := a.node(d).locked.source()
+			return s != "" && s == b.node(n).locked.source()
+		})
+		if i >= 0 {
+			pairs = append(pairs, lockPair{dropped[i], n})
+			dropped = slices.Delete(dropped, i, i+1)
+		} else {
+			pairs = append(pairs, lockPair{"", n})
+		}
+	}
+	for _, d := range dropped {
+		pairs = append(pairs, lockPair{d, ""})
+	}
+	return pairs
 }
 
 // flakeNixPins are the pins of a change to file, a flake.nix, from old at

@@ -89,32 +89,14 @@ type span struct {
 func Check(text string, ctx Context) []Finding {
 	var spans []span
 	add := func(start, end int, kind string) { spans = append(spans, span{start, end, kind}) }
-	addAll := func(re *regexp.Regexp, in string, kind string, group int) {
-		for _, m := range re.FindAllStringSubmatchIndex(in, -1) {
-			for g := group; g < len(m)/2; g++ {
-				if m[2*g] >= 0 {
-					add(m[2*g], m[2*g+1], kind)
-					break
-				}
-			}
-		}
-	}
-	addAll(nodeIDs, text, nodeID, 0)
-	addAll(sessionIDs, text, session, 1)
+	spans = append(spans, regexpSpans(nodeIDs, text, nodeID, 0)...)
+	spans = append(spans, regexpSpans(sessionIDs, text, session, 1)...)
 	for _, id := range ctx.Sessions {
 		for _, at := range exact(text, id, false) {
 			add(at, at+len(id), session)
 		}
 	}
-	for _, id := range ctx.Threads {
-		_, key, _ := strings.Cut(id, "_")
-		for n := 5; n <= 8 && n < len(key); n++ {
-			suffix := key[len(key)-n:]
-			for _, at := range exact(text, suffix, true) {
-				add(at, at+n, shortKey)
-			}
-		}
-	}
+	spans = append(spans, threadSpans(text, ctx.Threads)...)
 	for _, m := range scratchPaths.FindAllStringIndex(text, -1) {
 		start, end := pathAround(text, m[0], m[1])
 		add(start, end, path)
@@ -129,15 +111,46 @@ func Check(text string, ctx Context) []Finding {
 		}
 	}
 	if !ctx.Harness {
-		addAll(terms, text, term, 0)
+		spans = append(spans, regexpSpans(terms, text, term, 0)...)
 		for _, m := range harnessPaths.FindAllStringIndex(text, -1) {
 			start, end := pathAround(text, m[0], m[1])
 			add(start, end, path)
 		}
 	}
 
-	// The guesses read prose alone: code names what it likes.
-	prose := withoutCode(text)
+	spans = append(spans, proseSpans(withoutCode(text), ctx.PlanIDs)...)
+	return findings(text, spans)
+}
+
+func regexpSpans(re *regexp.Regexp, in, kind string, group int) []span {
+	var spans []span
+	for _, m := range re.FindAllStringSubmatchIndex(in, -1) {
+		for g := group; g < len(m)/2; g++ {
+			if m[2*g] >= 0 {
+				spans = append(spans, span{m[2*g], m[2*g+1], kind})
+				break
+			}
+		}
+	}
+	return spans
+}
+
+func threadSpans(text string, threads []string) []span {
+	var spans []span
+	for _, id := range threads {
+		_, key, _ := strings.Cut(id, "_")
+		for n := 5; n <= 8 && n < len(key); n++ {
+			suffix := key[len(key)-n:]
+			for _, at := range exact(text, suffix, true) {
+				spans = append(spans, span{at, at + n, shortKey})
+			}
+		}
+	}
+	return spans
+}
+
+func proseSpans(prose string, ownPlans []string) []span {
+	var spans []span
 	for _, re := range []*regexp.Regexp{bracketKeys, threadKey} {
 		for _, m := range re.FindAllStringSubmatchIndex(prose, -1) {
 			at := m[2]
@@ -145,7 +158,7 @@ func Check(text string, ctx Context) []Finding {
 				lead := len(key) - len(strings.TrimLeft(key, " \t\n"))
 				key = strings.TrimSpace(key)
 				if keyLike(key) {
-					add(at+lead, at+lead+len(key), shortKey)
+					spans = append(spans, span{at + lead, at + lead + len(key), shortKey})
 				}
 				at += len(key) + lead + 1
 			}
@@ -153,11 +166,11 @@ func Check(text string, ctx Context) []Finding {
 	}
 	for _, m := range words.FindAllStringIndex(prose, -1) {
 		word := strings.TrimRight(prose[m[0]:m[1]], ".-/")
-		if planIDs.MatchString(word) || ownID(word, ctx.PlanIDs) {
-			add(m[0], m[0]+len(word), planID)
+		if planIDs.MatchString(word) || ownID(word, ownPlans) {
+			spans = append(spans, span{m[0], m[0] + len(word), planID})
 		}
 	}
-	return findings(text, spans)
+	return spans
 }
 
 // findings are the tokens spans name, in order, each once, dropping a span
@@ -258,29 +271,7 @@ func ownID(word string, ids []string) bool {
 // every other byte where it was.
 func withoutCode(text string) string {
 	b := []byte(text)
-	blank := func(from, to int) {
-		for i := from; i < to; i++ {
-			if b[i] != '\n' {
-				b[i] = ' '
-			}
-		}
-	}
-	// Fenced blocks.
-	fence, at := "", 0
-	for _, line := range strings.SplitAfter(text, "\n") {
-		trimmed := strings.TrimLeft(line, " ")
-		switch {
-		case fence == "" && (strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")):
-			fence = trimmed[:3]
-			blank(at, at+len(line))
-		case fence != "":
-			if strings.HasPrefix(trimmed, fence) {
-				fence = ""
-			}
-			blank(at, at+len(line))
-		}
-		at += len(line)
-	}
+	blankFences(text, b)
 	// Spans: a run of backticks to the next run of as many.
 	for i := 0; i < len(b); {
 		if b[i] != '`' {
@@ -291,30 +282,59 @@ func withoutCode(text string) string {
 		for i+n < len(b) && b[i+n] == '`' {
 			n++
 		}
-		close := -1
-		for j := i + n; j < len(b); {
-			if b[j] != '`' {
-				j++
-				continue
-			}
-			m := 0
-			for j+m < len(b) && b[j+m] == '`' {
-				m++
-			}
-			if m == n {
-				close = j
-				break
-			}
-			j += m
-		}
+		close := closingTicks(b, i+n, n)
 		if close < 0 {
 			i += n
 			continue
 		}
-		blank(i, close+n)
+		blankSpan(b, i, close+n)
 		i = close + n
 	}
 	return string(b)
+}
+
+func blankSpan(b []byte, from, to int) {
+	for i := from; i < to; i++ {
+		if b[i] != '\n' {
+			b[i] = ' '
+		}
+	}
+}
+
+func blankFences(text string, b []byte) {
+	fence, at := "", 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		switch {
+		case fence == "" && (strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")):
+			fence = trimmed[:3]
+			blankSpan(b, at, at+len(line))
+		case fence != "":
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			blankSpan(b, at, at+len(line))
+		}
+		at += len(line)
+	}
+}
+
+func closingTicks(b []byte, from, n int) int {
+	for j := from; j < len(b); {
+		if b[j] != '`' {
+			j++
+			continue
+		}
+		m := 0
+		for j+m < len(b) && b[j+m] == '`' {
+			m++
+		}
+		if m == n {
+			return j
+		}
+		j += m
+	}
+	return -1
 }
 
 // Names lists findings as `"token" (kind)`, joined as prose.
