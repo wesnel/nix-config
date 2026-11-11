@@ -32,9 +32,13 @@ of the `coordinate-subagents` skill commits nothing, as that phase says.
   as a question.
 - Wait in the foreground for your own builds and tests.
 - Draft thread replies to the file your task names.
-- Before reporting done, autosquash onto the base on a throwaway branch,
-  run the tests and linters on the result, since a squash can drop a line,
-  then delete that branch.
+- Before reporting done, autosquash onto the base on a detached HEAD in a
+  scratch worktree (`git worktree add --detach $TMPDIR/squash HEAD`, then
+  `git -c commit.gpgsign=false rebase --autosquash BASE` there), and run
+  the tests and linters on the result, since a squash can drop a line.
+  Then remove that worktree, and `agent-plan unfile` it if the hook filed
+  it in your plan's WORKTREES. A detached HEAD leaves no branch behind:
+  the guard refuses deleting an unmerged one.
 
 ## Report
 
