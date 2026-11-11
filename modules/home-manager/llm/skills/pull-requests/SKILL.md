@@ -1,16 +1,42 @@
 ---
 name: pull-requests
-description: How to open, describe and answer a pull request. Use before `agent-pr open`, `gh pr create` or `gh pr edit`, before writing a pull request's title or description, and before replying in its review threads.
+description: Inspect, open, describe and answer pull requests, and prepare operator readiness or merge handoffs. Use for ordinary PR assistance, before `agent-pr open`, `gh pr create` or `gh pr edit`, before writing a PR title or description, and before replying in review threads.
 ---
 
 # Pull requests
+
+## Inspection and operator handoff
+
+Use `agent-pr list --repo OWNER/NAME` to read every open PR, including drafts
+and fork branches, without a checkout. In Codex use `agent_pr_list` on the
+`agent_ops` server. Other GitHub commands use that server's tool named for
+the command, with dashes replaced by underscores.
+
+From a checkout of the repository, `agent-pr threads PR` reads discussion
+without changing review records. `agent-pr publication-status BRANCH` reads
+what remains to publish a branch; `complete` means publication is complete.
+Use `agent-pr merge-preview PR` for the remote PRs, heads, destination,
+draft, CI and review states the operator's merge would use. Preserve an
+`UNKNOWN` state as unknown in the report.
+
+For an individual PR or the top of a stack, hand over `agent-pr ready PR`
+to mark its drafts ready, or `agent-pr merge PR` to merge. Each shows its
+selection on the operator's terminal for confirmation and rechecks it
+before writing. Readiness can notify reviewers; merging is irreversible.
+The merge request pins the top head; lower heads can still change between
+the final read and GitHub's asynchronous merge. Report GitHub's returned
+status; `pending` and `enqueued` do not mean merged.
+
+The operator explicitly launches `review-loop` when they want its bot or
+people automation. Ordinary inspection and publication use these commands
+without a loop mode.
 
 ## Opening
 
 - Open every pull request as a draft. Marking it ready for review notifies
   its code owners, and is the operator's call.
-- `agent-pr next <branch>` says whether a branch's next step is opening its
-  pull request, the operator's signing pass or push, or nothing; take the
+- `agent-pr publication-status <branch>` says whether publication needs
+  opening its PR, the operator's signing pass or push, or is complete; take the
   step it names.
 - Open one with `agent-pr open`, which pushes a branch GitHub does not have
   yet through the GitHub API, unsigned, or takes one GitHub already has at

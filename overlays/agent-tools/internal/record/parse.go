@@ -30,7 +30,7 @@ func (e *DriftError) Error() string {
 	}
 	return fmt.Sprintf("%s fails its structure check at line %d, in %s: %s. Nothing was written to it; "+
 		"the operator fixes it in Emacs or deletes it (a range's record is remade by reviewing the range again, "+
-		"a pull request's threads by `agent-pr threads`, though its unposted drafts are lost)", path, e.Line, e.Part, e.Why)
+		"a pull request's threads by reviewing it with `agent-review OWNER/NAME#N`, though its unposted drafts are lost)", path, e.Line, e.Part, e.Why)
 }
 
 // ParseRange reads a range's record. A file that is not exactly what Render

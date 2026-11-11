@@ -50,47 +50,25 @@ func Merge(target, method string) (any, error) {
 			"opened here (%v); the operator runs it from a terminal of their own", err)
 	}
 	defer tty.Close()
-	repo, err := repository()
+	plan, err := MergePreview(target)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
-	if err != nil {
-		return nil, err
-	}
-	branch, err := prBranch(repo, prs, target)
-	if err != nil {
-		return nil, err
-	}
-	top, err := checkBranch(repo, prs, branch)
-	if err != nil {
-		return nil, err
-	}
-	stack, err := githubStack(repo, top.Number)
-	if err != nil {
-		return nil, err
-	}
-	merged, into, err := mergeTargets(repo, prs, top, stack)
-	if err != nil {
-		return nil, err
-	}
-	result := MergeResult{PR: top.Number, PRs: []int{}}
-	if stack != nil {
-		result.Stack = stack.Number
-	}
-	for _, pr := range merged {
+	result := MergeResult{PR: plan.PR, Stack: plan.Stack, PRs: []int{}}
+	for _, pr := range plan.PRs {
 		if pr.IsDraft {
-			return nil, refuse("#%d is a draft, which GitHub does not merge; mark it ready with `gh pr ready %d`, "+
-				"then run `agent-pr merge %d` again", pr.Number, pr.Number, top.Number)
+			return nil, refuse("#%d is a draft, which GitHub does not merge; run `agent-pr ready %d`, "+
+				"then run `agent-pr merge %d` again", pr.Number, plan.PR, plan.PR)
 		}
 		result.PRs = append(result.PRs, pr.Number)
 	}
 
-	fmt.Fprintf(tty, "\n=== Merge into %s, by %s, bottom first:\n", into, method)
-	for _, pr := range merged {
-		fmt.Fprintf(tty, "  #%d %s: %s\n", pr.Number, pr.HeadRefName, pr.Title)
+	fmt.Fprintf(tty, "\n=== Merge into %s, by %s, bottom first:\n", plan.Destination, method)
+	for _, pr := range plan.PRs {
+		fmt.Fprintf(tty, "  #%d %s: %s (head %s)\n", pr.Number, pr.HeadRefName, pr.Title, pr.HeadRefOid)
 	}
-	fmt.Fprintf(tty, "=== with #%d's head at %s. Merge? [y/N] ", top.Number, top.HeadRefOid)
+	top := plan.PRs[len(plan.PRs)-1]
+	fmt.Fprintf(tty, "=== GitHub pins only #%d's head at %s; other members can still change after rechecking. Merge? [y/N] ", top.Number, top.HeadRefOid)
 	answer, err := bufio.NewReader(tty).ReadString('\n')
 	if err != nil && answer == "" {
 		return nil, fmt.Errorf("reading the answer: %w", err)
@@ -98,6 +76,15 @@ func Merge(target, method string) (any, error) {
 	if strings.TrimSpace(answer) != "y" {
 		result.Skipped = "not confirmed"
 		return result, nil
+	}
+	fresh, err := recheckMergePlan(plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, pr := range fresh.PRs {
+		if pr.IsDraft {
+			return nil, refuse("#%d became a draft after confirmation; run `agent-pr merge-preview %d` again", pr.Number, plan.PR)
+		}
 	}
 
 	var reply struct {
@@ -108,7 +95,7 @@ func Merge(target, method string) (any, error) {
 	}
 	// sha makes GitHub refuse the merge if the top moved since it was shown.
 	body := map[string]any{"merge_method": method, "sha": top.HeadRefOid}
-	if err := mergeREST("PUT", fmt.Sprintf("repos/%s/pulls/%d/merge-async", repo.Slug, top.Number), body, &reply); err != nil {
+	if err := mergeREST("PUT", fmt.Sprintf("repos/%s/pulls/%d/merge-async", plan.Repository, top.Number), body, &reply); err != nil {
 		return nil, fmt.Errorf("asking GitHub to merge #%d: %w", top.Number, err)
 	}
 	result.Status, result.UUID = reply.Status, reply.Details.UUID

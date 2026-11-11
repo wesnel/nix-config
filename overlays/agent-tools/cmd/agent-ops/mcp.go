@@ -111,10 +111,22 @@ var (
 // agent-pr X is agent_pr_X and agent-review X is agent_review_X, dashes as
 // underscores, and each flag is the argument of its name.
 var mcpTools = []mcpTool{
-	{name: "agent_pr_next", desc: "agent-pr next: read each branch's next step: open an unsigned draft PR, sign, push, nothing, or blocked.",
+	{name: "agent_pr_list", desc: "agent-pr list: read every open PR in a repository, including drafts and forks, without a checkout or review-loop mode.",
+		params:     []mcpParam{{name: "repo", kind: text, required: true, desc: "GitHub repository OWNER/NAME"}},
+		noWorktree: true,
+		argv:       func(a mcpArgs) []string { return []string{"list", "--repo", a.str("repo")} }, run: prTool},
+	{name: "agent_pr_publication_status", desc: "agent-pr publication-status: read each branch's publication step: open an unsigned draft PR, sign, push, complete, or blocked. Completion describes publication only.",
 		params: []mcpParam{{name: "branches", kind: texts, desc: "branches to inspect; default: the worktree's branch"}},
 		argv: func(a mcpArgs) []string {
-			return append([]string{"next", "--json"}, a.strs("branches")...)
+			return append([]string{"publication-status", "--json"}, a.strs("branches")...)
+		}, run: prTool},
+	{name: "agent_pr_merge_preview", desc: "agent-pr merge-preview: read the PR and its open downstack PRs, destination, heads, draft, CI and review state. Does not mark ready or merge.",
+		params: []mcpParam{{name: "target", kind: text, desc: "a PR by number or branch; default: the worktree's branch's"}},
+		argv: func(a mcpArgs) []string {
+			if target := a.str("target"); target != "" {
+				return []string{"merge-preview", target}
+			}
+			return []string{"merge-preview"}
 		}, run: prTool},
 	{name: "agent_pr_open", desc: "agent-pr open: push a branch GitHub does not have through the API and open it as a draft PR.",
 		params: []mcpParam{{name: "title", kind: text, required: true, desc: "the PR's title"},
@@ -147,7 +159,7 @@ var mcpTools = []mcpTool{
 			argv := a.opt(a.opt([]string{"push"}, "--lease", "lease"), "--dry-run", "dry_run")
 			return append(argv, a.strs("branches")...)
 		}, run: prTool},
-	{name: "agent_pr_threads", desc: "agent-pr threads: a PR's unresolved review threads, every comment read; writes its review record.",
+	{name: "agent_pr_threads", desc: "agent-pr threads: read a PR's unresolved review threads and every comment without changing review records.",
 		params: []mcpParam{{name: "pr", kind: number, required: true, desc: "the PR's number"},
 			{name: "all", kind: toggle, desc: "resolved threads too"}},
 		argv: func(a mcpArgs) []string {
