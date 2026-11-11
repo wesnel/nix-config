@@ -13,8 +13,10 @@
     "agent_pr_draft"
     "agent_pr_end"
     "agent_pr_link"
+    "agent_pr_list"
     "agent_pr_logs"
-    "agent_pr_next"
+    "agent_pr_merge_preview"
+    "agent_pr_publication_status"
     "agent_pr_open"
     "agent_pr_push"
     "agent_pr_reply"
@@ -128,7 +130,7 @@
         expected=$(printf '%s\n' 1 "$mode" --no-daemon \
           -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
           -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")
-        for tool in agent_pr_ci agent_pr_draft agent_pr_end agent_pr_link agent_pr_logs agent_pr_next \
+        for tool in agent_pr_ci agent_pr_draft agent_pr_end agent_pr_link agent_pr_list agent_pr_logs agent_pr_merge_preview agent_pr_publication_status \
           agent_pr_open agent_pr_push agent_pr_reply agent_pr_request agent_pr_sign_check agent_pr_stack \
           agent_pr_status agent_pr_threads agent_pr_wait agent_review agent_review_ask agent_review_settle \
           agent_review_show github_file github_pr_diff github_pr_view github_profile; do

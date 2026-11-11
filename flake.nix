@@ -1594,6 +1594,8 @@
             | select(. as $n | $d | any(.serverName == $n)) | "kept connector is denied: \(.)"'
           check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
             else "agent-plan link is not excluded from the sandbox" end'
+          check '.sandbox.excludedCommands[] | select(. == "agent-pr ready *" or . == "agent-pr merge *")
+            | "operator command is excluded from the sandbox: \(.)"'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
             else "agent-plan link is not allowed" end'
           # Demo digests and brag files are agent-plan's alone to write, as

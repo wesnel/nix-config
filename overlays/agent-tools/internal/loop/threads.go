@@ -101,15 +101,14 @@ func isBot(bots []*Bot, c ThreadComment) bool {
 	return c.Type == "Bot" && botNamed(bots, c.Author) != nil
 }
 
-// Threads lists a PR's unresolved review threads (all of them with all),
-// and writes every thread, resolved or not, with every comment, to the PR's
-// review record (internal/record), keeping the drafts the record holds.
+// Threads reads a PR's unresolved review threads (all of them with all),
+// with every comment. It does not read or change review records.
 func Threads(number int, all bool) (any, error) {
 	repo, err := repository()
 	if err != nil {
 		return nil, err
 	}
-	threads, err := RefreshThreads(repo.Slug, number)
+	threads, err := ReadThreads(repo.Slug, number)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +123,20 @@ func Threads(number int, all bool) (any, error) {
 
 // RefreshThreads reads every review thread of pull request number of slug,
 // owner/name, with every comment, and writes them to the PR's review record
-// as Threads does. agent-review refreshes a pull request's record with it.
+// while preserving drafts. agent-review and Draft refresh records with it.
 func RefreshThreads(slug string, number int) ([]Thread, error) {
+	threads, err := ReadThreads(slug, number)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
+		return nil, err
+	}
+	return threads, nil
+}
+
+// ReadThreads reads all review threads and comments without changing records.
+func ReadThreads(slug string, number int) ([]Thread, error) {
 	bots, err := botsFor(slug)
 	if err != nil {
 		return nil, err
@@ -181,9 +192,6 @@ func RefreshThreads(slug string, number int) ([]Thread, error) {
 		}
 		next := page.PageInfo.EndCursor
 		cursor = &next
-	}
-	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
-		return nil, err
 	}
 	return threads, nil
 }

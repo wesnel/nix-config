@@ -266,8 +266,6 @@ func TestReply(t *testing.T) {
 	})
 }
 
-// threads lists the unresolved threads and writes every thread, with every
-// comment and its author's type, to the PR's record, keeping drafts.
 func TestThreads(t *testing.T) {
 	fakeRepo(t)
 	got, err := Threads(2, false)
@@ -280,14 +278,38 @@ func TestThreads(t *testing.T) {
 		t.Errorf("listed %+v", listed)
 	}
 	path, _ := record.PRFile("o", "r", 2)
-	err = record.Update(path, func(p *record.PR) error {
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspection created a review record: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const untouched = "not a review record\n"
+	if err := os.WriteFile(path, []byte(untouched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Threads(2, true); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(path); err != nil || string(body) != untouched {
+		t.Fatalf("inspection changed an existing record: %q, %v", body, err)
+	}
+}
+
+func TestRefreshThreads(t *testing.T) {
+	fakeRepo(t)
+	if _, err := RefreshThreads("o/r", 2); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := record.PRFile("o", "r", 2)
+	err := record.Update(path, func(p *record.PR) error {
 		p.Threads[2].Draft = &record.Draft{Outcome: "rebut", Body: "No."}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Threads(2, true); err != nil {
+	if _, err := RefreshThreads("o/r", 2); err != nil {
 		t.Fatal(err)
 	}
 	p, err := record.ReadPR(path)

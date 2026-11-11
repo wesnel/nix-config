@@ -2,6 +2,8 @@ package prcli
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +12,52 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/loop"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+func TestReadyDispatch(t *testing.T) {
+	for _, cause := range []error{errors.New("GitHub unavailable"), refusal.New("head changed")} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			posting(t)
+			old := runReady
+			t.Cleanup(func() { runReady = old })
+			called := false
+			runReady = func(target string) (any, error) {
+				called = true
+				if target != "3" {
+					t.Errorf("ready target %q, want 3", target)
+				}
+				return loop.ReadyResult{PR: 3, Ready: []int{1}}, cause
+			}
+			var stdout, stderr bytes.Buffer
+			code := Main([]string{"ready", "3"}, strings.NewReader(""), &stdout, &stderr)
+			var got loop.ReadyResult
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.PR != 3 || len(got.Ready) != 1 || got.Ready[0] != 1 {
+				t.Fatalf("partial progress missing: stdout %q, error %v", stdout.String(), err)
+			}
+			var refused refusal.Refusal
+			wantCode := 1
+			if errors.As(cause, &refused) {
+				wantCode = 2
+			}
+			if !called || code != wantCode || !strings.Contains(stderr.String(), cause.Error()) {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+		})
+	}
+}
+
 func TestRun(t *testing.T) {
+	for _, command := range []string{"merge-preview", "ready"} {
+		t.Run(command+" rejects extra targets", func(t *testing.T) {
+			posting(t)
+			var stdout, stderr bytes.Buffer
+			if code := Run(command, []string{"3", "4"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), command+" takes at most one PR") {
+				t.Fatalf("exit %d: %s", code, stderr.String())
+			}
+		})
+	}
 	// A command run from a worktree that GIT_DIR, set by a git hook or
 	// `rebase --exec` elsewhere, does not name is refused before it reads or
 	// writes either repository.

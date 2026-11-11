@@ -1136,7 +1136,7 @@ const pushGuard = "Publishing unsigned commits, or private history in a public r
 
 // reviewerReads are the agent-pr commands a reviewer may run, besides
 // `wait ci`.
-var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true}
+var reviewerReads = map[string]bool{"list": true, "publication-status": true, "merge-preview": true, "stack": true, "threads": true, "status": true, "ci": true, "logs": true}
 
 // planSync is why no agent syncs plans: the sync pushes with a deploy key,
 // which is the watcher's, outside every session.
@@ -1178,6 +1178,9 @@ const mergeByOperator = "Merging is the operator's, confirmed on their terminal,
 const replyByOperator = "Outside a bots-mode review loop, posting replies to bot threads is the operator's, each confirmed on their terminal. " +
 	"Put the reply file in the worktree, and say in the report that it waits for `agent-pr reply --from FILE --round N` there."
 
+const readyByOperator = "Marking pull requests ready notifies reviewers and is the operator's decision. " +
+	"Hand the operator `agent-pr ready PR` after inspecting `agent-pr merge-preview PR`."
+
 // checkPrLoop keeps the decisions that are the operator's: posting to
 // people's threads, posting to bot threads outside a bots-mode loop,
 // merging, and accepting a CI failure as not the PR's. The loop's mode is
@@ -1194,6 +1197,8 @@ func checkPrLoop(args []string, who role) string {
 		return postByOperator
 	case "merge":
 		return mergeByOperator
+	case "ready":
+		return readyByOperator
 	}
 	waitCI := args[0] == "wait" && len(args) > 1 && args[1] == "ci"
 	if who == reviewer && !reviewerReads[args[0]] && !waitCI {

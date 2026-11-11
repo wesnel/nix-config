@@ -30,7 +30,7 @@ func ownCommits(branch, base, tip string) error {
 // operatorFormatSigned is what ownCommits checks short of verifying the
 // signatures, which needs files it writes: the protected operator profile
 // loads, and every commit in base..tip, read from the objects alone, carries
-// a signature in its format. It writes nothing, for agent-pr next; open
+// a signature in its format. It writes nothing, for agent-pr publication-status; open
 // still proves them.
 func operatorFormatSigned(branch, base, tip string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), operatorVerificationTimeout)

@@ -258,7 +258,7 @@ type opening struct {
 // what viewRemote reports for branch and base, and returns what Open would
 // do. own checks the signatures of base..tip for a branch GitHub has:
 // ownCommits for Open, which proves them in a directory of the protected
-// state home, and operatorFormatSigned for agent-pr next, which writes
+// state home, and operatorFormatSigned for agent-pr publication-status, which writes
 // nothing.
 func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
 	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
