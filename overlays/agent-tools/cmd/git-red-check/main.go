@@ -112,22 +112,9 @@ func main() {
 		Test: *test, Build: *build, TestFiles: testFiles,
 		Fixups: *fixups, Lines: *lines, Log: os.Stderr,
 	}
-	// The configuration only fills in what the flags leave out, so a caller
-	// who gives both required settings does not need it to load.
-	config, err := repos.Lookup()
-	if err != nil && (opts.Test == "" || len(opts.TestFiles) == 0) {
+	opts, err := configuredOptions(opts)
+	if err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
-	}
-	if err == nil {
-		if opts.Test == "" {
-			opts.Test = config.Test
-		}
-		if opts.Build == "" {
-			opts.Build = config.Build
-		}
-		if len(opts.TestFiles) == 0 {
-			opts.TestFiles = config.TestFiles
-		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -136,14 +123,39 @@ func main() {
 	code := 0
 	if err == nil {
 		code = result.Exit()
-		for _, c := range result.Commits {
-			if msg := redcheck.Messages[c.Verdict]; msg != "" {
-				fmt.Fprintf(os.Stderr, "git-red-check: %.12s %s: %s\n", c.Commit, c.Subject, msg)
-			}
-		}
-		if len(result.Commits) == 0 {
-			fmt.Fprintf(os.Stderr, "git-red-check: no commits to check in %s\n", rev)
-		}
+		printVerdicts(result, rev)
 	}
 	os.Exit(cli.Report("git-red-check", result, err, code, os.Stdout, os.Stderr))
+}
+
+func configuredOptions(opts redcheck.Options) (redcheck.Options, error) {
+	// Flags that supply both required settings need no configuration.
+	config, err := repos.Lookup()
+	if err != nil {
+		if opts.Test != "" && len(opts.TestFiles) != 0 {
+			return opts, nil
+		}
+		return opts, err
+	}
+	if opts.Test == "" {
+		opts.Test = config.Test
+	}
+	if opts.Build == "" {
+		opts.Build = config.Build
+	}
+	if len(opts.TestFiles) == 0 {
+		opts.TestFiles = config.TestFiles
+	}
+	return opts, nil
+}
+
+func printVerdicts(result *redcheck.Result, rev string) {
+	for _, c := range result.Commits {
+		if msg := redcheck.Messages[c.Verdict]; msg != "" {
+			fmt.Fprintf(os.Stderr, "git-red-check: %.12s %s: %s\n", c.Commit, c.Subject, msg)
+		}
+	}
+	if len(result.Commits) == 0 {
+		fmt.Fprintf(os.Stderr, "git-red-check: no commits to check in %s\n", rev)
+	}
 }

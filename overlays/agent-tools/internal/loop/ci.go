@@ -247,41 +247,12 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 			return nil, false, err
 		}
 	}
-	type sighting struct {
-		oid string
-		at  time.Time
-	}
-	seen := map[int]sighting{}
+	seen := map[int]ciSighting{}
 	deadline := now().Add(timeout)
 	for {
-		out := &CIWait{Result: "passed", PRs: []*CI{}}
-		settled, noChecks := true, false
-		for _, n := range numbers {
-			ci, err := ciStatus(slug, n, want)
-			if err != nil {
-				return nil, false, err
-			}
-			out.PRs = append(out.PRs, ci)
-			finished := ci.finished()
-			if ci.State != "awaitingHead" {
-				if s, ok := seen[n]; !ok || s.oid != ci.HeadOid {
-					seen[n] = sighting{ci.HeadOid, now()}
-				}
-				if ci.State == "none" && now().Sub(seen[n].at) >= grace {
-					finished, noChecks = true, true
-				}
-			}
-			settled = settled && finished
-			for _, c := range ci.Failed {
-				if c.OnBase != "failed" {
-					out.Result = "failed"
-				} else if out.Result == "passed" {
-					out.Result = "failedOnBase"
-				}
-			}
-		}
-		if noChecks && out.Result == "passed" {
-			out.Result = "noChecks"
+		out, settled, err := pollCI(slug, numbers, want, seen, grace)
+		if err != nil {
+			return nil, false, err
 		}
 		left := deadline.Sub(now())
 		if settled || left <= 0 {
@@ -293,6 +264,51 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 		}
 		sleep(min(interval, left))
 	}
+}
+
+type ciSighting struct {
+	oid string
+	at  time.Time
+}
+
+func pollCI(slug string, numbers []int, want string, seen map[int]ciSighting, grace time.Duration) (*CIWait, bool, error) {
+	out := &CIWait{Result: "passed", PRs: []*CI{}}
+	settled, noChecks := true, false
+	for _, n := range numbers {
+		ci, err := ciStatus(slug, n, want)
+		if err != nil {
+			return nil, false, err
+		}
+		out.PRs = append(out.PRs, ci)
+		finished, noCheck := ciSettled(n, ci, seen, grace)
+		noChecks = noChecks || noCheck
+		settled = settled && finished
+		for _, c := range ci.Failed {
+			if c.OnBase != "failed" {
+				out.Result = "failed"
+			} else if out.Result == "passed" {
+				out.Result = "failedOnBase"
+			}
+		}
+	}
+	if noChecks && out.Result == "passed" {
+		out.Result = "noChecks"
+	}
+	return out, settled, nil
+}
+
+func ciSettled(n int, ci *CI, seen map[int]ciSighting, grace time.Duration) (bool, bool) {
+	noChecks := false
+	finished := ci.finished()
+	if ci.State != "awaitingHead" {
+		if s, ok := seen[n]; !ok || s.oid != ci.HeadOid {
+			seen[n] = ciSighting{ci.HeadOid, now()}
+		}
+		if ci.State == "none" && now().Sub(seen[n].at) >= grace {
+			finished, noChecks = true, true
+		}
+	}
+	return finished, noChecks
 }
 
 var hexOid = regexp.MustCompile(`^[0-9a-f]{40}$`)

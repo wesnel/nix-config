@@ -70,22 +70,9 @@ func Merge(target, method string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// What GitHub merges: the top and, in a stack, every open PR below it.
-	merged := []*PR{top}
-	into := top.BaseRefName
-	if stack != nil {
-		merged, into = nil, stack.Base
-		for _, m := range stack.PRs[:position(stack, top.Number)+1] {
-			if m.State != "OPEN" {
-				continue
-			}
-			pr := prs[m.Branch]
-			if pr == nil || pr.Number != m.PR {
-				return nil, refuse("#%d is below #%d in GitHub stack #%d and is not an open pull request by %s, so "+
-					"pr-loop leaves the stack alone; the operator merges it from GitHub's page instead", m.PR, top.Number, stack.Number, repo.Viewer)
-			}
-			merged = append(merged, pr)
-		}
+	merged, into, err := mergeTargets(repo, prs, top, stack)
+	if err != nil {
+		return nil, err
 	}
 	result := MergeResult{PR: top.Number, PRs: []int{}}
 	if stack != nil {
@@ -126,4 +113,25 @@ func Merge(target, method string) (any, error) {
 	}
 	result.Status, result.UUID = reply.Status, reply.Details.UUID
 	return result, nil
+}
+
+func mergeTargets(repo *Repo, prs map[string]*PR, top *PR, stack *GitHubStack) ([]*PR, string, error) {
+	// What GitHub merges: the top and, in a stack, every open PR below it.
+	merged := []*PR{top}
+	into := top.BaseRefName
+	if stack != nil {
+		merged, into = nil, stack.Base
+		for _, m := range stack.PRs[:position(stack, top.Number)+1] {
+			if m.State != "OPEN" {
+				continue
+			}
+			pr := prs[m.Branch]
+			if pr == nil || pr.Number != m.PR {
+				return nil, "", refuse("#%d is below #%d in GitHub stack #%d and is not an open pull request by %s, so "+
+					"pr-loop leaves the stack alone; the operator merges it from GitHub's page instead", m.PR, top.Number, stack.Number, repo.Viewer)
+			}
+			merged = append(merged, pr)
+		}
+	}
+	return merged, into, nil
 }

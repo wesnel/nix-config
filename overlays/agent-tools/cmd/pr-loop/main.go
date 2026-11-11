@@ -267,56 +267,15 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if err := git.CheckConfig(""); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
-	need := func(n int) error {
-		if len(rest) != n {
-			return fmt.Errorf("%s takes %d argument(s); see pr-loop --help", command, n)
-		}
-		return nil
-	}
-	number := func(arg string) (int, error) {
-		n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
-		if err != nil {
-			return 0, fmt.Errorf("%q is not a PR number", arg)
-		}
-		return n, nil
-	}
-	body := func() (string, error) {
-		var data []byte
-		var err error
-		switch *bodyFile {
-		case "":
-			err = fmt.Errorf("%s needs --body-file", command)
-		case "-":
-			data, err = io.ReadAll(stdin)
-		default:
-			data, err = os.ReadFile(*bodyFile) //nolint:gosec // the caller's own file; the guard refuses a credential's path, and redact.Outgoing what would leak
-		}
-		if err == nil {
-			err = redact.Outgoing(string(data))
-		}
-		return string(data), err
-	}
+	need := func(n int) error { return needArgs(command, rest, n) }
+	body := func() (string, error) { return commandBody(command, *bodyFile, stdin) }
 
 	var result any
 	var err error
 	code := 0
 	switch command {
 	case "open":
-		if len(rest) > 1 {
-			err = errors.New("open takes at most one branch; see pr-loop --help")
-			break
-		}
-		branch := ""
-		if len(rest) == 1 {
-			branch = rest[0]
-		}
-		var text string
-		if err = redact.Outgoing(*title); err != nil {
-			break
-		}
-		if text, err = body(); err == nil {
-			result, err = loop.Open(branch, *base, *title, text, *dryRun)
-		}
+		result, err = openCommand(rest, *base, *title, *dryRun, body)
 	case "next":
 		var steps []loop.NextStep
 		if steps, err = loop.Next(rest); err == nil && !*asJSON {
@@ -325,76 +284,25 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		result = steps
 	case "stack":
-		if len(rest) > 1 {
-			err = errors.New("stack takes at most one PR or branch; see pr-loop --help")
-			break
-		}
-		target := ""
-		if len(rest) == 1 {
-			target = rest[0]
-		}
-		result, err = loop.Stack(target)
+		result, err = stackCommand(rest)
 	case "link":
 		result, err = loop.Link(rest)
 	case "merge":
-		if len(rest) > 1 {
-			err = errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
-			break
-		}
-		target := ""
-		if len(rest) == 1 {
-			target = rest[0]
-		}
-		result, err = loop.Merge(target, *method)
+		result, err = mergeCommand(rest, *method)
 	case "push":
-		byBranch := map[string]string{}
-		for _, l := range leases {
-			b, oid, ok := strings.Cut(l, "=")
-			if !ok || b == "" || oid == "" {
-				err = fmt.Errorf("--lease takes BRANCH=SHA, not %q", l)
-				break
-			}
-			byBranch[b] = oid
-		}
-		if err == nil {
-			result, err = loop.Push(rest, byBranch, *dryRun)
-		}
+		result, err = pushCommand(rest, leases, *dryRun)
 	case "threads":
-		if err = need(1); err == nil {
-			var n int
-			if n, err = number(rest[0]); err == nil {
-				result, err = loop.Threads(n, *all)
-			}
-		}
+		result, err = threadsCommand(rest, *all)
 	case "reply":
-		if *from != "" {
-			result, err = replyFrom(*from, *bodyFile, rest, stdin)
-		} else if err = need(1); err == nil {
-			var text string
-			if text, err = body(); err == nil {
-				result, err = loop.Reply(rest[0], text)
-			}
-		}
+		result, err = replyCommand(rest, *from, *bodyFile, stdin, body)
 	case "resolve":
 		if err = need(1); err == nil {
 			result, err = loop.Resolve(rest[0])
 		}
 	case "draft":
-		if err = need(1); err == nil {
-			var text string
-			if text, err = body(); err == nil {
-				result, err = loop.Draft(rest[0], text, *outcome)
-			}
-		}
+		result, err = draftCommand(rest, *outcome, body)
 	case "post":
-		if len(rest) == 0 {
-			err = errors.New("post takes the PR, then any of its threads; see pr-loop --help")
-			break
-		}
-		var n int
-		if n, err = number(rest[0]); err == nil {
-			result, err = loop.Post(n, rest[1:])
-		}
+		result, err = postCommand(rest)
 	case "request":
 		result, err = loop.Request(rest, bots, accepted)
 	case "status":
@@ -410,60 +318,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			}
 		}
 	case "wait":
-		if len(rest) == 0 || (rest[0] != "ci" && rest[0] != "reviews") {
-			err = errors.New("wait takes ci or reviews")
-			break
-		}
-		target := rest[0]
-		rest = rest[1:]
-		wait, every := time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second
-		ciOnly := *sha != ""
-		flags.Visit(func(f *flag.Flag) { ciOnly = ciOnly || f.Name == "grace" })
-		settled := false
-		switch {
-		case target == "ci":
-			var w *loop.CIWait
-			w, settled, err = loop.WaitCI(rest, *sha, wait, every, time.Duration(*grace)*time.Second)
-			result = w
-			if err == nil && w.Result == "noChecks" {
-				code = 4
-			}
-		case ciOnly:
-			err = errors.New("--sha and --grace are for wait ci")
-		default:
-			result, settled, err = loop.WaitReviews(rest, wait, every)
-		}
-		if !settled {
-			code = 3
-		}
+		result, err, code = waitCommand(flags, rest, *sha, *timeout, *interval, *grace)
 	case "setup":
-		if len(rest) > 1 {
-			err = errors.New("setup takes at most one path; see pr-loop --help")
-			break
-		}
-		if len(rest) == 1 {
-			// The repository is identified from where the command runs.
-			if err = os.Chdir(rest[0]); err != nil {
-				break
-			}
-			if err = git.CheckConfig(""); err != nil {
-				break
-			}
-		}
-		var dir string
-		if dir, err = git.Toplevel(); err != nil {
-			break
-		}
-		var setup *loop.Setup
-		if setup, err = loop.SetupCommand(); err != nil {
-			break
-		}
-		runs := []loop.SetupRun{}
-		if setup.Command != "" {
-			runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
-		}
-		result = map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
-		code = setupFailures(runs, stderr)
+		result, err, code = setupCommand(rest, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
 	case "sign-check":
@@ -481,6 +338,184 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return record.DriftExit
 	}
 	return cli.Report("pr-loop", result, err, code, stdout, stderr)
+}
+
+func parsePRNumber(arg string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a PR number", arg)
+	}
+	return n, nil
+}
+
+func openCommand(rest []string, base, title string, dryRun bool, body func() (string, error)) (any, error) {
+	if len(rest) > 1 {
+		return nil, errors.New("open takes at most one branch; see pr-loop --help")
+	}
+	branch := ""
+	if len(rest) == 1 {
+		branch = rest[0]
+	}
+	var text string
+	var err error
+	if err = redact.Outgoing(title); err != nil {
+		return nil, err
+	}
+	if text, err = body(); err == nil {
+		return loop.Open(branch, base, title, text, dryRun)
+	}
+	return nil, err
+}
+
+func stackCommand(rest []string) (any, error) {
+	if len(rest) > 1 {
+		return nil, errors.New("stack takes at most one PR or branch; see pr-loop --help")
+	}
+	target := ""
+	if len(rest) == 1 {
+		target = rest[0]
+	}
+	return loop.Stack(target)
+}
+
+func mergeCommand(rest []string, method string) (any, error) {
+	if len(rest) > 1 {
+		return nil, errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
+	}
+	target := ""
+	if len(rest) == 1 {
+		target = rest[0]
+	}
+	return loop.Merge(target, method)
+}
+
+func pushCommand(rest, leases []string, dryRun bool) (any, error) {
+	byBranch := map[string]string{}
+	for _, l := range leases {
+		b, oid, ok := strings.Cut(l, "=")
+		if !ok || b == "" || oid == "" {
+			return nil, fmt.Errorf("--lease takes BRANCH=SHA, not %q", l)
+		}
+		byBranch[b] = oid
+	}
+	return loop.Push(rest, byBranch, dryRun)
+}
+
+func threadsCommand(rest []string, all bool) (any, error) {
+	if err := needArgs("threads", rest, 1); err != nil {
+		return nil, err
+	}
+	n, err := parsePRNumber(rest[0])
+	if err != nil {
+		return nil, err
+	}
+	return loop.Threads(n, all)
+}
+
+func replyCommand(rest []string, from, bodyFile string, stdin io.Reader, body func() (string, error)) (any, error) {
+	if from != "" {
+		return replyFrom(from, bodyFile, rest, stdin)
+	}
+	if err := needArgs("reply", rest, 1); err != nil {
+		return nil, err
+	}
+	text, err := body()
+	if err != nil {
+		return nil, err
+	}
+	return loop.Reply(rest[0], text)
+}
+
+func draftCommand(rest []string, outcome string, body func() (string, error)) (any, error) {
+	if err := needArgs("draft", rest, 1); err != nil {
+		return nil, err
+	}
+	text, err := body()
+	if err != nil {
+		return nil, err
+	}
+	return loop.Draft(rest[0], text, outcome)
+}
+
+func postCommand(rest []string) (any, error) {
+	if len(rest) == 0 {
+		return nil, errors.New("post takes the PR, then any of its threads; see pr-loop --help")
+	}
+	n, err := parsePRNumber(rest[0])
+	if err != nil {
+		return nil, err
+	}
+	return loop.Post(n, rest[1:])
+}
+
+func waitCommand(flags *flag.FlagSet, rest []string, sha string, timeout, interval, grace int) (any, error, int) {
+	var result any
+	var err error
+	code := 0
+	if len(rest) == 0 || (rest[0] != "ci" && rest[0] != "reviews") {
+		return nil, errors.New("wait takes ci or reviews"), 0
+	}
+	target := rest[0]
+	rest = rest[1:]
+	wait, every := time.Duration(timeout)*time.Second, time.Duration(interval)*time.Second
+	ciOnly := sha != ""
+	flags.Visit(func(f *flag.Flag) { ciOnly = ciOnly || f.Name == "grace" })
+	settled := false
+	switch {
+	case target == "ci":
+		var w *loop.CIWait
+		w, settled, err = loop.WaitCI(rest, sha, wait, every, time.Duration(grace)*time.Second)
+		result = w
+		if err == nil && w.Result == "noChecks" {
+			code = 4
+		}
+	case ciOnly:
+		err = errors.New("--sha and --grace are for wait ci")
+	default:
+		result, settled, err = loop.WaitReviews(rest, wait, every)
+	}
+	if !settled {
+		code = 3
+	}
+	return result, err, code
+}
+
+func setupCommand(rest []string, stderr io.Writer) (any, error, int) {
+	var err error
+	if len(rest) > 1 {
+		return nil, errors.New("setup takes at most one path; see pr-loop --help"), 0
+	}
+	if len(rest) == 1 {
+		// The repository is identified from where the command runs.
+		if err = os.Chdir(rest[0]); err != nil {
+			return nil, err, 0
+		}
+		if err = git.CheckConfig(""); err != nil {
+			return nil, err, 0
+		}
+	}
+	var dir string
+	if dir, err = git.Toplevel(); err != nil {
+		return nil, err, 0
+	}
+	var setup *loop.Setup
+	if setup, err = loop.SetupCommand(); err != nil {
+		return nil, err, 0
+	}
+	runs := []loop.SetupRun{}
+	if setup.Command != "" {
+		runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
+	}
+	result := map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
+	code := setupFailures(runs, stderr)
+	return result, nil, code
+}
+
+func needArgs(command string, rest []string, n int) error {
+	if len(rest) != n {
+		return fmt.Errorf("%s takes %d argument(s); see pr-loop --help", command, n)
+	}
+	return nil
 }
 
 // replyFrom posts the replies in a reply file (- for stdin).
@@ -544,4 +579,21 @@ func interleave(args []string) []string {
 		positional = append(positional, a)
 	}
 	return append(flags, positional...)
+}
+
+func commandBody(command, bodyFile string, stdin io.Reader) (string, error) {
+	var data []byte
+	var err error
+	switch bodyFile {
+	case "":
+		err = fmt.Errorf("%s needs --body-file", command)
+	case "-":
+		data, err = io.ReadAll(stdin)
+	default:
+		data, err = os.ReadFile(bodyFile) //nolint:gosec // the caller's own file; the guard refuses a credential's path, and redact.Outgoing what would leak
+	}
+	if err == nil {
+		err = redact.Outgoing(string(data))
+	}
+	return string(data), err
 }

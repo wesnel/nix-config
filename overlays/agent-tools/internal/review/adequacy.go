@@ -116,7 +116,12 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 	// Redacted before the cut, which could split a secret's shape and leave
 	// its end unrecognised.
 	a.text = fenced("json", cut([]byte(redact.Secrets(string(data))), redCheckCap))
-	for _, c := range result.Commits {
+	a.addVerdicts(r, settings, result.Commits, log)
+	return a, nil
+}
+
+func (a *adequacy) addVerdicts(r *span, settings *repos.Settings, commits []*redcheck.Check, log io.Writer) {
+	for _, c := range commits {
 		switch c.Verdict {
 		case redcheck.FailsToBuildWithoutChange:
 			a.buildOnly = append(a.buildOnly, c.Commit)
@@ -134,7 +139,6 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 			}
 		}
 	}
-	return a, nil
 }
 
 // mismatch says how got, the commits red-check's JSON names, differs from

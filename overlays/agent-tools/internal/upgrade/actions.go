@@ -64,26 +64,9 @@ func pairUses(a, b []actionUse) (unmoved, moved [][2]actionUse) {
 		func(x, y actionUse) bool { return x.group == y.group && x.ref == y.ref },
 		func(x, y actionUse) bool { return x.name == y.name && x.ref == y.ref },
 	} {
-		for i, x := range a {
-			for j, y := range b {
-				if !usedA[i] && !usedB[j] && same(x, y) {
-					usedA[i], usedB[j] = true, true
-					unmoved = append(unmoved, [2]actionUse{x, y})
-				}
-			}
-		}
+		unmoved = append(unmoved, matchUses(a, b, usedA, usedB, same)...)
 	}
-	restA, restB := map[string][]actionUse{}, map[string][]actionUse{}
-	for i, x := range a {
-		if !usedA[i] {
-			restA[x.group] = append(restA[x.group], x)
-		}
-	}
-	for j, y := range b {
-		if !usedB[j] {
-			restB[y.group] = append(restB[y.group], y)
-		}
-	}
+	restA, restB := unpairedUses(a, usedA), unpairedUses(b, usedB)
 	groups := slices.Sorted(maps.Keys(restA))
 	for g := range restB {
 		if _, ok := restA[g]; !ok {
@@ -104,6 +87,28 @@ func pairUses(a, b []actionUse) (unmoved, moved [][2]actionUse) {
 		}
 	}
 	return unmoved, moved
+}
+
+func unpairedUses(uses []actionUse, paired []bool) map[string][]actionUse {
+	rest := map[string][]actionUse{}
+	for i, u := range uses {
+		if !paired[i] {
+			rest[u.group] = append(rest[u.group], u)
+		}
+	}
+	return rest
+}
+
+func matchUses(a, b []actionUse, usedA, usedB []bool, same func(actionUse, actionUse) bool) (unmoved [][2]actionUse) {
+	for i, x := range a {
+		for j, y := range b {
+			if !usedA[i] && !usedB[j] && same(x, y) {
+				usedA[i], usedB[j] = true, true
+				unmoved = append(unmoved, [2]actionUse{x, y})
+			}
+		}
+	}
+	return unmoved
 }
 
 // actionsUnread is what a line of a workflow names that may run an action:

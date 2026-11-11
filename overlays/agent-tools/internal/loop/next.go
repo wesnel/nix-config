@@ -166,16 +166,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
 	}
 	if onGitHub == "" || onGitHub == tip && pr == 0 {
-		o, err := planOpen(repo, view, branch, repo.Default, operatorFormatSigned)
-		if err != nil {
-			return nil, err
-		}
-		why := "GitHub does not have it"
-		if o.onGitHub {
-			why = "GitHub has it at its tip, with no pull request"
-		}
-		return ToOpen{Kind: "open", Branch: branch, Why: why, OnGitHub: o.onGitHub,
-			Command: "pr-loop open --title TITLE --body-file FILE " + shellQuote(branch)}, nil
+		return nextOpen(repo, view, branch)
 	}
 
 	retry := "run `pr-loop next` again"
@@ -205,4 +196,17 @@ func next(repo *Repo, branch string) (NextStep, error) {
 	default:
 		return ToPush{Kind: "push", Branch: branch, Why: "GitHub is behind its signed tip", Command: pass, Notify: notify, PR: pr}, nil
 	}
+}
+
+func nextOpen(repo *Repo, view *remoteView, branch string) (NextStep, error) {
+	o, err := planOpen(repo, view, branch, repo.Default, operatorFormatSigned)
+	if err != nil {
+		return nil, err
+	}
+	why := "GitHub does not have it"
+	if o.onGitHub {
+		why = "GitHub has it at its tip, with no pull request"
+	}
+	return ToOpen{Kind: "open", Branch: branch, Why: why, OnGitHub: o.onGitHub,
+		Command: "pr-loop open --title TITLE --body-file FILE " + shellQuote(branch)}, nil
 }

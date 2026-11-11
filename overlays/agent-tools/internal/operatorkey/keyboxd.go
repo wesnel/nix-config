@@ -120,15 +120,7 @@ func (p Profile) keyboxdPublicKeys(ctx context.Context, database string) ([]byte
 		return cmd.Output()
 	}
 	discover := func(home, name string) (string, error) {
-		out, err := run(gpgconf, "--homedir", home, "--list-dirs", name)
-		if err != nil {
-			return "", fmt.Errorf("cannot discover keyboxd %s: %w", name, err)
-		}
-		path := strings.TrimSuffix(string(out), "\n")
-		if !filepath.IsAbs(path) || strings.ContainsAny(path, "%\x00\r\n") {
-			return "", refuse("keyboxd %s is not an unambiguous absolute path", name)
-		}
-		return path, nil
+		return keyboxdPath(gpgconf, home, name, run)
 	}
 	sysconf, err := discover(client, "sysconfdir")
 	if err != nil {
@@ -185,4 +177,16 @@ func (p Profile) keyboxdPublicKeys(ctx context.Context, database string) ([]byte
 		return nil, refuse("cannot export operator keyboxd public keys from the protected running daemon")
 	}
 	return keys, nil
+}
+
+func keyboxdPath(gpgconf, home, name string, run func(string, ...string) ([]byte, error)) (string, error) {
+	out, err := run(gpgconf, "--homedir", home, "--list-dirs", name)
+	if err != nil {
+		return "", fmt.Errorf("cannot discover keyboxd %s: %w", name, err)
+	}
+	path := strings.TrimSuffix(string(out), "\n")
+	if !filepath.IsAbs(path) || strings.ContainsAny(path, "%\x00\r\n") {
+		return "", refuse("keyboxd %s is not an unambiguous absolute path", name)
+	}
+	return path, nil
 }

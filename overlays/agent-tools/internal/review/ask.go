@@ -130,10 +130,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return report(nil, err, 0)
 	}
 	if *printPrompt {
-		fmt.Fprint(stdout, askPrompt(text, files))
-		for _, f := range files {
-			fmt.Fprintf(stdout, "\n## File: %s\n\n%s", f.rel, fenced("text", redact.Secrets(string(f.data))))
-		}
+		printAskPrompt(stdout, text, files)
 		return 0
 	}
 	if why := runnable(newAvailability(), ty); why != "" {
@@ -159,6 +156,13 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return report(nil, err, 0)
 	}
 	return report(out, nil, 0)
+}
+
+func printAskPrompt(stdout io.Writer, text string, files []askFile) {
+	fmt.Fprint(stdout, askPrompt(text, files))
+	for _, f := range files {
+		fmt.Fprintf(stdout, "\n## File: %s\n\n%s", f.rel, fenced("text", redact.Secrets(string(f.data))))
+	}
 }
 
 // scratchRoots are the directories outside the repository a question may

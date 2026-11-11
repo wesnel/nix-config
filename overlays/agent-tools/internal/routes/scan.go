@@ -166,12 +166,7 @@ func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
 				r = &Route{Route: c.Route}
 				found[c.Route] = r
 			}
-			if !slices.Contains(r.Commits, commit) {
-				r.Commits = append(r.Commits, commit)
-			}
-			if !slices.Contains(r.Why, c.Why) {
-				r.Why = append(r.Why, c.Why)
-			}
+			r.addEvidence(commit, c.Why)
 		}
 	}
 	routes := []Route{}
@@ -179,6 +174,15 @@ func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
 		routes = append(routes, *found[name])
 	}
 	return routes, nil
+}
+
+func (r *Route) addEvidence(commit, why string) {
+	if !slices.Contains(r.Commits, commit) {
+		r.Commits = append(r.Commits, commit)
+	}
+	if !slices.Contains(r.Why, why) {
+		r.Why = append(r.Why, why)
+	}
 }
 
 // compiled is a rule with its globs and expressions compiled.

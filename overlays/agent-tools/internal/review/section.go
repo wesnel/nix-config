@@ -81,39 +81,44 @@ func withoutComments(text string) string {
 				continue
 			}
 		}
-		for line != "" {
-			if inComment {
-				end := strings.Index(line, "-->")
-				if end < 0 {
-					line = ""
-					break
-				}
-				line, inComment = line[end+3:], false
-				continue
-			}
-			comment, span := strings.Index(line, "<!--"), strings.IndexByte(line, '`')
-			if comment < 0 && span < 0 {
-				b.WriteString(line)
-				break
-			}
-			if span >= 0 && (comment < 0 || span < comment) {
-				// A run of backticks opens a span that the next run of the
-				// same length closes; an unclosed run is text.
-				run := len(line[span:]) - len(strings.TrimLeft(line[span:], "`"))
-				ticks := line[span : span+run]
-				end := span + run
-				if close := closingTicks(line[end:], ticks); close >= 0 {
-					end += close + run
-				}
-				b.WriteString(line[:end])
-				line = line[end:]
-				continue
-			}
-			b.WriteString(line[:comment])
-			line, inComment = line[comment+4:], true
-		}
+		inComment = uncommentLine(&b, line, inComment)
 	}
 	return b.String()
+}
+
+func uncommentLine(b *strings.Builder, line string, inComment bool) bool {
+	for line != "" {
+		if inComment {
+			end := strings.Index(line, "-->")
+			if end < 0 {
+				line = ""
+				break
+			}
+			line, inComment = line[end+3:], false
+			continue
+		}
+		comment, span := strings.Index(line, "<!--"), strings.IndexByte(line, '`')
+		if comment < 0 && span < 0 {
+			b.WriteString(line)
+			break
+		}
+		if span >= 0 && (comment < 0 || span < comment) {
+			// A run of backticks opens a span that the next run of the
+			// same length closes; an unclosed run is text.
+			run := len(line[span:]) - len(strings.TrimLeft(line[span:], "`"))
+			ticks := line[span : span+run]
+			end := span + run
+			if close := closingTicks(line[end:], ticks); close >= 0 {
+				end += close + run
+			}
+			b.WriteString(line[:end])
+			line = line[end:]
+			continue
+		}
+		b.WriteString(line[:comment])
+		line, inComment = line[comment+4:], true
+	}
+	return inComment
 }
 
 // closingTicks is where in s a run of exactly ticks starts, the end of a

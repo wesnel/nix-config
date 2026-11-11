@@ -128,12 +128,9 @@ func githubFile(ctx context.Context, argv []string, stdout, stderr io.Writer) in
 		if !githubCommit.MatchString(argv[1]) {
 			return nil, fmt.Errorf("commit must be a full 40-character SHA")
 		}
-		parts := strings.Split(argv[2], "/")
-		for i, part := range parts {
-			if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\\x00\r\n") {
-				return nil, fmt.Errorf("path must be a repository-relative file path without empty, dot or parent components")
-			}
-			parts[i] = url.PathEscape(part)
+		parts, err := githubFilePath(argv[2])
+		if err != nil {
+			return nil, err
 		}
 		var file struct {
 			Type, Encoding, Content, SHA string
@@ -157,4 +154,15 @@ func githubFile(ctx context.Context, argv []string, stdout, stderr io.Writer) in
 	}
 	result, err := read()
 	return cli.Report("github_file", result, err, 0, stdout, stderr)
+}
+
+func githubFilePath(path string) ([]string, error) {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\\x00\r\n") {
+			return nil, fmt.Errorf("path must be a repository-relative file path without empty, dot or parent components")
+		}
+		parts[i] = url.PathEscape(part)
+	}
+	return parts, nil
 }

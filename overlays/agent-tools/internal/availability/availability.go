@@ -185,8 +185,7 @@ func write(p Provider, next State, clear bool, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if old.Active(now) && (old.Reason == Disabled ||
-			next.Reason != Disabled && (old.Until == 0 || next.Until != 0 && old.Until > next.Until)) {
+		if old.outlasts(next, now) {
 			next = old
 		}
 	}
@@ -207,4 +206,9 @@ func write(p Provider, next State, clear bool, now time.Time) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+func (s State) outlasts(next State, now time.Time) bool {
+	return s.Active(now) && (s.Reason == Disabled ||
+		next.Reason != Disabled && (s.Until == 0 || next.Until != 0 && s.Until > next.Until))
 }

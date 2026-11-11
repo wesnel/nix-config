@@ -78,132 +78,156 @@ var (
 // InString in a string (an interpolation's ${...} being code) or
 // InComment in a comment.
 func NixSets(text string) ([]NixSet, []int) {
-	where := make([]int, len(text))
-	sets := []NixSet{{Start: 0, End: len(text), Parent: -1, Attrs: map[string]string{}, At: map[string]int{}}}
-	// stack holds what each open brace is: a set's index, or -1 for an
-	// interpolation's `${`, which closes back into its string.
-	type frame struct {
-		set    int
-		interp bool
-		// quote is the string an interpolation returns to: '"' or '\''.
-		quote byte
+	s := nixScanner{
+		text:  text,
+		where: make([]int, len(text)),
+		sets:  []NixSet{{Start: 0, End: len(text), Parent: -1, Attrs: map[string]string{}, At: map[string]int{}}},
 	}
-	var stack []frame
-	current := func() int {
-		for i := len(stack) - 1; i >= 0; i-- {
-			if !stack[i].interp {
-				return stack[i].set
+	for s.i < len(text) {
+		if s.str != 0 {
+			s.stringToken()
+		} else {
+			s.codeToken()
+		}
+	}
+	s.attributes()
+	return s.sets, s.where
+}
+
+type nixFrame struct {
+	set    int
+	interp bool
+	// quote is the string an interpolation returns to: '"' or '\''.
+	quote byte
+}
+
+type nixScanner struct {
+	text  string
+	where []int
+	sets  []NixSet
+	// Each open brace is a set's index, or -1 for an interpolation's
+	// `${`, which closes back into its string.
+	stack []nixFrame
+	i     int
+	str   byte // the string being read, or 0 in code
+}
+
+func (s *nixScanner) current() int {
+	for i := len(s.stack) - 1; i >= 0; i-- {
+		if !s.stack[i].interp {
+			return s.stack[i].set
+		}
+	}
+	return 0
+}
+
+func (s *nixScanner) stringToken() {
+	c := s.text[s.i]
+	s.where[s.i] = InString
+	switch {
+	case s.str == '"' && c == '\\' && s.i+1 < len(s.text):
+		s.where[s.i+1] = InString
+		s.i += 2
+		return
+	case s.str == '"' && c == '"':
+		s.str = 0
+	case s.str == '\'' && strings.HasPrefix(s.text[s.i:], "''"):
+		if strings.HasPrefix(s.text[s.i:], "'''") || strings.HasPrefix(s.text[s.i:], "''$") || strings.HasPrefix(s.text[s.i:], "''\\") {
+			for j := s.i; j < min(s.i+3, len(s.text)); j++ {
+				s.where[j] = InString
+			}
+			s.i += 3
+			return
+		}
+		s.where[s.i+1] = InString
+		s.str = 0
+		s.i += 2
+		return
+	case c == '$' && strings.HasPrefix(s.text[s.i:], "${"):
+		s.where[s.i+1] = InString
+		s.stack = append(s.stack, nixFrame{set: -1, interp: true, quote: s.str})
+		s.str = 0
+		s.i += 2
+		return
+	}
+	s.i++
+}
+
+func (s *nixScanner) codeToken() {
+	c := s.text[s.i]
+	switch {
+	case c == '#':
+		for s.i < len(s.text) && s.text[s.i] != '\n' {
+			s.where[s.i] = InComment
+			s.i++
+		}
+		return
+	case strings.HasPrefix(s.text[s.i:], "/*"):
+		end := strings.Index(s.text[s.i+2:], "*/")
+		if end < 0 {
+			end = len(s.text) - s.i - 2
+		}
+		for j := s.i; j < min(s.i+end+4, len(s.text)); j++ {
+			s.where[j] = InComment
+		}
+		s.i += end + 4
+		return
+	case c == '"':
+		s.where[s.i] = InString
+		s.str = '"'
+		s.i++
+		return
+	case strings.HasPrefix(s.text[s.i:], "''"):
+		s.where[s.i], s.where[s.i+1] = InString, InString
+		s.str = '\''
+		s.i += 2
+		return
+	case c == '{':
+		pre := s.text[max(0, s.i-200):s.i]
+		set := NixSet{Start: s.i, End: len(s.text), Parent: s.current(), Attrs: map[string]string{}, At: map[string]int{}}
+		if m := nixCallee.FindStringSubmatch(pre); m != nil && m[1] != "rec" {
+			set.Call = m[1]
+		}
+		if m := nixAssign.FindStringSubmatch(pre); m != nil {
+			set.Name = m[1]
+		}
+		s.sets = append(s.sets, set)
+		s.stack = append(s.stack, nixFrame{set: len(s.sets) - 1})
+		s.where[s.i] = s.current()
+		s.i++
+		return
+	case c == '}':
+		s.where[s.i] = s.current()
+		if n := len(s.stack); n > 0 {
+			top := s.stack[n-1]
+			s.stack = s.stack[:n-1]
+			if top.interp {
+				s.str = top.quote
+				s.where[s.i] = InString
+			} else {
+				s.sets[top.set].End = s.i
 			}
 		}
-		return 0
+		s.i++
+		return
 	}
-	i := 0
-	var str byte // the string being read, or 0 in code
-	for i < len(text) {
-		c := text[i]
-		if str != 0 {
-			where[i] = InString
-			switch {
-			case str == '"' && c == '\\' && i+1 < len(text):
-				where[i+1] = InString
-				i += 2
-				continue
-			case str == '"' && c == '"':
-				str = 0
-			case str == '\'' && strings.HasPrefix(text[i:], "''"):
-				if strings.HasPrefix(text[i:], "'''") || strings.HasPrefix(text[i:], "''$") || strings.HasPrefix(text[i:], "''\\") {
-					for j := i; j < min(i+3, len(text)); j++ {
-						where[j] = InString
-					}
-					i += 3
-					continue
-				}
-				where[i+1] = InString
-				str = 0
-				i += 2
-				continue
-			case c == '$' && strings.HasPrefix(text[i:], "${"):
-				where[i+1] = InString
-				stack = append(stack, frame{set: -1, interp: true, quote: str})
-				str = 0
-				i += 2
-				continue
-			}
-			i++
-			continue
-		}
-		switch {
-		case c == '#':
-			for i < len(text) && text[i] != '\n' {
-				where[i] = InComment
-				i++
-			}
-			continue
-		case strings.HasPrefix(text[i:], "/*"):
-			end := strings.Index(text[i+2:], "*/")
-			if end < 0 {
-				end = len(text) - i - 2
-			}
-			for j := i; j < min(i+end+4, len(text)); j++ {
-				where[j] = InComment
-			}
-			i += end + 4
-			continue
-		case c == '"':
-			where[i] = InString
-			str = '"'
-			i++
-			continue
-		case strings.HasPrefix(text[i:], "''"):
-			where[i], where[i+1] = InString, InString
-			str = '\''
-			i += 2
-			continue
-		case c == '{':
-			pre := text[max(0, i-200):i]
-			s := NixSet{Start: i, End: len(text), Parent: current(), Attrs: map[string]string{}, At: map[string]int{}}
-			if m := nixCallee.FindStringSubmatch(pre); m != nil && m[1] != "rec" {
-				s.Call = m[1]
-			}
-			if m := nixAssign.FindStringSubmatch(pre); m != nil {
-				s.Name = m[1]
-			}
-			sets = append(sets, s)
-			stack = append(stack, frame{set: len(sets) - 1})
-			where[i] = current()
-			i++
-			continue
-		case c == '}':
-			where[i] = current()
-			if n := len(stack); n > 0 {
-				top := stack[n-1]
-				stack = stack[:n-1]
-				if top.interp {
-					str = top.quote
-					where[i] = InString
-				} else {
-					sets[top.set].End = i
-				}
-			}
-			i++
-			continue
-		}
-		where[i] = current()
-		i++
-	}
-	for _, m := range nixString.FindAllStringSubmatchIndex(text, -1) {
+	s.where[s.i] = s.current()
+	s.i++
+}
+
+func (s *nixScanner) attributes() {
+	for _, m := range nixString.FindAllStringSubmatchIndex(s.text, -1) {
 		at := m[2]
 		// The name must be code, and start its token.
-		if where[at] < 0 || at > 0 && strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'-.", rune(text[at-1])) {
+		if s.where[at] < 0 || at > 0 && strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'-.", rune(s.text[at-1])) {
 			continue
 		}
-		s := &sets[where[at]]
-		name := text[m[2]:m[3]]
-		if _, ok := s.Attrs[name]; !ok {
-			s.Attrs[name], s.At[name] = text[m[4]:m[5]], m[4]
+		set := &s.sets[s.where[at]]
+		name := s.text[m[2]:m[3]]
+		if _, ok := set.Attrs[name]; !ok {
+			set.Attrs[name], set.At[name] = s.text[m[4]:m[5]], m[4]
 		}
 	}
-	return sets, where
 }
 
 var (
@@ -255,6 +279,24 @@ func nixPinWord(s string, code bool) bool {
 // pin attribute (nixUses), is one too, and so on until none is added.
 func NixPinLines(text string) map[int]bool {
 	_, where := NixSets(text)
+	prose := nixProse(text, where)
+	out := map[int]bool{}
+	start := 0
+	lines := strings.SplitAfter(text, "\n")
+	codes, uncommenteds := make([]string, len(lines)), make([]string, len(lines))
+	for n, line := range lines {
+		code, uncommented, hit := nixLine(line, start, where, prose)
+		if hit {
+			out[n+1] = true
+		}
+		codes[n], uncommenteds[n] = code, uncommented
+		start += len(line)
+	}
+	expandNixPins(codes, uncommenteds, out)
+	return out
+}
+
+func nixProse(text string, where []int) []bool {
 	// Whether each run of a string's text, between its interpolations,
 	// holds whitespace.
 	prose := make([]bool, len(text))
@@ -273,51 +315,38 @@ func NixPinLines(text string) map[int]bool {
 		}
 		i = j
 	}
-	out := map[int]bool{}
-	start := 0
-	lines := strings.SplitAfter(text, "\n")
-	codes, uncommenteds := make([]string, len(lines)), make([]string, len(lines))
-	for n, line := range lines {
-		code, uncommented := []byte(line), []byte(line)
-		hit := false
-		for i := 0; i < len(line); {
-			if where[start+i] >= 0 {
-				i++
-				continue
-			}
-			j := i
-			for j < len(line) && where[start+j] == where[start+i] {
-				code[j] = ' '
-				if where[start+i] == InComment {
-					uncommented[j] = ' '
-				}
-				j++
-			}
-			if s := line[i:j]; where[start+i] == InString && (nixValue.MatchString(s) || !prose[start+i] && nixPinWord(s, false)) {
-				hit = true
-			}
-			i = j
+	return prose
+}
+
+func nixLine(line string, start int, where []int, prose []bool) (string, string, bool) {
+	code, uncommented := []byte(line), []byte(line)
+	hit := false
+	for i := 0; i < len(line); {
+		if where[start+i] >= 0 {
+			i++
+			continue
 		}
-		if hit || nixPinWord(string(code), true) || nixValue.MatchString(string(code)) || nixArchiveURL.Match(uncommented) {
-			out[n+1] = true
+		j := i
+		for j < len(line) && where[start+j] == where[start+i] {
+			code[j] = ' '
+			if where[start+i] == InComment {
+				uncommented[j] = ' '
+			}
+			j++
 		}
-		codes[n], uncommenteds[n] = string(code), string(uncommented)
-		start += len(line)
+		if s := line[i:j]; where[start+i] == InString && (nixValue.MatchString(s) || !prose[start+i] && nixPinWord(s, false)) {
+			hit = true
+		}
+		i = j
 	}
+	return string(code), string(uncommented), hit || nixPinWord(string(code), true) || nixValue.MatchString(string(code)) || nixArchiveURL.Match(uncommented)
+}
+
+func expandNixPins(codes, uncommenteds []string, out map[int]bool) {
 	read := map[string]bool{}
 	for grew := true; grew; {
-		grew = false
-		for n := range lines {
-			if !out[n+1] {
-				continue
-			}
-			for _, name := range nixUses(codes[n], uncommenteds[n]) {
-				if !read[name] {
-					read[name], grew = true, true
-				}
-			}
-		}
-		for n := range lines {
+		grew = readNixNames(codes, uncommenteds, out, read)
+		for n := range codes {
 			if out[n+1] {
 				continue
 			}
@@ -328,7 +357,21 @@ func NixPinLines(text string) map[int]bool {
 			}
 		}
 	}
-	return out
+}
+
+func readNixNames(codes, uncommenteds []string, out map[int]bool, read map[string]bool) bool {
+	grew := false
+	for n := range codes {
+		if !out[n+1] {
+			continue
+		}
+		for _, name := range nixUses(codes[n], uncommenteds[n]) {
+			if !read[name] {
+				read[name], grew = true, true
+			}
+		}
+	}
+	return grew
 }
 
 var (
@@ -359,39 +402,7 @@ func nixUses(code, uncommented string) []string {
 // names of the sets it is in: a line moved into or out of a comment or a
 // string, or into another set, has changed though its text has not.
 func NixChangedLines(old, next string) (removed, added []Line) {
-	keys := func(text string) []string {
-		sets, where := NixSets(text)
-		var out []string
-		start, set := 0, 0
-		for _, line := range strings.SplitAfter(text, "\n") {
-			class := []byte(line)
-			first := -1
-			for i := range line {
-				switch w := where[start+i]; {
-				case w == InString:
-					class[i] = 's'
-				case w == InComment:
-					class[i] = 'm'
-				default:
-					class[i] = 'c'
-					if first < 0 {
-						first = w
-					}
-				}
-			}
-			if first >= 0 {
-				set = first
-			}
-			var path []string
-			for s := set; s >= 0; s = sets[s].Parent {
-				path = append(path, cmp.Or(sets[s].Name, sets[s].Call))
-			}
-			out = append(out, strings.TrimSuffix(line, "\n")+"\x00"+string(class)+"\x00"+strings.Join(path, "\x00"))
-			start += len(line)
-		}
-		return out
-	}
-	a, b := keys(old), keys(next)
+	a, b := nixLineKeys(old), nixLineKeys(next)
 	count := func(ks []string) map[string]int {
 		m := map[string]int{}
 		for _, k := range ks {
@@ -413,6 +424,39 @@ func NixChangedLines(old, next string) (removed, added []Line) {
 		return out
 	}
 	return pick(a, cb), pick(b, ca)
+}
+
+func nixLineKeys(text string) []string {
+	sets, where := NixSets(text)
+	var out []string
+	start, set := 0, 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		class := []byte(line)
+		first := -1
+		for i := range line {
+			switch w := where[start+i]; {
+			case w == InString:
+				class[i] = 's'
+			case w == InComment:
+				class[i] = 'm'
+			default:
+				class[i] = 'c'
+				if first < 0 {
+					first = w
+				}
+			}
+		}
+		if first >= 0 {
+			set = first
+		}
+		var path []string
+		for s := set; s >= 0; s = sets[s].Parent {
+			path = append(path, cmp.Or(sets[s].Name, sets[s].Call))
+		}
+		out = append(out, strings.TrimSuffix(line, "\n")+"\x00"+string(class)+"\x00"+strings.Join(path, "\x00"))
+		start += len(line)
+	}
+	return out
 }
 
 // NixPinned reports whether a change of a Nix file from old to next

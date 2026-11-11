@@ -34,6 +34,13 @@ type Review struct {
 	OpenHumanThreads int                   `json:"openHumanThreads"`
 }
 
+type submittedReview struct {
+	Author      *login
+	Commit      *struct{ Oid string }
+	Body        string
+	SubmittedAt string
+}
+
 var generated = regexp.MustCompile(`Comments generated:\*\*\s*(\d+)`)
 
 // reviewStatus is each configured bot's standing on PR number, for viewer,
@@ -50,12 +57,7 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 					Nodes []struct{ RequestedReviewer *login }
 				}
 				Reviews struct {
-					Nodes []struct {
-						Author      *login
-						Commit      *struct{ Oid string }
-						Body        string
-						SubmittedAt string
-					}
+					Nodes []submittedReview
 				}
 			}
 		}
@@ -97,43 +99,43 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 	out := &Review{PR: number, Branch: pr.HeadRefName, Draft: pr.IsDraft, HeadOid: pr.HeadRefOid, Bots: map[string]*BotReview{},
 		OpenHumanThreads: open[""]}
 	for _, bot := range bots {
-		review := &BotReview{ResolvesOwnThreads: bot.ResolvesOwnThreads}
-		var latest *struct {
-			Author      *login
-			Commit      *struct{ Oid string }
-			Body        string
-			SubmittedAt string
-		}
-		for i := range pr.Reviews.Nodes {
-			r := &pr.Reviews.Nodes[i]
-			if r.Author != nil && bot.Pattern.MatchString(r.Author.Login) {
-				latest = r
-			}
-		}
-		if latest != nil {
-			review.At = latest.SubmittedAt
-			review.ReviewedHead = latest.Commit != nil && latest.Commit.Oid == pr.HeadRefOid
-			if len(bot.Verdicts) > 0 {
-				review.Verdict = verdictOf(bot.Verdicts, latest.Body)
-			}
-			if m := generated.FindStringSubmatch(latest.Body); m != nil {
-				var n int
-				fmt.Sscan(m[1], &n)
-				review.NewComments = &n
-			}
-		}
-		if bot.Request.Reviewer != "" {
-			for _, login := range requested {
-				review.Pending = review.Pending || bot.Pattern.MatchString(login)
-			}
-		} else if t := lastTrigger(mine, bot.Request.Comment); t != nil && !review.ReviewedHead {
-			// A trigger the bot has not answered with a review since.
-			review.Pending = latest == nil || latest.SubmittedAt <= t.At
-		}
+		review := botReview(bot, pr.Reviews.Nodes, pr.HeadRefOid, requested, mine)
 		review.OpenThreads, review.UnansweredThreads = open[bot.Name], unanswered[bot.Name]
 		out.Bots[bot.Name] = review
 	}
 	return out, nil
+}
+
+func botReview(bot *Bot, reviews []submittedReview, head string, requested []string, mine []issueComment) *BotReview {
+	review := &BotReview{ResolvesOwnThreads: bot.ResolvesOwnThreads}
+	var latest *submittedReview
+	for i := range reviews {
+		r := &reviews[i]
+		if r.Author != nil && bot.Pattern.MatchString(r.Author.Login) {
+			latest = r
+		}
+	}
+	if latest != nil {
+		review.At = latest.SubmittedAt
+		review.ReviewedHead = latest.Commit != nil && latest.Commit.Oid == head
+		if len(bot.Verdicts) > 0 {
+			review.Verdict = verdictOf(bot.Verdicts, latest.Body)
+		}
+		if m := generated.FindStringSubmatch(latest.Body); m != nil {
+			var n int
+			fmt.Sscan(m[1], &n)
+			review.NewComments = &n
+		}
+	}
+	if bot.Request.Reviewer != "" {
+		for _, login := range requested {
+			review.Pending = review.Pending || bot.Pattern.MatchString(login)
+		}
+	} else if t := lastTrigger(mine, bot.Request.Comment); t != nil && !review.ReviewedHead {
+		// A trigger the bot has not answered with a review since.
+		review.Pending = latest == nil || latest.SubmittedAt <= t.At
+	}
+	return review
 }
 
 // openThreads counts a PR's unresolved review threads by the bot that
@@ -263,75 +265,99 @@ func Request(args, onlyBots, acceptFailures []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ci.finished() {
-			reason := ci.State
-			if len(ci.Pending) > 0 {
-				reason = strings.Join(ci.Pending, ", ")
-			}
-			return nil, refuse("CI on #%d has not finished (%s); run `pr-loop wait ci %d` first", number, reason, number)
-		}
-		var own []string
-		for _, c := range ci.Failed {
-			if c.OnBase != "failed" && !accepted[c.Name] {
-				own = append(own, c.Name)
-			}
-		}
-		if len(own) > 0 {
-			return nil, refuse("CI on #%d fails in %s, which do not fail on its base. Fix that before asking for "+
-				"review. If a failure is shown not to be this PR's, waiving it is the operator's call: put the evidence in "+
-				"the report, with `pr-loop request --accept-failure NAME %d` for them to run", number, strings.Join(own, ", "), number)
+		if err := checkRequestCI(number, ci, accepted); err != nil {
+			return nil, err
 		}
 		review, err := reviewStatus(repo.Slug, number, repo.Viewer)
 		if err != nil {
 			return nil, err
 		}
-		var ask []*Bot
-		var unanswered []string
-		for _, bot := range bots {
-			if len(onlyBots) > 0 && !contains(onlyBots, bot.Name) {
-				continue
-			}
-			current := review.Bots[bot.Name]
-			switch {
-			case current.ReviewedHead || current.Pending:
-				log = append(log, fmt.Sprintf("#%d: %s has already reviewed or been asked to review %.12s", number, bot.Name, ci.HeadOid))
-			case current.UnansweredThreads > 0:
-				unanswered = append(unanswered, fmt.Sprintf("%d from %s", current.UnansweredThreads, bot.Name))
-			default:
-				ask = append(ask, bot)
-			}
-		}
-		// Only threads a bot has the last word in hold it back. People's
-		// threads are the operator's, which the loop cannot answer; and a
-		// thread answered but left open, deferred or left for a bot that
-		// resolves its own, has been triaged.
-		if len(unanswered) > 0 {
-			return nil, refuse("#%d has review threads nobody has answered (%s). Triage them before asking for another "+
-				"review: list them with `pr-loop threads %d`, reply to each, resolving it or fixing it first, "+
-				"then run `pr-loop request` again", number, strings.Join(unanswered, ", "), number)
+		ask, messages, err := requestedBots(number, ci.HeadOid, bots, onlyBots, review)
+		log = append(log, messages...)
+		if err != nil {
+			return nil, err
 		}
 		for _, bot := range ask {
-			if bot.Request.Reviewer != "" {
-				if err := requestReviewer(repo.Slug, number, bot.Request.Reviewer); err != nil {
-					return nil, fmt.Errorf("requesting %s on #%d: %w", bot.Name, number, err)
-				}
-			} else {
-				if err := redact.Outgoing(bot.Request.Comment); err != nil {
-					return nil, fmt.Errorf("bot %s's request.comment: %w", bot.Name, err)
-				}
-				if _, err := deleteTriggers(repo, number, []string{bot.Request.Comment}); err != nil {
-					return nil, err
-				}
-				err := commentsREST("POST", fmt.Sprintf("repos/%s/issues/%d/comments", repo.Slug, number),
-					map[string]string{"body": bot.Request.Comment}, nil)
-				if err != nil {
-					return nil, err
-				}
+			if err := requestBot(repo, number, bot); err != nil {
+				return nil, err
 			}
 			log = append(log, fmt.Sprintf("#%d: requested a review from %s of %.12s", number, bot.Name, ci.HeadOid))
 		}
 	}
 	return log, nil
+}
+
+func checkRequestCI(number int, ci *CI, accepted map[string]bool) error {
+	if !ci.finished() {
+		reason := ci.State
+		if len(ci.Pending) > 0 {
+			reason = strings.Join(ci.Pending, ", ")
+		}
+		return refuse("CI on #%d has not finished (%s); run `pr-loop wait ci %d` first", number, reason, number)
+	}
+	var own []string
+	for _, c := range ci.Failed {
+		if c.OnBase != "failed" && !accepted[c.Name] {
+			own = append(own, c.Name)
+		}
+	}
+	if len(own) > 0 {
+		return refuse("CI on #%d fails in %s, which do not fail on its base. Fix that before asking for "+
+			"review. If a failure is shown not to be this PR's, waiving it is the operator's call: put the evidence in "+
+			"the report, with `pr-loop request --accept-failure NAME %d` for them to run", number, strings.Join(own, ", "), number)
+	}
+	return nil
+}
+
+func requestedBots(number int, head string, bots []*Bot, onlyBots []string, review *Review) ([]*Bot, []string, error) {
+	var log []string
+	var ask []*Bot
+	var unanswered []string
+	for _, bot := range bots {
+		if len(onlyBots) > 0 && !contains(onlyBots, bot.Name) {
+			continue
+		}
+		current := review.Bots[bot.Name]
+		switch {
+		case current.ReviewedHead || current.Pending:
+			log = append(log, fmt.Sprintf("#%d: %s has already reviewed or been asked to review %.12s", number, bot.Name, head))
+		case current.UnansweredThreads > 0:
+			unanswered = append(unanswered, fmt.Sprintf("%d from %s", current.UnansweredThreads, bot.Name))
+		default:
+			ask = append(ask, bot)
+		}
+	}
+	// Only threads a bot has the last word in hold it back. People's
+	// threads are the operator's, which the loop cannot answer; and a
+	// thread answered but left open, deferred or left for a bot that
+	// resolves its own, has been triaged.
+	if len(unanswered) > 0 {
+		return nil, nil, refuse("#%d has review threads nobody has answered (%s). Triage them before asking for another "+
+			"review: list them with `pr-loop threads %d`, reply to each, resolving it or fixing it first, "+
+			"then run `pr-loop request` again", number, strings.Join(unanswered, ", "), number)
+	}
+	return ask, log, nil
+}
+
+func requestBot(repo *Repo, number int, bot *Bot) error {
+	if bot.Request.Reviewer != "" {
+		if err := requestReviewer(repo.Slug, number, bot.Request.Reviewer); err != nil {
+			return fmt.Errorf("requesting %s on #%d: %w", bot.Name, number, err)
+		}
+	} else {
+		if err := redact.Outgoing(bot.Request.Comment); err != nil {
+			return fmt.Errorf("bot %s's request.comment: %w", bot.Name, err)
+		}
+		if _, err := deleteTriggers(repo, number, []string{bot.Request.Comment}); err != nil {
+			return err
+		}
+		err := commentsREST("POST", fmt.Sprintf("repos/%s/issues/%d/comments", repo.Slug, number),
+			map[string]string{"body": bot.Request.Comment}, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // requestReviewer asks reviewer to review PR number in slug. Tests that fake

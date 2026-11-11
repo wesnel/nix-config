@@ -147,6 +147,12 @@ func goModPins(file, old, next string) []Pin {
 	for _, m := range dropped {
 		pins = append(pins, goModulePin(file+"#"+m, file, m, a.requires[m], "", ""))
 	}
+	pins = append(pins, replacementPins(file, a, b)...)
+	return pins
+}
+
+func replacementPins(file string, a, b goModFile) []Pin {
+	var pins []Pin
 	seen := map[string]bool{}
 	for _, left := range append(slices.Clone(b.replaceOrder), a.replaceOrder...) {
 		before, after := a.replaces[left], b.replaces[left]

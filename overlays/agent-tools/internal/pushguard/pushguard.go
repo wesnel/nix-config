@@ -116,9 +116,53 @@ func Check(url string, updates []Update, public Lookup) error {
 		return nil
 	}
 
-	names, err := git.Run("remote")
+	known, private, slugs, err := classifyRemotes(target, known, public)
 	if err != nil {
 		return err
+	}
+
+	sending, err := revList(tips, known)
+	if err != nil {
+		return err
+	}
+	for _, name := range private {
+		leaked, err := privateLeak(tips, known, sending, name)
+		if err != nil {
+			return err
+		}
+		if len(leaked) > 0 {
+			example, _ := git.Run("log", "-1", "--format=%h %s", leaked[0])
+			return refusal.New("%d of the commits this push sends to public %s are history of private %s (remote %s), such as %s.\n"+
+				"Publishing private history is the operator's decision; an agent must stop here and ask.\n"+
+				"To publish it anyway: git -c %s=%s push ...",
+				len(leaked), target, slugs[name], name, example, AllowKey, target)
+		}
+	}
+	return nil
+}
+
+func privateLeak(tips, known, sending []string, remote string) ([]string, error) {
+	kept, err := revList(tips, append(append([]string{}, known...), "--remotes="+remote+"/*"))
+	if err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	for _, oid := range kept {
+		keep[oid] = true
+	}
+	var leaked []string
+	for _, oid := range sending {
+		if !keep[oid] {
+			leaked = append(leaked, oid)
+		}
+	}
+	return leaked, nil
+}
+
+func classifyRemotes(target string, known []string, public Lookup) ([]string, []string, map[string]string, error) {
+	names, err := git.Run("remote")
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	var private []string
 	slugs := map[string]string{}
@@ -132,7 +176,7 @@ func Check(url string, updates []Update, public Lookup) error {
 		pub := strings.EqualFold(slug, target)
 		if !pub {
 			if pub, err = public(slug); err != nil {
-				return refusal.New("cannot tell whether %s (remote %s) is private, so the push to %s is refused: %v\n"+
+				return nil, nil, nil, refusal.New("cannot tell whether %s (remote %s) is private, so the push to %s is refused: %v\n"+
 					"If `gh auth status` shows no login, hand the operator `gh auth login`.\n"+unchecked,
 					slug, name, target, err, AllowKey, target)
 			}
@@ -145,34 +189,7 @@ func Check(url string, updates []Update, public Lookup) error {
 	}
 	sort.Strings(private)
 
-	sending, err := revList(tips, known)
-	if err != nil {
-		return err
-	}
-	for _, name := range private {
-		kept, err := revList(tips, append(append([]string{}, known...), "--remotes="+name+"/*"))
-		if err != nil {
-			return err
-		}
-		keep := map[string]bool{}
-		for _, oid := range kept {
-			keep[oid] = true
-		}
-		var leaked []string
-		for _, oid := range sending {
-			if !keep[oid] {
-				leaked = append(leaked, oid)
-			}
-		}
-		if len(leaked) > 0 {
-			example, _ := git.Run("log", "-1", "--format=%h %s", leaked[0])
-			return refusal.New("%d of the commits this push sends to public %s are history of private %s (remote %s), such as %s.\n"+
-				"Publishing private history is the operator's decision; an agent must stop here and ask.\n"+
-				"To publish it anyway: git -c %s=%s push ...",
-				len(leaked), target, slugs[name], name, example, AllowKey, target)
-		}
-	}
-	return nil
+	return known, private, slugs, nil
 }
 
 // revList lists the commits reachable from tips and from none of known.

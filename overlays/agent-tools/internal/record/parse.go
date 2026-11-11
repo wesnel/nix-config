@@ -230,6 +230,29 @@ func (p *parser) rangeRecord(r *Range) error {
 		return err
 	}
 
+	if err := p.walkthrough(r); err != nil {
+		return err
+	}
+
+	if err := p.diagrams(r); err != nil {
+		return err
+	}
+
+	if err := p.findings(r); err != nil {
+		return err
+	}
+
+	if err := p.rounds(r); err != nil {
+		return err
+	}
+
+	if !p.done() {
+		return p.fail("%q is not part of a record", p.peek())
+	}
+	return nil
+}
+
+func (p *parser) walkthrough(r *Range) error {
 	if err := p.expect("** Walkthrough"); err != nil {
 		return err
 	}
@@ -252,26 +275,39 @@ func (p *parser) rangeRecord(r *Range) error {
 			return err
 		}
 		for strings.HasPrefix(p.peek(), "- ") {
-			m := hunkPattern.FindStringSubmatch(p.peek())
-			if m == nil {
-				return p.fail("%q is not a hunk's line", p.peek())
+			h, err := p.hunk()
+			if err != nil {
+				return err
 			}
-			n := make([]int, 4)
-			for i := range n {
-				n[i], _ = strconv.Atoi(m[i+3])
-			}
-			path := m[1]
-			if path == "" {
-				if path, err = p.path(m[2]); err != nil {
-					return err
-				}
-			}
-			c.Hunks = append(c.Hunks, Hunk{Path: path, NewStart: n[0], NewLines: n[1], OldStart: n[2], OldLines: n[3]})
+			c.Hunks = append(c.Hunks, h)
 			p.i++
 		}
 		r.Walkthrough = append(r.Walkthrough, c)
 	}
 
+	return nil
+}
+
+func (p *parser) hunk() (Hunk, error) {
+	var err error
+	m := hunkPattern.FindStringSubmatch(p.peek())
+	if m == nil {
+		return Hunk{}, p.fail("%q is not a hunk's line", p.peek())
+	}
+	n := make([]int, 4)
+	for i := range n {
+		n[i], _ = strconv.Atoi(m[i+3])
+	}
+	path := m[1]
+	if path == "" {
+		if path, err = p.path(m[2]); err != nil {
+			return Hunk{}, err
+		}
+	}
+	return Hunk{Path: path, NewStart: n[0], NewLines: n[1], OldStart: n[2], OldLines: n[3]}, nil
+}
+
+func (p *parser) diagrams(r *Range) error {
 	if err := p.expect("** Diagrams"); err != nil {
 		return err
 	}
@@ -296,6 +332,10 @@ func (p *parser) rangeRecord(r *Range) error {
 		r.Diagrams = append(r.Diagrams, d)
 	}
 
+	return nil
+}
+
+func (p *parser) findings(r *Range) error {
 	if err := p.expect("** Findings"); err != nil {
 		return err
 	}
@@ -304,44 +344,56 @@ func (p *parser) rangeRecord(r *Range) error {
 		if !ok {
 			break
 		}
-		state, rest, _ := strings.Cut(text, " ")
-		if !states[State(state)] {
-			return p.fail("%q is not one of the #+TODO line's keywords", state)
-		}
-		id, err := p.id(rest)
+		f, err := p.finding(text)
 		if err != nil {
 			return err
-		}
-		f := Finding{ID: id, State: State(state)}
-		props, err := p.props()
-		if err != nil {
-			return err
-		}
-		f.Title, f.Reviewer, f.Kind = props["TITLE"], props["REVIEWER"], props["KIND"]
-		if f.Path, err = p.path(props["PATH"]); err != nil {
-			return err
-		}
-		f.Side, f.OutcomeTarget = props["SIDE"], props["OUTCOME_TARGET"]
-		for key, n := range map[string]*int{"ROUND": &f.Round, "LINE": &f.Line, "END_LINE": &f.EndLine} {
-			if *n, err = p.number(props, key); err != nil {
-				return err
-			}
-		}
-		if strings.HasPrefix(p.peek(), "[[file:") {
-			p.i++
-		}
-		if f.Evidence, err = p.block(); err != nil {
-			return err
-		}
-		if p.peek() == "**** Outcome" {
-			p.heading(4)
-			if f.Reason, err = p.block(); err != nil {
-				return err
-			}
 		}
 		r.Findings = append(r.Findings, f)
 	}
 
+	return nil
+}
+
+func (p *parser) finding(text string) (Finding, error) {
+	state, rest, _ := strings.Cut(text, " ")
+	if !states[State(state)] {
+		return Finding{}, p.fail("%q is not one of the #+TODO line's keywords", state)
+	}
+	id, err := p.id(rest)
+	if err != nil {
+		return Finding{}, err
+	}
+	f := Finding{ID: id, State: State(state)}
+	props, err := p.props()
+	if err != nil {
+		return Finding{}, err
+	}
+	f.Title, f.Reviewer, f.Kind = props["TITLE"], props["REVIEWER"], props["KIND"]
+	if f.Path, err = p.path(props["PATH"]); err != nil {
+		return Finding{}, err
+	}
+	f.Side, f.OutcomeTarget = props["SIDE"], props["OUTCOME_TARGET"]
+	for key, n := range map[string]*int{"ROUND": &f.Round, "LINE": &f.Line, "END_LINE": &f.EndLine} {
+		if *n, err = p.number(props, key); err != nil {
+			return Finding{}, err
+		}
+	}
+	if strings.HasPrefix(p.peek(), "[[file:") {
+		p.i++
+	}
+	if f.Evidence, err = p.block(); err != nil {
+		return Finding{}, err
+	}
+	if p.peek() == "**** Outcome" {
+		p.heading(4)
+		if f.Reason, err = p.block(); err != nil {
+			return Finding{}, err
+		}
+	}
+	return f, nil
+}
+
+func (p *parser) rounds(r *Range) error {
 	if err := p.expect("** Rounds"); err != nil {
 		return err
 	}
@@ -376,9 +428,6 @@ func (p *parser) rangeRecord(r *Range) error {
 		}
 		r.Rounds = append(r.Rounds, rd)
 	}
-	if !p.done() {
-		return p.fail("%q is not part of a record", p.peek())
-	}
 	return nil
 }
 
@@ -399,52 +448,9 @@ func (p *parser) prRecord(pr *PR) error {
 		if !ok {
 			break
 		}
-		rest, ok := strings.CutPrefix(text, "T-")
-		if !ok {
-			return p.fail("a thread's heading is T-<thread ID>")
-		}
-		id, err := p.id(rest)
+		t, err := p.thread(text)
 		if err != nil {
 			return err
-		}
-		t := Thread{ID: id}
-		props, err := p.props()
-		if err != nil {
-			return err
-		}
-		t.Resolved = props["RESOLVED"] == "t"
-		if t.Path, err = p.path(props["PATH"]); err != nil {
-			return err
-		}
-		if t.Line, err = p.number(props, "LINE"); err != nil {
-			return err
-		}
-		bodies, err := p.blocks()
-		if err != nil {
-			return err
-		}
-		authors := strings.Fields(props["AUTHORS"])
-		if len(authors) != len(bodies) {
-			return p.fail("AUTHORS names %d comments, and the thread holds %d", len(authors), len(bodies))
-		}
-		for i, a := range authors {
-			login, kind, _ := strings.Cut(a, ":")
-			t.Comments = append(t.Comments, Comment{Author: login, Type: kind, Body: bodies[i]})
-		}
-		if p.peek() == "*** Draft" {
-			p.heading(3)
-			props, err := p.props()
-			if err != nil {
-				return err
-			}
-			d := &Draft{Outcome: props["OUTCOME"]}
-			if d.Posted, err = p.when(props, "POSTED"); err != nil {
-				return err
-			}
-			if d.Body, err = p.block(); err != nil {
-				return err
-			}
-			t.Draft = d
 		}
 		pr.Threads = append(pr.Threads, t)
 	}
@@ -452,6 +458,57 @@ func (p *parser) prRecord(pr *PR) error {
 		return p.fail("%q is not part of a record", p.peek())
 	}
 	return nil
+}
+
+func (p *parser) thread(text string) (Thread, error) {
+	rest, ok := strings.CutPrefix(text, "T-")
+	if !ok {
+		return Thread{}, p.fail("a thread's heading is T-<thread ID>")
+	}
+	id, err := p.id(rest)
+	if err != nil {
+		return Thread{}, err
+	}
+	t := Thread{ID: id}
+	props, err := p.props()
+	if err != nil {
+		return Thread{}, err
+	}
+	t.Resolved = props["RESOLVED"] == "t"
+	if t.Path, err = p.path(props["PATH"]); err != nil {
+		return Thread{}, err
+	}
+	if t.Line, err = p.number(props, "LINE"); err != nil {
+		return Thread{}, err
+	}
+	bodies, err := p.blocks()
+	if err != nil {
+		return Thread{}, err
+	}
+	authors := strings.Fields(props["AUTHORS"])
+	if len(authors) != len(bodies) {
+		return Thread{}, p.fail("AUTHORS names %d comments, and the thread holds %d", len(authors), len(bodies))
+	}
+	for i, a := range authors {
+		login, kind, _ := strings.Cut(a, ":")
+		t.Comments = append(t.Comments, Comment{Author: login, Type: kind, Body: bodies[i]})
+	}
+	if p.peek() == "*** Draft" {
+		p.heading(3)
+		props, err := p.props()
+		if err != nil {
+			return Thread{}, err
+		}
+		d := &Draft{Outcome: props["OUTCOME"]}
+		if d.Posted, err = p.when(props, "POSTED"); err != nil {
+			return Thread{}, err
+		}
+		if d.Body, err = p.block(); err != nil {
+			return Thread{}, err
+		}
+		t.Draft = d
+	}
+	return t, nil
 }
 
 // same holds the file to what the renderer writes for the values parsed

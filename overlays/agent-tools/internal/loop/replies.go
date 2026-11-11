@@ -29,25 +29,6 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 	var out []PlannedReply
 	var body []string
 	seen := map[string]int{}
-	finish := func() error {
-		if len(out) == 0 {
-			body = nil
-			return nil
-		}
-		for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
-			body = body[1:]
-		}
-		for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
-			body = body[:len(body)-1]
-		}
-		last := &out[len(out)-1]
-		if len(body) == 0 {
-			return fmt.Errorf("the reply to %s is empty", last.Thread)
-		}
-		last.Body = strings.Join(body, "\n")
-		body = nil
-		return nil
-	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		n := i + 1
@@ -62,22 +43,41 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 		if m == nil {
 			return nil, fmt.Errorf("line %d: %q is not %q or %q", n, line, ReplyHeader+" THREAD", ReplyHeader+" THREAD resolve")
 		}
-		if err := finish(); err != nil {
+		if err := finishReply(out, body); err != nil {
 			return nil, err
 		}
+		body = nil
 		if first, ok := seen[m[1]]; ok {
 			return nil, fmt.Errorf("line %d: %s already has a section, at line %d", n, m[1], first)
 		}
 		seen[m[1]] = n
 		out = append(out, PlannedReply{Thread: m[1], Resolve: m[2] != ""})
 	}
-	if err := finish(); err != nil {
+	if err := finishReply(out, body); err != nil {
 		return nil, err
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no %q lines; see pr-loop --help", ReplyHeader)
 	}
 	return out, nil
+}
+
+func finishReply(out []PlannedReply, body []string) error {
+	if len(out) == 0 {
+		return nil
+	}
+	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
+		body = body[1:]
+	}
+	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+		body = body[:len(body)-1]
+	}
+	last := &out[len(out)-1]
+	if len(body) == 0 {
+		return fmt.Errorf("the reply to %s is empty", last.Thread)
+	}
+	last.Body = strings.Join(body, "\n")
+	return nil
 }
 
 // ReplyResult is what ReplyAll did with one section.
@@ -103,24 +103,9 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	checks := make([]*threadCheck, len(plan))
-	var problems []string
-	allRefused := true
-	for i, r := range plan {
-		check, err := policy.check(r.Thread)
-		if err != nil {
-			var refusal Refusal
-			allRefused = allRefused && errors.As(err, &refusal)
-			problems = append(problems, r.Thread+": "+err.Error())
-		}
-		checks[i] = check
-	}
-	if len(problems) > 0 {
-		if allRefused {
-			return nil, refuse("nothing was posted, since these threads cannot be answered; drop them from the file, "+
-				"put them in the report, and run `pr-loop reply --from` again:\n  %s", strings.Join(problems, "\n  "))
-		}
-		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
+	checks, err := policy.checkAll(plan)
+	if err != nil {
+		return nil, err
 	}
 	if err := checkReplies(policy.repo.Slug, plan, checks); err != nil {
 		return nil, err
@@ -145,6 +130,29 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func (policy *threadPolicy) checkAll(plan []PlannedReply) ([]*threadCheck, error) {
+	checks := make([]*threadCheck, len(plan))
+	var problems []string
+	allRefused := true
+	for i, r := range plan {
+		check, err := policy.check(r.Thread)
+		if err != nil {
+			var refusal Refusal
+			allRefused = allRefused && errors.As(err, &refusal)
+			problems = append(problems, r.Thread+": "+err.Error())
+		}
+		checks[i] = check
+	}
+	if len(problems) > 0 {
+		if allRefused {
+			return nil, refuse("nothing was posted, since these threads cannot be answered; drop them from the file, "+
+				"put them in the report, and run `pr-loop reply --from` again:\n  %s", strings.Join(problems, "\n  "))
+		}
+		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
+	}
+	return checks, nil
 }
 
 // partial reports a failure partway through ReplyAll with what it had done.

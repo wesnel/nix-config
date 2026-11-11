@@ -95,37 +95,7 @@ func planTools() []mcpTool {
 			desc:   "agent-plan " + command + ": use the configured plans directory and the CLI's validation; inline text only.",
 			params: params,
 			argv: func(a mcpArgs) []string {
-				argv := strings.Fields(command)
-				for _, param := range params {
-					if slices.Contains(positional, param.name) {
-						continue
-					}
-					name := strings.ReplaceAll(param.name, "_", "-")
-					if param.name == "target_worktree" || param.name == "target_worktrees" {
-						name = "worktree"
-					}
-					switch v := a[param.name].(type) {
-					case string:
-						argv = append(argv, "--"+name+"="+v)
-					case []string:
-						for _, value := range v {
-							argv = append(argv, "--"+name+"="+value)
-						}
-					case bool:
-						if v {
-							argv = append(argv, "--"+name)
-						}
-					}
-				}
-				for _, name := range positional {
-					switch v := a[name].(type) {
-					case string:
-						argv = append(argv, v)
-					case []string:
-						argv = append(argv, v...)
-					}
-				}
-				return argv
+				return planToolArgs(command, positional, params, a)
 			}, run: planTool,
 		}
 	}
@@ -164,4 +134,38 @@ func planTools() []mcpTool {
 		makeTool("find", nil, flag("session"), flag("branch"), p("target_worktree", text, false, "match this worktree")),
 		makeTool("status", []string{"plan"}, plan, enum("format", false, "org", "json")),
 	}
+}
+
+func planToolArgs(command string, positional []string, params []mcpParam, a mcpArgs) []string {
+	argv := strings.Fields(command)
+	for _, param := range params {
+		if slices.Contains(positional, param.name) {
+			continue
+		}
+		name := strings.ReplaceAll(param.name, "_", "-")
+		if param.name == "target_worktree" || param.name == "target_worktrees" {
+			name = "worktree"
+		}
+		switch v := a[param.name].(type) {
+		case string:
+			argv = append(argv, "--"+name+"="+v)
+		case []string:
+			for _, value := range v {
+				argv = append(argv, "--"+name+"="+value)
+			}
+		case bool:
+			if v {
+				argv = append(argv, "--"+name)
+			}
+		}
+	}
+	for _, name := range positional {
+		switch v := a[name].(type) {
+		case string:
+			argv = append(argv, v)
+		case []string:
+			argv = append(argv, v...)
+		}
+	}
+	return argv
 }

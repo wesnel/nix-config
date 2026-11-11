@@ -45,81 +45,21 @@ func Check(d *Diagram, blob func(path string) ([]byte, error), planned func(id s
 		if s, ok := files[path]; ok {
 			return s, s.err
 		}
-		s := &source{}
-		data, err := blob(path)
-		switch {
-		case errors.Is(err, errTooBig) || err == nil && len(data) > MaxBlob:
-			s.err = fmt.Errorf("%s is more than %d bytes at %s, more than a check reads", path, MaxBlob, d.At)
-		case err != nil:
-			s.err = fmt.Errorf("%s does not exist at %s", path, d.At)
-		default:
-			s.lines = splitLines(data)
-			if strings.HasSuffix(path, ".go") {
-				s.fset = token.NewFileSet()
-				s.file, s.goErr = parser.ParseFile(s.fset, path, data, parser.SkipObjectResolution)
-			}
-		}
+		s := readSource(path, d.At, blob)
 		files[path] = s
 		return s, s.err
 	}
 	check := func(id string, c *Cite, p *string, edge *Edge) {
-		fail := func(format string, args ...any) {
-			r.Failures = append(r.Failures, Failure{Element: id, Reason: fmt.Sprintf(format, args...)})
-		}
+		var what string
+		var err error
 		if p != nil {
-			switch {
-			case planned == nil:
-				fail("planned %s: a planned element is for a plan's diagram before the code, checked against its items", *p)
-			case !planned(*p):
-				fail("planned %s is not an item of the plan", *p)
-			default:
-				r.Checked[id] = "planned as " + *p
-			}
-			return
+			what, err = checkPlanned(*p, planned)
+		} else {
+			what, err = checkCitation(d, c, edge, open)
 		}
-		if edge != nil && (d.Kind == "callflow" || d.Kind == "state") {
-			if to := d.Node(edge.To); to.Cite != nil && last(to.Cite.Symbol) != last(c.Symbol) {
-				fail("symbol %s is not %s's, %s; a %s edge's symbol is its to node's", c.Symbol, edge.To, to.Cite.Symbol, d.Kind)
-				return
-			}
-		}
-		s, err := open(c.Path)
 		if err != nil {
-			fail("%v", err)
+			r.Failures = append(r.Failures, Failure{Element: id, Reason: err.Error()})
 			return
-		}
-		if c.End() > len(s.lines) {
-			fail("%s has %d lines at %s, so %d-%d are not in it", c.Path, len(s.lines), d.At, c.Line, c.End())
-			return
-		}
-		span := s.lines[c.Line-1 : c.End()]
-		if !wholeWord(last(c.Symbol)).MatchString(strings.Join(span, "\n")) {
-			fail("%s is not a whole word in %s:%d-%d", last(c.Symbol), c.Path, c.Line, c.End())
-			return
-		}
-		c.Hash = spanHash(span)
-		what := fmt.Sprintf("%s is a word in %s:%d-%d", c.Symbol, c.Path, c.Line, c.End())
-		if s.fset != nil {
-			if s.goErr != nil {
-				fail("%s does not parse as Go: %v", c.Path, s.goErr)
-				return
-			}
-			var said, why string
-			switch {
-			case edge == nil:
-				said, why = s.declared(c)
-			case d.Kind == "callflow":
-				said, why = s.calls(d, edge, c)
-			case d.Kind == "state":
-				said, why = s.assigns(c)
-			}
-			if why != "" {
-				fail("%s", why)
-				return
-			}
-			if said != "" {
-				what = said
-			}
 		}
 		r.Checked[id] = what
 	}
@@ -132,6 +72,78 @@ func Check(d *Diagram, blob func(path string) ([]byte, error), planned func(id s
 		check(e.ID, e.Cite, e.Planned, e)
 	}
 	return r
+}
+
+func readSource(path, at string, blob func(string) ([]byte, error)) *source {
+	s := &source{}
+	data, err := blob(path)
+	switch {
+	case errors.Is(err, errTooBig) || err == nil && len(data) > MaxBlob:
+		s.err = fmt.Errorf("%s is more than %d bytes at %s, more than a check reads", path, MaxBlob, at)
+	case err != nil:
+		s.err = fmt.Errorf("%s does not exist at %s", path, at)
+	default:
+		s.lines = splitLines(data)
+		if strings.HasSuffix(path, ".go") {
+			s.fset = token.NewFileSet()
+			s.file, s.goErr = parser.ParseFile(s.fset, path, data, parser.SkipObjectResolution)
+		}
+	}
+	return s
+}
+
+func checkPlanned(id string, planned func(string) bool) (string, error) {
+	switch {
+	case planned == nil:
+		return "", fmt.Errorf("planned %s: a planned element is for a plan's diagram before the code, checked against its items", id)
+	case !planned(id):
+		return "", fmt.Errorf("planned %s is not an item of the plan", id)
+	default:
+		return "planned as " + id, nil
+	}
+}
+
+func checkCitation(d *Diagram, c *Cite, edge *Edge, open func(string) (*source, error)) (string, error) {
+	if edge != nil && (d.Kind == "callflow" || d.Kind == "state") {
+		if to := d.Node(edge.To); to.Cite != nil && last(to.Cite.Symbol) != last(c.Symbol) {
+			return "", fmt.Errorf("symbol %s is not %s's, %s; a %s edge's symbol is its to node's", c.Symbol, edge.To, to.Cite.Symbol, d.Kind)
+		}
+	}
+	s, err := open(c.Path)
+	if err != nil {
+		return "", err
+	}
+	if c.End() > len(s.lines) {
+		return "", fmt.Errorf("%s has %d lines at %s, so %d-%d are not in it", c.Path, len(s.lines), d.At, c.Line, c.End())
+	}
+	span := s.lines[c.Line-1 : c.End()]
+	if !wholeWord(last(c.Symbol)).MatchString(strings.Join(span, "\n")) {
+		return "", fmt.Errorf("%s is not a whole word in %s:%d-%d", last(c.Symbol), c.Path, c.Line, c.End())
+	}
+	c.Hash = spanHash(span)
+	what := fmt.Sprintf("%s is a word in %s:%d-%d", c.Symbol, c.Path, c.Line, c.End())
+	if s.fset == nil {
+		return what, nil
+	}
+	if s.goErr != nil {
+		return "", fmt.Errorf("%s does not parse as Go: %v", c.Path, s.goErr)
+	}
+	var said, why string
+	switch {
+	case edge == nil:
+		said, why = s.declared(c)
+	case d.Kind == "callflow":
+		said, why = s.calls(d, edge, c)
+	case d.Kind == "state":
+		said, why = s.assigns(c)
+	}
+	if why != "" {
+		return "", errors.New(why)
+	}
+	if said != "" {
+		what = said
+	}
+	return what, nil
 }
 
 // source is a file at the diagram's commit, and, for Go, its syntax.
@@ -240,17 +252,9 @@ func (s *source) declared(c *Cite) (what, why string) {
 				at(n.Name, "type")
 			}
 		case *ast.ValueSpec:
-			for _, id := range n.Names {
-				if id.Name == c.Symbol {
-					at(id, "value")
-				}
-			}
+			matchNames(n.Names, c.Symbol, "value", at)
 		case *ast.Field:
-			for _, id := range n.Names {
-				if id.Name == c.Symbol {
-					at(id, "field")
-				}
-			}
+			matchNames(n.Names, c.Symbol, "field", at)
 		}
 		return found == ""
 	})
@@ -258,6 +262,14 @@ func (s *source) declared(c *Cite) (what, why string) {
 		return "", fmt.Sprintf("%s is not declared in %s:%d-%d", c.Symbol, c.Path, c.Line, c.End())
 	}
 	return fmt.Sprintf("%s %s declared in %s:%d-%d", found, c.Symbol, c.Path, c.Line, c.End()), ""
+}
+
+func matchNames(names []*ast.Ident, symbol, kind string, at func(*ast.Ident, string)) {
+	for _, id := range names {
+		if id.Name == symbol {
+			at(id, kind)
+		}
+	}
 }
 
 // calls says where e's lines, inside the function its from node declares,
