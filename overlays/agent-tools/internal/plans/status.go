@@ -19,6 +19,12 @@ type Step struct {
 	Commits   []string `json:"commits,omitempty"`
 	// Keyword is the keyword the log gives the step.
 	Keyword string `json:"keyword"`
+	// Minutes is how long the step has been worked on: the sum of its spans
+	// from a started event to the next done or abandoned event, to the
+	// minute the log stamps. A span still open at the time of the status
+	// runs to it, and Running is set. Nil for a step never started.
+	Minutes *int `json:"minutes,omitempty"`
+	Running bool `json:"running,omitempty"`
 }
 
 // Status is a plan's progress: its steps, which are the items whose IDs are
@@ -138,6 +144,49 @@ func earlierSettled(hs []heading, i int, isSettled func(string) bool) bool {
 	return true
 }
 
+// eventTime is the time e's stamp names in loc, which the log writes in the
+// local zone of the host that logged it, to the minute.
+func eventTime(e Event, loc *time.Location) (time.Time, bool) {
+	at, err := time.ParseInLocation(logTime, e.Time, loc)
+	return at, err == nil
+}
+
+// workTime sets Minutes and Running of the steps of s that events started:
+// the sum of each step's spans, from a started event to the next done or
+// abandoned one, and a span still open at now runs to it. A started event
+// inside an open span, and a done or abandoned one outside any, change
+// nothing. An event whose stamp does not parse is ignored.
+func workTime(steps []Step, index map[string]int, events []Event, now time.Time) {
+	opened := map[string]time.Time{}
+	total := map[string]time.Duration{}
+	timed := map[string]bool{}
+	for _, e := range events {
+		at, ok := eventTime(e, now.Location())
+		if !ok {
+			continue
+		}
+		switch start, open := opened[e.Item]; {
+		case e.Kind == "started" && !open:
+			opened[e.Item], timed[e.Item] = at, true
+		case (e.Kind == "done" || e.Kind == "abandoned") && open:
+			total[e.Item] += at.Sub(start)
+			delete(opened, e.Item)
+		}
+	}
+	for id, start := range opened {
+		total[id] += now.Sub(start)
+	}
+	for id := range timed {
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
+		m := int(total[id] / time.Minute)
+		_, running := opened[id]
+		steps[i].Minutes, steps[i].Running = &m, running
+	}
+}
+
 // staleAfter is how long a started step goes with nothing logged before
 // status calls it stale.
 const staleAfter = 24 * time.Hour
@@ -147,7 +196,7 @@ const staleAfter = 24 * time.Hour
 func stale(list []item, events []Event, now time.Time) []string {
 	newest := map[string]time.Time{}
 	for _, e := range events {
-		if at, err := time.ParseInLocation("[2006-01-02 Mon 15:04]", e.Time, now.Location()); err == nil && at.After(newest[e.Item]) {
+		if at, ok := eventTime(e, now.Location()); ok && at.After(newest[e.Item]) {
 			newest[e.Item] = at
 		}
 	}
@@ -248,6 +297,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 			step.Abandoned = true
 		}
 	}
+	workTime(s.Steps, index, events, now)
 	for _, step := range s.Steps {
 		switch {
 		case step.Abandoned:
@@ -263,6 +313,36 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	}
 	s.Implemented = fmt.Sprintf("%d/%d", s.Verified, s.Total)
 	return s, nil
+}
+
+// worked is the step's Minutes as the status table shows them: "<1m", "12m",
+// "1h 35m" or "2d 3h", with " so far" while it runs; "" for a step never
+// started.
+func (s Step) worked() string {
+	if s.Minutes == nil {
+		return ""
+	}
+	m, text := *s.Minutes, ""
+	switch {
+	case m < 1:
+		text = "<1m"
+	case m < 60:
+		text = fmt.Sprintf("%dm", m)
+	case m < 24*60:
+		text = fmt.Sprintf("%dh", m/60)
+		if m%60 > 0 {
+			text += fmt.Sprintf(" %dm", m%60)
+		}
+	default:
+		text = fmt.Sprintf("%dd", m/(24*60))
+		if h := m % (24 * 60) / 60; h > 0 {
+			text += fmt.Sprintf(" %dh", h)
+		}
+	}
+	if s.Running {
+		text += " so far"
+	}
+	return text
 }
 
 // row is an Org table row; a cell's | is written as \vert.
@@ -318,6 +398,15 @@ func (s Status) Org() string {
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))
+	var worked []string
+	for _, step := range s.Steps {
+		if text := step.worked(); text != "" {
+			worked = append(worked, step.ID+" "+text)
+		}
+	}
+	if len(worked) > 0 {
+		fmt.Fprintf(&b, "- Time worked: %s\n", strings.Join(worked, "; "))
+	}
 	if len(s.Stale) > 0 {
 		fmt.Fprintf(&b, "- Stale, started with nothing logged for a day: %s\n", list(s.Stale))
 	}
