@@ -150,6 +150,7 @@ git sign-pass                                     # squash fixups and sign; noth
 git sign-pass --push                              # then push each moved or ahead branch to its own name upstream
 git sign-pass --set-upstream                      # and publish those that have none yet
 git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever they are checked out
+git sign-pass -C DIR --push                       # any of these, run in DIR as git's own -C does
 ```
 
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
