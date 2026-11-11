@@ -97,10 +97,16 @@ next one starts at step 1.
    minutes.
 3. **Status.** `pr-loop status`. Check the stop conditions below.
 4. **Triage.** `pr-loop threads <number>` lists each PR's unresolved
-   threads. Decide each bot thread's outcome as the `review-change` skill's
-   Triage says, against the code. A thread a person commented in goes in
-   the hand-back with its proposed answer: in bots mode the loop answers
-   bots alone.
+   threads. Also read the body of each bot review submitted since the last
+   round, with `gh api repos/OWNER/NAME/pulls/<number>/reviews --paginate`:
+   a review is the parent of its inline threads, and its body can hold a
+   finding no thread carries, such as Copilot's "previously missed issue"
+   in a later round. Decide each bot thread's outcome, and each finding
+   in a body, as the `review-change` skill's Triage says, against the code.
+   A body finding has no thread to reply in or resolve: a fix is a fixup
+   like any other, and its outcome goes in the hand-back. A thread a person
+   commented in goes in the hand-back with its proposed answer: in bots
+   mode the loop answers bots alone.
 5. **Fix.** One fixup per review item or CI failure, in the PR's worktree,
    with the relevant tests and linters run, and a drafted reply per thread
    in the format `pr-loop reply --from` reads. A reply is read by people
@@ -160,8 +166,9 @@ In bots mode, stop and hand back when any of these holds:
   bot thread is open except deferred and `needs-operator` ones.
 - Copilot's verdict on a head is `closer-look` with no new comments: it is
   handing over to a person.
-- Every bot reviewed every head without new comments, and the only open
-  threads are deferred or need the operator.
+- Every bot reviewed every head without new comments, no review body holds
+  a finding not yet triaged, and the only open threads are deferred or
+  need the operator.
 - `pr-loop` stopped a push, CI keeps failing after two rounds spent on it,
   or a CI failure was shown not to be the PR's doing.
 - A bot reopens a problem already fixed twice on the same thread.
