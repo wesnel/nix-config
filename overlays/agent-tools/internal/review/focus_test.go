@@ -37,6 +37,19 @@ func TestFocusContracts(t *testing.T) {
 	}
 }
 
+// TestSecurityChecklistInBandSignaling holds the security checklist to a
+// category for control values that share a type with data, and the reply
+// schema to requiring it as checked.
+func TestSecurityChecklistInBandSignaling(t *testing.T) {
+	const category = "in-band-signaling"
+	if !slices.Contains(Categories, category) {
+		t.Fatalf("the security checklist has no %s category: %v", category, Categories)
+	}
+	if !strings.Contains(string(focuses["security"].schema()), `"`+category+`"`) {
+		t.Errorf("the security reply schema does not require %s as checked", category)
+	}
+}
+
 // Where a focused review cannot run headless, delegate names the agent
 // type to start on the prompt it prints.
 func TestFocusAgentNamed(t *testing.T) {
