@@ -160,7 +160,7 @@ func associatedPlan(c plans.Config, session, top string) (*plans.Found, error) {
 }
 
 func checkTaskBranch(g gitState) string {
-	branch, branchOK := g.run("branch", "--show-current")
+	branch, branchOK := worktreeBranch(g)
 	defaults, defaultsOK := g.run("for-each-ref", "--format=%(symref)", "refs/remotes/*/HEAD")
 	if !branchOK || !defaultsOK {
 		return "The guard cannot read this worktree's branch. Ask the operator to repair its Git metadata before editing."
@@ -176,6 +176,29 @@ func checkTaskBranch(g gitState) string {
 		return "This worktree is on a default branch or a detached HEAD. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH HEAD`) before editing."
 	}
 	return ""
+}
+
+// worktreeBranch is the branch checked out where g runs, or "" for a
+// detached HEAD. A rebase detaches HEAD until it ends, so for a detached
+// HEAD it is the branch a rebase in progress will move, which head-name in
+// the worktree's git dir names; a rebase of a detached HEAD writes
+// "detached HEAD" there, which names no branch.
+func worktreeBranch(g gitState) (string, bool) {
+	branch, ok := g.run("branch", "--show-current")
+	if !ok || branch != "" {
+		return branch, ok
+	}
+	dir, ok := g.run("rev-parse", "--absolute-git-dir")
+	if !ok {
+		return "", false
+	}
+	for _, state := range []string{"rebase-merge", "rebase-apply"} {
+		data, err := os.ReadFile(filepath.Join(dir, state, "head-name"))
+		if name, named := strings.CutPrefix(strings.TrimSpace(string(data)), "refs/heads/"); err == nil && named && name != "" {
+			return name, true
+		}
+	}
+	return "", true
 }
 
 // subagentEdits returns why agent may not edit one of paths, or "": it
@@ -338,6 +361,15 @@ func worktreeOf(path string) (string, gitState) {
 	return top, g
 }
 
+// operationExits are the git commands, each with its one argument, that
+// only step through or leave a rebase or cherry-pick in progress.
+// gitWritePaths passes them in any worktree: a stopped rebase detaches
+// HEAD, and the way out must not be refused with the edits.
+var operationExits = map[string]map[string]bool{
+	"rebase":      set("--abort", "--continue", "--skip"),
+	"cherry-pick": set("--abort"),
+}
+
 // shellEditPaths are the absolute paths of the files a command line
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
@@ -474,6 +506,10 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 	}
 	if relocated {
 		return nil, "The guard requires an explicit working directory for Git mutations. Use `git -C /ABSOLUTE/TASK/WORKTREE` without repository-location flags or GIT_* path overrides."
+	}
+	// checkSigning still judges --continue and --skip, which replay commits.
+	if len(words) == 2 && operationExits[words[0]][words[1]] {
+		return nil, ""
 	}
 	if len(words) > 1 && words[0] == "worktree" && words[1] == "add" {
 		positional := gitPositionals(words[0], words[1:])
