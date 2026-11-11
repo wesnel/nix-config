@@ -16,6 +16,7 @@ import (
 
 type fakeStackPR struct {
 	head, base, author, state string
+	oid                       string
 	draft                     bool
 }
 
@@ -106,12 +107,31 @@ func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
 		nodes := []any{}
 		for n, pr := range f.prs {
 			if pr.author == "me" && pr.state == "OPEN" {
-				nodes = append(nodes, map[string]any{"number": n, "headRefName": pr.head, "baseRefName": pr.base,
-					"headRefOid": fmt.Sprintf("%040d", n), "title": "title " + pr.head,
+				oid := pr.oid
+				if oid == "" {
+					oid = fmt.Sprintf("%040d", n)
+				}
+				nodes = append(nodes, map[string]any{"id": fmt.Sprintf("PR_%d", n), "number": n, "headRefName": pr.head, "baseRefName": pr.base,
+					"headRefOid": oid, "title": "title " + pr.head,
 					"isDraft": pr.draft, "author": map[string]any{"login": pr.author}})
 			}
 		}
 		data = map[string]any{"search": map[string]any{"nodes": nodes}}
+	case strings.Contains(query, "markPullRequestReadyForReview"):
+		var number int
+		if _, err := fmt.Sscanf(vars["id"].(string), "PR_%d", &number); err != nil {
+			return err
+		}
+		f.writes = append(f.writes, fmt.Sprintf("ready %d", number))
+		f.prs[number].draft = false
+		data = map[string]any{"markPullRequestReadyForReview": map[string]any{"pullRequest": map[string]any{"id": vars["id"], "isDraft": false}}}
+	case strings.Contains(query, "mergeable mergeStateStatus reviewDecision"):
+		number := vars["number"].(int)
+		oid := f.prs[number].oid
+		if oid == "" {
+			oid = fmt.Sprintf("%040d", number)
+		}
+		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"headRefOid": oid, "mergeable": "UNKNOWN", "commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"oid": oid}}}}}}}
 	case strings.Contains(query, "stack {"):
 		number := vars["number"].(int)
 		if f.prs[number] == nil {
