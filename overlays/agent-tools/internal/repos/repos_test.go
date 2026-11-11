@@ -119,10 +119,10 @@ func TestThreatNotes(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	const full = `{"setup": "make gen", "test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"]}`
+	const full = `{"setup": "make gen", "test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"], "rustTestFiles": ["**/*.rs"]}`
 	configured := func(s *Settings) bool {
 		return s != nil && s.Setup == "make gen" && s.Test == "go test ./..." && s.Build == "go vet ./..." &&
-			len(s.TestFiles) == 1 && s.TestFiles[0] == "**/*_test.go"
+			len(s.TestFiles) == 1 && s.TestFiles[0] == "**/*_test.go" && len(s.RustTestFiles) == 1 && s.RustTestFiles[0] == "**/*.rs"
 	}
 
 	t.Run("without the file", func(t *testing.T) {

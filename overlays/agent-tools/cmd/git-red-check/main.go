@@ -19,12 +19,12 @@ import (
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
-const usage = `usage: git red-check [--test CMD] [--build CMD] [--test-files GLOB]... [--lines N] [REV]
+const usage = `usage: git red-check [--test CMD] [--build CMD] [--test-files GLOB]... [--rust-test-files GLOB]... [--lines N] [REV]
        git red-check [options] [--fixups] BASE..TIP
        git red-check -h
 
 Checks that the tests a commit changes test the commit. In a throwaway
-worktree at the commit's parent plus only its test files, the test command
+worktree at the commit's parent plus only its selected tests, the test command
 must fail; at the commit itself, it must pass. REV defaults to HEAD; a range
 checks each non-merge commit in it against its own parent.
 
@@ -34,7 +34,16 @@ checks each non-merge commit in it against its own parent.
                      build failure from a failed assertion, and without it
                      no commit can exit 0
   --test-files GLOB  a git pathspec glob for test files, e.g. '**/*_test.go'
-                     (repeatable); every other changed path is the change
+                     (repeatable); copies each selected file in full
+  --rust-test-files GLOB
+                     select existing .rs files with one trailing top-level
+                     #[cfg(test)] mod NAME { ... }; copies only that module,
+                     preserving every other parent byte (repeatable).
+                     Refuses overlapping whole-file selection or unsupported
+                     layouts. Build tests with cargo test --no-run, not cargo build.
+                     Tokens and whitespace outside literals/comments must be ASCII;
+                     raw identifiers/lifetimes, shebangs and BOMs are refused.
+                     Unicode text inside literals and comments is supported.
   --fixups           check only the range's fixup!, amend! and squash! commits
   --lines N          lines kept from the end of each run's output (default 40)
 
@@ -72,8 +81,9 @@ func main() {
 	flags.Usage = func() {}
 	test := flags.String("test", "", "")
 	build := flags.String("build", "", "")
-	var testFiles globs
+	var testFiles, rustTestFiles globs
 	flags.Var(&testFiles, "test-files", "")
+	flags.Var(&rustTestFiles, "rust-test-files", "")
 	fixups := flags.Bool("fixups", false, "")
 	lines := flags.Int("lines", redcheck.DefaultLines, "")
 
@@ -109,7 +119,7 @@ func main() {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
 	opts := redcheck.Options{
-		Test: *test, Build: *build, TestFiles: testFiles,
+		Test: *test, Build: *build, TestFiles: testFiles, RustTestFiles: rustTestFiles,
 		Fixups: *fixups, Lines: *lines, Log: os.Stderr,
 	}
 	opts, err := configuredOptions(opts)
@@ -132,7 +142,7 @@ func configuredOptions(opts redcheck.Options) (redcheck.Options, error) {
 	// Flags that supply both required settings need no configuration.
 	config, err := repos.Lookup()
 	if err != nil {
-		if opts.Test != "" && len(opts.TestFiles) != 0 {
+		if opts.Test != "" && (len(opts.TestFiles) != 0 || len(opts.RustTestFiles) != 0) {
 			return opts, nil
 		}
 		return opts, err
@@ -145,6 +155,9 @@ func configuredOptions(opts redcheck.Options) (redcheck.Options, error) {
 	}
 	if len(opts.TestFiles) == 0 {
 		opts.TestFiles = config.TestFiles
+	}
+	if len(opts.RustTestFiles) == 0 {
+		opts.RustTestFiles = config.RustTestFiles
 	}
 	return opts, nil
 }

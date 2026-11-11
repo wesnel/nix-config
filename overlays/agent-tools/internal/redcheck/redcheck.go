@@ -84,6 +84,8 @@ type Options struct {
 	Build string
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string
+	// RustTestFiles select Rust files whose trailing cfg(test) module is projected.
+	RustTestFiles []string
 	// Fixups keeps only a range's fixup!, amend! and squash! commits.
 	Fixups bool
 	// Lines is how much of the end of each run's output to keep; zero
@@ -116,10 +118,11 @@ type Check struct {
 
 // Result is the outcome for every checked commit, oldest first.
 type Result struct {
-	Test      string   `json:"test"`
-	Build     string   `json:"build,omitempty"`
-	TestFiles []string `json:"testFiles"`
-	Commits   []*Check `json:"commits"`
+	Test          string   `json:"test"`
+	Build         string   `json:"build,omitempty"`
+	TestFiles     []string `json:"testFiles"`
+	RustTestFiles []string `json:"rustTestFiles,omitempty"`
+	Commits       []*Check `json:"commits"`
 }
 
 // Exit is the exit status the worst of the result's verdicts calls for.
@@ -148,9 +151,9 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 		return nil, refusal.New("no test command is configured for this clone, so no test ran; pass `--test CMD`, " +
 			"or ask the operator to set \"test\" in the clone's agent settings, .git/info/agents.json")
 	}
-	if len(opts.TestFiles) == 0 {
-		return nil, refusal.New("no test file globs are configured for this clone, so no test ran; pass `--test-files GLOB`, " +
-			"or ask the operator to set \"testFiles\" in the clone's agent settings, .git/info/agents.json")
+	if len(opts.TestFiles) == 0 && len(opts.RustTestFiles) == 0 {
+		return nil, refusal.New("no test file globs are configured for this clone, so no test ran; pass `--test-files GLOB` or `--rust-test-files GLOB`, " +
+			"or ask the operator to set \"testFiles\" or \"rustTestFiles\" in the clone's agent settings, .git/info/agents.json")
 	}
 	if opts.Log == nil {
 		opts.Log = io.Discard
@@ -179,7 +182,7 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &Result{Test: opts.Test, Build: opts.Build, TestFiles: opts.TestFiles, Commits: []*Check{}}
+	result := &Result{Test: opts.Test, Build: opts.Build, TestFiles: opts.TestFiles, RustTestFiles: opts.RustTestFiles, Commits: []*Check{}}
 	for _, c := range commits {
 		check, err := checkCommit(ctx, top, common, c, opts)
 		if err != nil {
@@ -254,24 +257,16 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	}
 	parent := strings.Fields(parents)[0]
 
-	changed, err := changedFiles(top, parent, commit, nil)
+	tests, err := selectTests(top, parent, commit, opts)
 	if err != nil {
 		return nil, err
 	}
-	globs := make([]string, len(opts.TestFiles))
-	for i, g := range opts.TestFiles {
-		globs[i] = ":(glob)" + g
-	}
-	tests, err := changedFiles(top, parent, commit, globs)
-	if err != nil {
-		return nil, err
-	}
-	check.TestFiles = tests
+	check.TestFiles = tests.paths()
 	switch {
-	case len(tests) == 0:
+	case len(check.TestFiles) == 0:
 		check.Verdict = NoTestFiles
 		return check, nil
-	case len(tests) == len(changed):
+	case !tests.codeChanged:
 		check.Verdict = NoCodeChange
 		return check, nil
 	}
@@ -282,13 +277,7 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	}
 	defer wt.remove(top)
 
-	// The parent with the commit's test files: what the tests see without
-	// the change. Restoring a file the commit deletes deletes it.
-	literal := make([]string, len(tests))
-	for i, f := range tests {
-		literal[i] = ":(literal)" + f
-	}
-	if _, err := git.RunLong(nil, append([]string{"-C", wt.path, "restore", "--source", commit, "--staged", "--worktree", "--"}, literal...)...); err != nil {
+	if err := tests.apply(wt.path, commit); err != nil {
 		return nil, err
 	}
 	if opts.Build != "" {

@@ -452,11 +452,28 @@ or with no build command to say whether they built. So a repository needs a
 build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
-Settings missing from the flags come from `test`, `build` and `testFiles` in
+For co-located Rust unit tests, pass `--rust-test-files '**/*.rs'`. It
+transplants a trailing top-level `#[cfg(test)] mod NAME { ... }` onto the
+parent's unchanged production bytes. Both revisions must contain the same
+regular source path; the parent may lack the test module. Nested candidate
+modules, extra module attributes and non-trailing modules are refused.
+Tokens and whitespace outside literals and comments must be ASCII; raw
+identifiers and lifetimes, shebangs and byte-order marks are refused. C strings
+are refused because their token boundaries depend on the Rust edition. Unicode
+contents of strings, characters and comments are supported. Separator whitespace
+and ordinary comments after the final production token do not count as a
+production change; their parent bytes are still preserved in the projected file.
+Use `--build 'cargo test --no-run --offline'` so compilation failures remain
+distinct from failed assertions. Test support such as manifest changes must
+be selected explicitly with `--test-files`, which copies the entire file;
+select it only when every change there belongs to test support.
+
+Settings missing from the flags come from `test`, `build`, `testFiles` and
+`rustTestFiles` in
 the clone's agent settings, never from the repository. Those are a JSON
 object in `.git/info/agents.json` under the clone's common git directory
 (`git rev-parse --git-common-dir`), shared by all its worktrees and never
-tracked, with the keys `setup`, `test`, `build`, `testFiles`, `routes` and
+tracked, with the keys `setup`, `test`, `build`, `testFiles`, `rustTestFiles`, `routes` and
 `threatNotes` that `internal/repos` describes. The operator writes it; the
 guard refuses every agent's write, and a clone without it has no settings,
 so `git red-check` there runs nothing until given flags. The test command
