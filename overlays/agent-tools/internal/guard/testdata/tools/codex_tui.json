@@ -1,0 +1,16 @@
+{
+  "tools": [
+    {"name": "create_thread"},
+    {"name": "create_worktree"},
+    {"name": "fork_thread"},
+    {"name": "get_worktree_creation_status"},
+    {"name": "list_archived_threads"},
+    {"name": "list_threads"},
+    {"name": "list_worktrees"},
+    {"name": "read_thread"},
+    {"name": "send_message_to_thread"},
+    {"name": "set_thread_archived"},
+    {"name": "set_thread_title"},
+    {"name": "wait_threads"}
+  ]
+}

@@ -1,4 +1,12 @@
 {
+  "codex_tui": {
+    "service": "Codex tasks",
+    "servers": ["codex_tui"],
+    "verify": "Codex runtime tool inventory; names recorded in testdata/tools/codex_tui.json. Task mutations are allowed in main Codex sessions by codexTaskOperation; they do not use proxy approval registration.",
+    "reads": ["get_worktree_creation_status", "list_archived_threads", "list_threads", "list_worktrees", "read_thread", "wait_threads"],
+    "confirms": ["create_thread", "create_worktree", "fork_thread", "send_message_to_thread", "set_thread_archived", "set_thread_title"],
+    "refuses": []
+  },
   "parallels": {
     "service": "Parallels",
     "servers": ["parallels"],

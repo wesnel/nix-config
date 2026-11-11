@@ -131,8 +131,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return reason
 	})
-	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason)) {
-		// Codex enforces the module's per-tool approvals.
+	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason) || in.AgentID == "" && codexTaskOperation(in.ToolName, reason)) {
+		// Proxy calls use native approvals; built-in task operations are allowed.
 		reason = ""
 	}
 	if reason == "" {

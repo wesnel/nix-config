@@ -33,6 +33,13 @@ func TestMCPTools(t *testing.T) {
 		want  string // "" to let the call through
 		says  string // what a denial's reason must say
 	}{
+		{"Codex task message", []string{"--baseline"}, codex("mcp__codex_tui__send_message_to_thread"), "", ""},
+		{"Codex task message from subagent", []string{"--baseline"}, `{"tool_name":"mcp__codex_tui__send_message_to_thread","turn_id":"t","agent_id":"reviewer-1","tool_input":{}}`, deny, "Codex cannot ask"},
+		{"Codex task read", []string{"--baseline"}, codex("mcp__codex_tui__read_thread"), "", ""},
+		{"Codex task message from reviewer", []string{"--reviewer"}, codex("mcp__codex_tui__send_message_to_thread"), deny, "reviewer only reads"},
+		{"Codex task message from Claude asks", []string{"--baseline"}, claude("mcp__codex_tui__send_message_to_thread"), ask, ""},
+		{"Codex task unknown tool", []string{"--baseline"}, codex("mcp__codex_tui__delete_everything"), deny, "delete_everything"},
+		{"Codex task lookalike", []string{"--baseline"}, codex("mcp__codex_tui_other__send_message_to_thread"), deny, "unreviewed"},
 		{"Linear read", []string{"--baseline"}, claude("mcp__linear__get_issue"), "", ""},
 		{"Linear write asks", []string{"--baseline"}, claude("mcp__linear__save_issue"), ask, "Linear"},
 		{"Linear tool not reviewed", []string{"--baseline"}, claude("mcp__linear__delete_workspace"), deny, "delete_workspace"},
@@ -308,6 +315,7 @@ func TestMCPLookalike(t *testing.T) {
 		key, tool, reviewed string
 		authorize           bool // the proxy serves it, so the reason names mcp-proxy-authorize KEY
 	}{
+		{"codex_tui", "mcp__codex_tui_other__read_thread", "mcp.json", false},
 		{"linear", "mcp__linear-server__get_issue", "mcp__linear__", true},
 		{"notion", "mcp__notion_direct__notion-fetch", "mcp__notion__", true},
 		{"buildkite", "mcp__my_buildkite__get_build", "mcp__buildkite__", true},

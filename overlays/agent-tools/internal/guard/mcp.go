@@ -233,6 +233,16 @@ func nativeMCPApproval(tool, reason string) bool {
 		reason == s.confirmReason() && mcpproxy.Load().Serves(s.key)
 }
 
+// codexTaskOperation allows inventoried task mutations in main Codex sessions.
+// These built-in tools manage the app's tasks, not a configured proxy service;
+// they carry no promise of per-call native approval. The caller checks the
+// harness and role, and this check preserves any other guard refusal.
+func codexTaskOperation(tool, reason string) bool {
+	server, name, ok := mcpTool(tool)
+	s := server.listed
+	return ok && server.name == "codex_tui" && s != nil && s.confirms[name] && reason == s.confirmReason()
+}
+
 // check returns why who may not call the service's tool name, or "".
 func (s *mcpService) check(name string, who role) string {
 	confirm := s.confirms[name]
