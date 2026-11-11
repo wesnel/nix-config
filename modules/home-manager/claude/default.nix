@@ -516,17 +516,34 @@ with lib; let
   ];
 
   # agent-pr's subcommands that need the operator's GitHub login, or write
-  # the review records the sandbox denies (threads, draft and post).
+  # the review records the sandbox denies (draft and post).
   # agent-ops setup, setup-command and guard work in the sandbox.
-  # post is the operator's: the guard
-  # refuses it to agents, and it asks on /dev/tty.
-  prLoopGitHub = ["open" "next" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
-    "sign-check" "end"];
+  # post is the operator's: the guard refuses it to agents, and it asks on
+  # /dev/tty. ready and merge stay inside the sandbox.
+  prLoopGitHub = [
+    "open"
+    "list"
+    "publication-status"
+    "merge-preview"
+    "stack"
+    "link"
+    "push"
+    "threads"
+    "reply"
+    "resolve"
+    "draft"
+    "post"
+    "request"
+    "status"
+    "ci"
+    "logs"
+    "wait"
+    "sign-check"
+    "end"
+  ];
 
-  # The read-only ones, which run without a prompt in an ordinary session;
-  # threads writes only its PR's review record. The writes are left to the
-  # permission flow.
-  prLoopReads = ["next" "stack" "threads" "status" "ci" "logs" "wait"];
+  # These read-only commands run without a prompt in an ordinary session.
+  prLoopReads = ["list" "publication-status" "merge-preview" "stack" "threads" "status" "ci" "logs" "wait"];
 
   # A trailing ` *` also matches the bare command (permissions'
   # wildcard-patterns), so one entry per subcommand covers it with and

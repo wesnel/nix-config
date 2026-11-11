@@ -9,16 +9,16 @@ import (
 	"github.com/wesnel/agent-tools/internal/signpass"
 )
 
-// NextStep is a branch's single next step, as agent-pr next reports it. Its
+// NextStep is a branch's publication step, as agent-pr publication-status reports it. Its
 // type is the branch's state: Done, ToOpen, ToSign, ToPush or Blocked, each
 // with Kind naming it in the JSON.
 type NextStep interface {
 	text() string
 }
 
-// Done: nothing to do, for Why; PR is the branch's open pull request, if any.
+// Done: publication is complete, for Why; PR is the open pull request, if any.
 type Done struct {
-	Kind   string `json:"kind"` // "nothing"
+	Kind   string `json:"kind"` // "complete"
 	Branch string `json:"branch"`
 	Why    string `json:"why"`
 	PR     int    `json:"pr,omitempty"`
@@ -63,7 +63,7 @@ type Blocked struct {
 	Why    string `json:"why"`
 }
 
-func (s Done) text() string    { return s.Branch + ": nothing: " + s.Why + "\n" }
+func (s Done) text() string    { return s.Branch + ": publication complete: " + s.Why + "\n" }
 func (s Blocked) text() string { return s.Branch + ": blocked: " + s.Why + "\n" }
 func (s ToOpen) text() string {
 	return fmt.Sprintf("%s: open: %s; open its draft pull request:\n  %s\n", s.Branch, s.Why, s.Command)
@@ -78,7 +78,7 @@ func (s ToPush) text() string {
 	return fmt.Sprintf("%s: push: %s; mint the ID, then hand the operator the pass:\n  %s\n  %s\n", s.Branch, s.Why, s.Notify, s.Command)
 }
 
-// FormatNext is steps as agent-pr next prints them without --json.
+// FormatNext is steps as agent-pr publication-status prints them without --json.
 func FormatNext(steps []NextStep) string {
 	var b strings.Builder
 	for _, s := range steps {
@@ -154,7 +154,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 	onGitHub := view.Heads[branch]
 	pr := 0
 	if view.PRs[branch] != nil {
-		// Every step but nothing pushes to the pull request's branch,
+		// Every incomplete step pushes to the pull request's branch,
 		// which the loop does only to the viewer's own.
 		p, err := checkBranch(repo, view.PRs, branch)
 		if err != nil {
@@ -163,7 +163,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 		pr = p.Number
 	}
 	if empty && (onGitHub == "" || onGitHub == tip) {
-		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
+		return Done{Kind: "complete", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
 	}
 	if onGitHub == "" || onGitHub == tip && pr == 0 {
 		return nextOpen(repo, view, branch)
@@ -174,7 +174,7 @@ func next(repo *Repo, branch string) (NextStep, error) {
 		return nil, err
 	}
 	if empty {
-		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
+		return Done{Kind: "complete", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
 	}
 	top, err := git.Toplevel()
 	if err != nil {
@@ -186,14 +186,14 @@ func next(repo *Repo, branch string) (NextStep, error) {
 	case unsigned:
 		return ToSign{Kind: "sign", Branch: branch, Why: "it has commits to sign", Command: pass, Notify: notify, PR: pr}, nil
 	case onGitHub == tip:
-		return Done{Kind: "nothing", Branch: branch, Why: fmt.Sprintf("GitHub has its signed tip, in #%d", pr), PR: pr}, nil
+		return Done{Kind: "complete", Branch: branch, Why: fmt.Sprintf("GitHub has its signed tip, in #%d", pr), PR: pr}, nil
 	default:
 		return ToPush{Kind: "push", Branch: branch, Why: "GitHub is behind its signed tip", Command: pass, Notify: notify, PR: pr}, nil
 	}
 }
 
 func nextDestination(branch, onGitHub, tip string) (signpass.Destination, error) {
-	retry := "run `agent-pr next` again"
+	retry := "run `agent-pr publication-status` again"
 	dest, err := signpass.DestinationOf(branch, retry)
 	if err != nil {
 		return dest, err

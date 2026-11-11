@@ -1435,6 +1435,8 @@
             else "bypass-permissions mode is not disabled" end'
           check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
             else "agent-plan link is not excluded from the sandbox" end'
+          check '.sandbox.excludedCommands[] | select(. == "agent-pr ready *" or . == "agent-pr merge *")
+            | "operator command is excluded from the sandbox: \(.)"'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
             else "agent-plan link is not allowed" end'
           check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]

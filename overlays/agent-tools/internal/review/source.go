@@ -21,7 +21,7 @@ import (
 )
 
 // refreshThreads reads a pull request's threads and writes them to its
-// record, agent-pr threads' writer; tests replace it.
+// record; tests replace it.
 var refreshThreads = loop.RefreshThreads
 
 // source is what a review reviews: a range of the current repository, or a

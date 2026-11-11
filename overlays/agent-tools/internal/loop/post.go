@@ -56,6 +56,9 @@ func Draft(id, body, outcome string) (any, error) {
 	if err := checkPublic("the draft", body, append(threads, id), "run `agent-pr draft` again"); err != nil {
 		return nil, err
 	}
+	if _, err := RefreshThreads(policy.repo.Slug, thread.pr); err != nil {
+		return nil, err
+	}
 	path, err := prFile(policy.repo, thread.pr)
 	if err != nil {
 		return nil, err
@@ -68,7 +71,7 @@ func Draft(id, body, outcome string) (any, error) {
 				return nil
 			}
 		}
-		return refuse("#%d's review record does not hold %s yet; run `agent-pr threads %d`, then draft again", thread.pr, id, thread.pr)
+		return refuse("#%d no longer contains thread %s; inspect it with `agent-pr threads %d` before drafting again", thread.pr, id, thread.pr)
 	})
 	if err != nil {
 		return nil, err
@@ -112,7 +115,7 @@ func Post(number int, threads []string) (any, error) {
 	}
 	p, err := record.ReadPR(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, refuse("#%d has no review record, so nothing is drafted; run `agent-pr threads %d` first", number, number)
+		return nil, refuse("#%d has no review record, so nothing is drafted; draft an answer with `agent-pr draft THREAD --body-file FILE --outcome OUTCOME` first", number)
 	}
 	if err != nil {
 		return nil, err
@@ -166,7 +169,7 @@ func postDraft(policy *threadPolicy, number int, path string, t record.Thread, t
 		return PostResult{}, err
 	}
 	if thread.pr != number {
-		return PostResult{}, refuse("%s is on #%d, not #%d; rerun `agent-pr threads %d` to fix the record", t.ID, thread.pr, number, number)
+		return PostResult{}, refuse("%s is on #%d, not #%d; inspect `agent-pr threads %d` and draft the answer again", t.ID, thread.pr, number, number)
 	}
 	if result.URL, err = postReply(number, t.ID, body); err != nil {
 		return PostResult{}, err

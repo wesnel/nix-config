@@ -18,7 +18,12 @@ import (
 	"github.com/wesnel/agent-tools/internal/redact"
 )
 
-const Usage = `agent-pr: pull request publication, CI, stacks and discussions.
+const Usage = `agent-pr: inspect and publish pull requests; prepare operator handoffs.
+
+Reads (list, publication-status, merge-preview, stack, threads, status, ci,
+logs and wait) and opening a draft work in ordinary sessions. ready, merge
+and post belong to the operator and confirm on their terminal. Review-loop
+automation is selected explicitly with the review-loop launcher.
 
 Policy: apart from open, every write is to the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
@@ -46,6 +51,8 @@ Each push, reply, resolve and wait ci's result is logged in the plan of the
 session that runs it: the plan naming the harness's session or this
 worktree. A failure to log is printed on stderr and fails nothing.
 
+  list --repo OWNER/NAME      read all open PRs, including drafts and forks, as JSON;
+                              needs neither a checkout nor a review-loop session
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API, unless
                               GitHub has it at its tip already, and open it as a draft
@@ -53,14 +60,19 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
                               the BASE to pass instead
-  next [--json] [BRANCH...]   the single next step for each BRANCH (default HEAD), reading
-                              only: nothing; open (open's draft PR, for a branch GitHub
+  publication-status [--json] [BRANCH...]
+                              read each BRANCH's publication step (default HEAD):
+                              complete; open (a draft PR, for a branch GitHub
                               lacks, or has at its tip with no PR and verified operator
                               signatures); sign
                               (the operator's git sign-pass --push or --set-upstream,
                               with the agent-plan sign-id that mints its --notify ID);
                               push (a signed branch GitHub is behind); or blocked,
                               including divergent histories, saying what to fix
+  merge-preview [PR|BRANCH]   read the PR and its open downstack PRs, destination, heads,
+                              draft, CI and review state; UNKNOWN stays unknown
+  ready [PR|BRANCH]           operator: confirm marking the preview's drafts ready;
+                              PRs already ready are left alone
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)
@@ -70,12 +82,12 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               push through the GitHub API, a branch at a time, bottom up
                               (default: HEAD's branch alone; see below)
   threads [--all] PR          unresolved review threads, labelled by bot, every comment
-                              read; writes every thread to the PR's review record
+                              read; leaves review records untouched
   reply THREAD --body-file F  reply inside a bot's review thread (- reads stdin)
   reply --from F              post the replies in a reply file (- reads stdin)
   resolve THREAD              resolve a bot's review thread whose last comment is yours
   draft THREAD --body-file F --outcome OUTCOME
-                              write the answer to a thread into the PR's review record,
+                              refresh the PR's threads and write the answer to its record,
                               for the operator to post (- reads stdin)
   post PR [THREAD...]         the operator's: show each unposted draft on the terminal and
                               post it once answered y there (see below)
@@ -113,11 +125,18 @@ without a terminal it refuses. A thread answered fix or rebut is then
 resolved. Once every unresolved thread a person commented in has a posted
 answer, those people are asked to review again. Agents never run it.
 
+merge-preview reads the selection shared by ready and merge. Publication
+completion describes publishing the branch; use the preview for remote
+merge state. ready lists the selected drafts on /dev/tty, confirms, and
+marks them ready; it leaves already-ready PRs alone.
+
 merge lists on /dev/tty the PRs GitHub's merge-async endpoint would merge,
 the PR and every open PR below it in its GitHub stack, and asks GitHub once
 the operator answers y there; without a terminal it refuses. It refuses a
 draft among them, or one not the authenticated user's. The PR's head must
-still be the one shown, or GitHub refuses. GitHub merges in the background:
+still be the one shown, or GitHub refuses. Heads, bases and membership are
+rechecked after confirmation; lower heads can still change between that
+read and GitHub's merge. GitHub merges in the background:
 "status" is GitHub's answer (pending, merged, enqueued or failed) and "uuid"
 the request's. Agents never run it.
 
@@ -162,7 +181,7 @@ a header. Every thread is checked before anything is posted; threads already
 resolved are skipped and reported.
 
 A review record that fails its structure check, which only a hand edit
-makes, refuses threads, draft and post with exit 5; the operator fixes or
+makes, refuses draft and post with exit 5; the operator fixes or
 deletes it.
 
 
@@ -204,6 +223,7 @@ func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		grace    = flags.Int("grace", 180, "")
 		asJSON   = flags.Bool("json", false, "")
 		method   = flags.String("method", "", "")
+		repo     = flags.String("repo", "", "")
 		bots     multi
 		accepted multi
 		leases   multi
@@ -215,6 +235,16 @@ func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return code
 	}
 	rest := flags.Args()
+	if command == "list" {
+		if len(rest) != 0 {
+			return cli.Report("agent-pr", nil, errors.New("list takes --repo OWNER/NAME and no positional arguments"), 0, stdout, stderr)
+		}
+		result, err := loop.Inventory(*repo)
+		return cli.Report("agent-pr", result, err, 0, stdout, stderr)
+	}
+	if *repo != "" {
+		return cli.Report("agent-pr", nil, errors.New("--repo is supported by list; run other commands in the repository's checkout"), 0, stdout, stderr)
+	}
 	if err := git.CheckLocation(); err != nil {
 		return cli.Report("agent-pr", nil, err, 0, stdout, stderr)
 	}
@@ -230,7 +260,7 @@ func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	switch command {
 	case "open":
 		result, err = openCommand(rest, *base, *title, *dryRun, body)
-	case "next":
+	case "publication-status":
 		var steps []loop.NextStep
 		if steps, err = loop.Next(rest); err == nil && !*asJSON {
 			fmt.Fprint(stdout, loop.FormatNext(steps))
@@ -243,6 +273,11 @@ func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		result, err = loop.Link(rest)
 	case "merge":
 		result, err = mergeCommand(rest, *method)
+	case "merge-preview":
+		result, err = mergeInspectionCommand(command, rest)
+	case "ready":
+		result, err = mergeInspectionCommand(command, rest)
+		return reportReady(result, err, stdout, stderr)
 	case "push":
 		result, err = pushCommand(rest, leases, *dryRun)
 	case "threads":
@@ -337,6 +372,31 @@ func mergeCommand(rest []string, method string) (any, error) {
 		target = rest[0]
 	}
 	return loop.Merge(target, method)
+}
+
+var runReady = loop.Ready
+
+func mergeInspectionCommand(command string, rest []string) (any, error) {
+	if len(rest) > 1 {
+		return nil, fmt.Errorf("%s takes at most one PR or branch; see agent-pr --help", command)
+	}
+	target := ""
+	if len(rest) == 1 {
+		target = rest[0]
+	}
+	if command == "ready" {
+		return runReady(target)
+	}
+	return loop.MergePreview(target)
+}
+
+func reportReady(result any, err error, stdout, stderr io.Writer) int {
+	if err != nil && result != nil {
+		if code := cli.Report("agent-pr", result, nil, 0, stdout, stderr); code != 0 {
+			return code
+		}
+	}
+	return cli.Report("agent-pr", result, err, 0, stdout, stderr)
 }
 
 func pushCommand(rest, leases []string, dryRun bool) (any, error) {
