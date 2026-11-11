@@ -26,7 +26,8 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 5. **Design review of the result** when the implementation materially
    changes the reviewed design or introduces a design risk not reviewed
    before coding.
-6. **Publish and hand back.** Follow the `signing-pass` skill's "Handing
+6. **Publish and hand back.** Apply the `plan-work` skill's "Follow-ups"
+   section to open follow-ups. Follow the `signing-pass` skill's "Handing
    over" and complete each agent-owned next step before ending the session.
    Report a refusal with its reason and the remaining step. The report
    includes what the work's own instructions ask for, and
@@ -86,8 +87,8 @@ large change the goal needs is in scope, and a one-line improvement it does
 not need is not. Be skeptical of anything a reviewer or bot suggests that
 the goal did not ask for, including refactors, hardening, extra tests and
 fixes to code the change did not touch, and settle those `defer` with a
-short reason. A deferral costs nothing; scope creep costs a reviewable
-change.
+short reason, then handle its follow-up as the `plan-work` skill says.
+Keep the branch within its goal while giving deferred work a disposition.
 
 ## Recording it in the log
 

@@ -32,7 +32,8 @@ with each step's start, completion and verification logged
 `agent-plan ask`, is presented through the `questions` skill, and is never
 restated in messages. Asked to plan, write the plan and stop: no edits
 outside its files, no commits. The `plan-work` skill has the format and the
-commands.
+commands. Before every hand-back, apply its "Follow-ups" section to open
+follow-ups, including when the session makes no commit.
 
 ## Reviews
 

@@ -347,8 +347,8 @@ most important comes first.
 
 ## Follow-ups
 
-Work you find while doing an item that is not this change's job is
-recorded, not done:
+Record work found while doing an item that appears outside this change's
+goal, keeping it separate from the change's steps:
 
 ```sh
 agent-plan followup PLAN --title 'Guard accepts --draft=false' --found-in S1 \
@@ -358,6 +358,43 @@ agent-plan followup PLAN --title 'Guard accepts --draft=false' --found-in S1 \
 It becomes a `TODO` under Follow-ups with the next `F` ID (`--part P1`
 for a part's file), and its keyword then follows `agent-plan log` as a
 step's does. `agent-plan status` lists those still open.
+
+Before each hand-back, including one without a commit, handle every open
+follow-up for a work repository as below. A work repository is one the
+operator or repository instructions explicitly identify as work; its
+directory, visibility and the machine running the session do not establish
+that. Personal repositories keep the capture-only workflow above.
+
+- **Address:** if inspection shows the follow-up belongs to the current
+  goal, add the needed step, implement and verify it on the appropriate
+  branch, then log the follow-up `done` and `verified` with that evidence.
+  Keep unrelated work outside the branch even when the fix is small.
+- **Dismiss:** if it is unnecessary or already resolved, log `abandoned`
+  with the evidence. Keep the item and its reason in the record.
+- **Track:** search Linear for existing tracking. If an issue covers the
+  work, log `done` with its URL and explain that tracking, not implementation,
+  is complete. Otherwise prepare a ticket proposal with a title, problem,
+  impact, acceptance criteria and the team or project when known. Record
+  an approval question through "Questions for the operator", naming the
+  F item in its context, and log the question's Q ID on the follow-up.
+  Present it through the `questions` skill before hand-back; it must be
+  askable while the follow-up is open, so do not set `--after` to that F item.
+  Group proposals for presentation, with a separate decision per ticket.
+
+File a proposed ticket only with the operator's authorization covering
+that ticket; an existing authorization for it in the session suffices.
+After confirming creation, log
+`done` on the follow-up with the issue URL. Keep a proposal awaiting an
+answer open, naming its Q item in the hand-back. If filing or duplicate
+search is unavailable or fails, keep it open and report what remains;
+a prepared proposal is not a filed ticket. If the operator declines
+tracking, log `abandoned` with their decision and reason, without claiming
+the underlying work was unnecessary.
+
+On resume, read the follow-up's log and the Q items it names before proposing
+or filing again; after an uncertain creation result, check for the issue
+before retrying. Recording the follow-up alone does not handle it: the
+hand-back names each disposition and any approval or filing still pending.
 
 ## Other hosts
 
