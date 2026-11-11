@@ -57,7 +57,7 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no %q lines; see pr-loop --help", ReplyHeader)
+		return nil, fmt.Errorf("no %q lines; see agent-pr --help", ReplyHeader)
 	}
 	return out, nil
 }
@@ -148,7 +148,7 @@ func (policy *threadPolicy) checkAll(plan []PlannedReply) ([]*threadCheck, error
 	if len(problems) > 0 {
 		if allRefused {
 			return nil, refuse("nothing was posted, since these threads cannot be answered; drop them from the file, "+
-				"put them in the report, and run `pr-loop reply --from` again:\n  %s", strings.Join(problems, "\n  "))
+				"put them in the report, and run `agent-pr reply --from` again:\n  %s", strings.Join(problems, "\n  "))
 		}
 		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
 	}

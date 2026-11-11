@@ -30,12 +30,12 @@ import (
 // settings file holds them: a JSON object of these keys and no others.
 type Settings struct {
 	// Setup prepares a fresh checkout, such as generating files the
-	// repository does not commit. `pr-loop setup [PATH]` runs it with sh in
+	// repository does not commit. `agent-ops setup [PATH]` runs it with sh in
 	// a worktree, inside a sandboxed session's sandbox; nothing runs it on
 	// its own.
 	Setup string `json:"setup,omitempty"`
 	// Test is the test command git red-check runs, with sh at the top of a
-	// checkout. git delegate never runs it, since it runs the reviewed
+	// checkout. agent-review never runs it, since it runs the reviewed
 	// commits' code.
 	Test string `json:"test,omitempty"`
 	// Build builds the tests without running them, which tells red-check a

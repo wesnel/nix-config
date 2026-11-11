@@ -21,19 +21,19 @@ import (
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
-// Usage is `git delegate -h`.
-const Usage = `usage: git delegate [--reviewer TYPE]... [--plan PLAN [--part P]] [--items FILE] [--red-check FILE]
+// Usage is `agent-review -h`.
+const Usage = `usage: agent-review [--reviewer TYPE]... [--plan PLAN [--part P]] [--items FILE] [--red-check FILE]
                     [--description FILE] [--model M] [--timeout S] SOURCE
-       git delegate ask [--reviewer TYPE] --question FILE PATH...   (see git delegate ask -h)
-       git delegate availability [--disable claude|codex | --clear claude|codex]
-       git delegate show SOURCE                                      (see git delegate show -h)
-       git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
-       git delegate --print-prompt [--reviewer TYPE] [--plan PLAN [--part P]] [--items FILE]
+       agent-review ask [--reviewer TYPE] --question FILE PATH...   (see agent-review ask -h)
+       agent-review availability [--disable claude|codex | --clear claude|codex]
+       agent-review show SOURCE                                      (see agent-review show -h)
+       agent-review settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
+       agent-review --print-prompt [--reviewer TYPE] [--plan PLAN [--part P]] [--items FILE]
                     [--red-check FILE] [--description FILE] SOURCE
 
 Reviews SOURCE with reviewers that did not write it, and keeps what they
 found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
-OWNER/NAME/, which git delegate show prints and settle changes. SOURCE is
+OWNER/NAME/, which agent-review show prints and settle changes. SOURCE is
 a range BASE..TIP of this repository, its record named by origin's GitHub
 repository, or a pull request: OWNER/NAME#N, or N for origin's. A pull
 request is fetched, pinned to the head GitHub reports, with neither the
@@ -47,7 +47,7 @@ the next round (git update-ref -d removes them). Anywhere else it is
 fetched into a bare clone of its own there, which has no agent settings,
 as stderr says. Its range is merge-base(base,
 head)..head, its author's title, description and closing issues go in as
-claims, and its threads, written to its pr-N.org record as pr-loop threads
+claims, and its threads, written to its pr-N.org record as agent-pr threads
 writes them, as items. Every reviewer reads a checkout of TIP of its own,
 made the same way under that cache directory and removed after it.
 Reviewers run one at a time, and nothing here runs the change's code.
@@ -114,7 +114,7 @@ and codex for any other caller. Only that general review runs. The route
 scan and reviewer report candidates with reasons and commands; assess the
 concrete risk before selecting a focused review with --reviewer.
 
-A type whose provider is held does not run (git delegate availability -h).
+A type whose provider is held does not run (agent-review availability -h).
 A run that fails for a rate limit holds its provider for five minutes, and
 one that fails for exhausted quota holds it until the reset Claude's quota
 windows show, else until availability --clear; no later stage or command
@@ -286,7 +286,7 @@ type NotRun struct {
 	Why      string `json:"why"`
 }
 
-// Main runs `git delegate` with args and returns its exit status.
+// Main runs `agent-review` with args and returns its exit status.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		switch args[0] {
@@ -361,7 +361,7 @@ func checkReviewFlags(flags *flag.FlagSet, reviewers []string, plan, part string
 	goalGiven := false
 	flags.Visit(func(f *flag.Flag) { goalGiven = goalGiven || f.Name == "goal" })
 	if goalGiven {
-		return refusal.New("git delegate reads the goal statement from the plan, not a file; pass " +
+		return refusal.New("agent-review reads the goal statement from the plan, not a file; pass " +
 			"`--plan PLAN` in place of `--goal`, with `--part P1` for a part's goal")
 	}
 	if part != "" && plan == "" {
@@ -418,7 +418,7 @@ func reviewChange(ctx context.Context, s *source, r *span, opts reviewOptions, s
 	runs := runChosen(ctx, s, base, tests, opts, chosen, result, stderr)
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
-			fmt.Fprintf(stderr, "%s: candidate %s review (%s): assess the risk, then run `git delegate --reviewer %s %s%s` if needed\n",
+			fmt.Fprintf(stderr, "%s: candidate %s review (%s): assess the risk, then run `agent-review --reviewer %s %s%s` if needed\n",
 				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route, goal), s.given)
 		}
 	}
@@ -549,7 +549,7 @@ func reportUnavailable(s *source, t, goal string, run *typeRun, stderr io.Writer
 	if agent := reviewerTypes[t].agent; agent != "" {
 		reader = "a new `" + agent + "` sub-agent"
 	}
-	fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
+	fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `agent-review --print-prompt "+
 		"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning.\n",
 		name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
 }

@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// post is `pr-loop guard --post`, after a shell call: the PostToolUse of
+// post is `agent-ops guard --post`, after a shell call: the PostToolUse of
 // Claude Code or Codex. It records the call's facts in the plan of its
 // session or worktree (recordFacts), and after a push to GitHub adds one
-// line of context naming the `pr-loop wait ci` to start, read from the
+// line of context naming the `agent-pr wait ci` to start, read from the
 // command's JSON output. After a command that opens or edits a pull
 // request, and on a session's first commit, it adds the line that hands
 // over the skill whose rules apply. Otherwise it prints nothing.
@@ -41,7 +41,7 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	texts := responseTexts(in.ToolResponse)
 	lines := recordFacts(in.SessionID, in.Cwd, args.Command, texts, time.Now())
 	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
-		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
+		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `agent-pr wait ci %s` in the background now, "+
 			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
 	}
 	if writesPullRequest(args.Command, 0) {
@@ -61,7 +61,7 @@ const pullRequestRules = "You just opened or edited a pull request. Load the `pu
 	"and bring the pull request's title and description in line with it."
 
 // writesPullRequest reports whether a command line runs `gh pr create`,
-// `gh pr edit` or `pr-loop open`.
+// `gh pr edit` or `agent-pr open`.
 func writesPullRequest(text string, depth int) bool {
 	if depth > maxDepth {
 		return false
@@ -81,7 +81,7 @@ func writesPullRequest(text string, depth int) bool {
 			switch base(w[0]) {
 			case "gh":
 				found = found || len(w) > 2 && w[1] == "pr" && (w[2] == "create" || w[2] == "edit")
-			case "pr-loop":
+			case "agent-pr":
 				found = found || w[1] == "open"
 			}
 			return ""
@@ -100,7 +100,7 @@ func writesPullRequest(text string, depth int) bool {
 func pushes(text string, depth int) bool { return len(pushers(text, depth)) > 0 }
 
 // pushers are the commands a command line runs that push to GitHub, each
-// once: `pr-loop open` or `pr-loop push` without --dry-run, or
+// once: `agent-pr open` or `agent-pr push` without --dry-run, or
 // `git sign-pass` with --push or --set-upstream.
 func pushers(text string, depth int) map[string]bool {
 	found := map[string]bool{}
@@ -136,9 +136,9 @@ func pushingCommand(c call) string {
 		return ""
 	}
 	switch name := base(w[0]); {
-	case name == "pr-loop" && len(w) > 1 && (w[1] == "open" || w[1] == "push"):
+	case name == "agent-pr" && len(w) > 1 && (w[1] == "open" || w[1] == "push"):
 		if !hasFlag(w[1:], "--dry-run", "-dry-run") {
-			return "pr-loop " + w[1]
+			return "agent-pr " + w[1]
 		}
 	case name == "git-sign-pass", name == "git" && contains(w[1:], "sign-pass"):
 		if hasFlag(w[1:], "--push", "--set-upstream") {
@@ -148,7 +148,7 @@ func pushingCommand(c call) string {
 	return ""
 }
 
-// pushedTo reads a tool's output texts (responseTexts) for what pr-loop or
+// pushedTo reads a tool's output texts (responseTexts) for what agent-pr or
 // git sign-pass reports it pushed: the PR `open` opened, or the branches
 // under "pushed".
 func pushedTo(texts []string) []string {

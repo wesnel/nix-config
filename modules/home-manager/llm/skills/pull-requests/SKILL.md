@@ -1,6 +1,6 @@
 ---
 name: pull-requests
-description: How to open, describe and answer a pull request. Use before `pr-loop open`, `gh pr create` or `gh pr edit`, before writing a pull request's title or description, and before replying in its review threads.
+description: How to open, describe and answer a pull request. Use before `agent-pr open`, `gh pr create` or `gh pr edit`, before writing a pull request's title or description, and before replying in its review threads.
 ---
 
 # Pull requests
@@ -9,22 +9,22 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 
 - Open every pull request as a draft. Marking it ready for review notifies
   its code owners, and is the operator's call.
-- `pr-loop next <branch>` says whether a branch's next step is opening its
+- `agent-pr next <branch>` says whether a branch's next step is opening its
   pull request, the operator's signing pass or push, or nothing; take the
   step it names.
-- Open one with `pr-loop open`, which pushes a branch GitHub does not have
+- Open one with `agent-pr open`, which pushes a branch GitHub does not have
   yet through the GitHub API, unsigned, or takes one GitHub already has at
   the local tip with signatures verified against the operator's protected
   global signing identity, and opens the pull request as a draft:
 
   ```sh
-  pr-loop open --title "Say what changed" --body-file description.md feature
+  agent-pr open --title "Say what changed" --body-file description.md feature
   ```
 
   The base is the default branch, or with `--base` the branch of an open
   pull request of the operator's that this one stacks on, whose GitHub stack
   open adds it to; when it cannot, `unstacked` in its output says why and
-  which `pr-loop link` stacks it later. It refuses a branch that already
+  which `agent-pr link` stacks it later. It refuses a branch that already
   heads an open pull request, a branch GitHub has at another commit or with
   commits whose signatures do not prove that identity, and a branch that contains a remote
   branch its base lacks; later commits reach GitHub through the
@@ -71,7 +71,7 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   - how parts call each other, the order things happen in, or the states
     something moves through: a diagram from the review's diagram pass (the
     `review-change` skill's Diagrams), which review-guide shows the
-    operator. Take a diagram `git delegate show BASE..TIP` gives the
+    operator. Take a diagram `agent-review show BASE..TIP` gives the
     verdict `holds` or `corrected`, and paste its `mermaid` into a
     `mermaid` code block, which GitHub renders.
   - what a command-line program prints or how it behaves: a recording made
@@ -87,13 +87,13 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 - Write for a reader who has never seen the tools that made the change:
   link a review thread by its URL, a commit by its short SHA and a ticket by
   its key, and keep plan IDs, loop terms, local paths and session IDs to
-  yourself. `pr-loop`, the guard and the signing pass refuse text naming
+  yourself. `agent-pr`, the guard and the signing pass refuse text naming
   them, commit messages included.
 
 ## Review threads
 
 Answer review comments in their threads, never as new top-level comments.
-On the operator's own pull requests, `pr-loop threads` reads them, and the
+On the operator's own pull requests, `agent-pr threads` reads them, and the
 `review-change` skill says how to settle each one and who posts its answer.
 A reply is written for the same reader as the description.
 

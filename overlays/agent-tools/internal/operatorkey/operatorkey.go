@@ -6,7 +6,7 @@
 // repository or worktree configures takes part: not its user.signingkey,
 // gpg programs or allowed signers, nor its replace refs, grafts, shallow file
 // or commit-graph, any of which anyone able to write the repository can set.
-// pr-loop open proves a branch GitHub already has with it, and git sign-pass
+// agent-pr open proves a branch GitHub already has with it, and git sign-pass
 // commits outside its authenticated destination and upstream exclusions.
 package operatorkey
 

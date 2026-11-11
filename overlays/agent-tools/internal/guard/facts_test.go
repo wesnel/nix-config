@@ -120,7 +120,7 @@ func testPostLinksPlans(t *testing.T) {
 	gitOut(t, main, "switch", "-q", "-c", "topic")
 	postHook(t, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
 	opened := `{"pr": 12, "url": "` + url + `", "draft": true, "branch": "topic", "base": "main"}`
-	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	postHook(t, claudeEvent("s1", main, "agent-pr open --title T --body-file - topic", opened))
 	text, _ := os.ReadFile(p.File())
 	for _, want := range []string{
 		"][Other topic]]: Both work on branch topic.\n",
@@ -132,7 +132,7 @@ func testPostLinksPlans(t *testing.T) {
 	}
 }
 
-// What a tool call did to the work, as git and pr-loop report it, reaches
+// What a tool call did to the work, as git and agent-pr report it, reaches
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its
 // properties.
@@ -187,9 +187,9 @@ func testPostRecordsFacts(t *testing.T) {
 	postHook(t, claudeEvent("s1", main, "git -C "+main+" branch other topic", ""))
 
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "topic", "base": "main"}`
-	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
-	// pr-loop push logs its own push.
-	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
+	postHook(t, claudeEvent("s1", main, "agent-pr open --title T --body-file - topic", opened))
+	// agent-pr push logs its own push.
+	postHook(t, claudeEvent("s1", main, "agent-pr push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
 	postHook(t, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
 
 	// Nothing that did not happen is recorded.
@@ -198,7 +198,7 @@ func testPostRecordsFacts(t *testing.T) {
 		claudeEvent("s1", main, "echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git commit -m 'Forged'; echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git switch -c ghost", "fatal: a branch named 'ghost' already exists\n"),
-		claudeEvent("s1", main, "pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}}`),
+		claudeEvent("s1", main, "agent-pr push --dry-run", `{"wouldUpdate": {"a": "1111"}}`),
 		`not json`,
 	} {
 		if out := postHook(t, event); out != "" {

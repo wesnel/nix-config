@@ -221,7 +221,7 @@ func testWaitCIKeysOnTheNewHead(t *testing.T) {
 	if err != nil || !settled || result.Result != "failed" || polls != 4 {
 		t.Fatalf("wait: %+v, settled %v, %v after %d polls", result, settled, err, polls)
 	}
-	if c := result.PRs[0]; c.HeadOid != "a2" || c.Failed[0].Logs != "pr-loop logs 1 build" {
+	if c := result.PRs[0]; c.HeadOid != "a2" || c.Failed[0].Logs != "agent-pr logs 1 build" {
 		t.Errorf("the new head's result: %+v", c)
 	}
 }
@@ -389,7 +389,7 @@ func testWaitCIComparesWithTheBase(t *testing.T) {
 		if result.Result != "failed" || !reflect.DeepEqual(onBase, map[string]string{"lint": "failed", "test (unit)": "passed", "new": "absent"}) {
 			t.Errorf("failures of the PR's own: %s %v", result.Result, onBase)
 		}
-		if logs := result.PRs[0].Failed[1].Logs; logs != "pr-loop logs 1 'test (unit)'" {
+		if logs := result.PRs[0].Failed[1].Logs; logs != "agent-pr logs 1 'test (unit)'" {
 			t.Errorf("logs command: %s", logs)
 		}
 	})

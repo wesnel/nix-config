@@ -15,7 +15,7 @@ import (
 // worktree it ran in, recorded by the PostToolUse hook rather than the
 // agent: each commit and push in the plan's log, and each new worktree,
 // branch and pull request in its properties. Each fact is read from what
-// git or pr-loop printed and checked against the repository, so a failed
+// git or agent-pr printed and checked against the repository, so a failed
 // command, or one that only prints the same words, records nothing.
 
 // gitCall is a git command a command line runs: the directory it runs in,
@@ -343,8 +343,8 @@ func recordPushFacts(c plans.Config, session, cwd, command string, texts []strin
 			return
 		}
 	}
-	// pr-loop push logs its push itself.
-	delete(who, "pr-loop push")
+	// agent-pr push logs its push itself.
+	delete(who, "agent-pr push")
 	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}

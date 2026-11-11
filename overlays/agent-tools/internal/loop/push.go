@@ -101,7 +101,7 @@ func updatePushRefs(repo *Repo, branches []string, updates []pushUpdate) (map[st
 				{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}}}}, nil)
 		if err != nil {
 			if len(pushed) > 0 {
-				err = fmt.Errorf("%w; GitHub has %s, so run `pr-loop push` again to push the rest", err, branchTips(branches, pushed))
+				err = fmt.Errorf("%w; GitHub has %s, so run `agent-pr push` again to push the rest", err, branchTips(branches, pushed))
 			}
 			return nil, err
 		}
@@ -239,7 +239,7 @@ func remoteHead(repo *Repo, branch string) (string, error) {
 		}
 	}
 	return "", refuse("no remote tracking ref for %s, so what it replaces on GitHub is unknown; pass the head it "+
-		"replaces, as `pr-loop stack` shows it, with `--lease %s=SHA`", branch, branch)
+		"replaces, as `agent-pr stack` shows it, with `--lease %s=SHA`", branch, branch)
 }
 
 // parents is what a PR on base is measured against: on GitHub, the head of

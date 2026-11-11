@@ -78,7 +78,7 @@ only when the operator requests one, on the tip they will read.
 
 The reviewer's only view of intent: the plan's Goal, or a part's, holding
 the goal and what is not this change's job, with nothing of how the work
-went. `agent-plan goal PLAN [--part P1]` prints it, and `git delegate`
+went. `agent-plan goal PLAN [--part P1]` prints it, and `agent-review`
 reads it with `--plan PLAN [--part P1]`. When the caller names a plan and
 part for the review, use their Goal as it stands.
 
@@ -118,7 +118,7 @@ Use one stable plan item for the change's review allowance. Read its log
 before dispatching: at most three logical rounds, including fix
 verification, across changed tips, rebases, resumes and provider fallbacks.
 Moving the work to another item carries its used allowance with it. Each
-round includes its general and selected specialist reviews; delegate's
+round includes its general and selected specialist reviews; agent-review's
 per-reviewer record rounds are not this counter. Log the round before its
 first dispatch so an interrupted run cannot silently restart it. Resume
 only unfinished reviews in that round, with at most one provider fallback
@@ -131,16 +131,16 @@ starts, such as `origin/main` or the parent branch in a stack.
 1. Write the items the change answers (threads, CI checks), with how each
    was settled, to a file, if any. The goal statement is the plan's Goal,
    or the part's.
-2. The general review: prefer `git delegate`, which selects an independent
+2. The general review: prefer `agent-review`, which selects an independent
    reviewer from the other family where available. Use `/code-review`
    against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
    read-only `adversarial-reviewer` given the goal and range as alternatives,
    not additional passes. Where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
-   git delegate resolve to different directories; every file you pass
-   delegate goes in WORKTREE the same way, by its absolute path. Then run
-   `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
+   agent-review resolve to different directories; every file you pass
+   agent-review goes in WORKTREE the same way, by its absolute path. Then run
+   `agent-review --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
    from any worktree of the repository. Remove `red-check.json` after it.
    It runs one general review, as Harness choice says, reports focused
@@ -149,15 +149,15 @@ starts, such as `origin/main` or the parent branch in a stack.
    no open findings, 3 with open findings, 4 when a reviewer could not run
    here, and 5 when the record fails its structure check. On 4, run each
    review in `notRun` as Harness choice says; on 4 or 5, say so in the
-   hand-back, with delegate's reason.
-3. Settle every finding of both as Triage says. A delegate finding is
-   settled in its record too: `git delegate settle BASE..TIP FINDING
+   hand-back, with agent-review's reason.
+3. Settle every finding of both as Triage says. A agent-review finding is
+   settled in its record too: `agent-review settle BASE..TIP FINDING
    OUTCOME [--target X] [--reason-file F]`, by the record ID its output
    gives (`finding`, such as F3). `dropped` lists what pointed at no line
    at TIP or did not fit the schema; read it, but it needs no outcome.
    `routes` lists focused review candidates, from a scan of
    every commit since the default branch and from the reviewer.
-   `git delegate show BASE..TIP` prints the whole record.
+   `agent-review show BASE..TIP` prints the whole record.
 4. After fixes, run the relevant checks and verify the delta from the last
    reviewed tip to the new tip. Pass the original goal, relevant findings,
    their dispositions and the earlier coverage as `--items`; a new range
@@ -176,7 +176,7 @@ starts, such as `origin/main` or the parent branch in a stack.
 ## Focused reviews
 
 Run a selected focused review with
-`git delegate --reviewer ROUTE --plan PLAN --items ITEMS BASE..TIP`.
+`agent-review --reviewer ROUTE --plan PLAN --items ITEMS BASE..TIP`.
 `security` reviews what the change lets someone do;
 `compat` reviews what outlives the commit (stored state, flags, output
 others parse, config keys and options, what another host or branch reads),
@@ -186,20 +186,20 @@ the code, so it also takes `--description FILE`, the description as the
 pull request's own unless `--description` names another. `upgrade`
 reviews what the change's version bumps (lock files, Nix pins, CI
 actions) change here, against upstream's commits, changelogs and
-releases between each pin's two versions, which delegate gathers on the
+releases between each pin's two versions, which agent-review gathers on the
 host before the reviewer starts; the reviewer never fetches. An `UP-`
 finding names a pin whose upstream changes nobody read; read them or say
 in the reply why the pin is safe. Each runs headless as its route's own
 agent type, `ROUTE-reviewer` (`security-reviewer`, `compat-reviewer`,
-`upgrade-reviewer`); where delegate cannot run it (exit 4),
-`git delegate --print-prompt --reviewer ROUTE` with the same files prints
+`upgrade-reviewer`); where agent-review cannot run it (exit 4),
+`agent-review --print-prompt --reviewer ROUTE` with the same files prints
 the prompt for a new sub-agent of that type, which stderr names. Settle
 each finding as Triage says. Verify fixes under the same selection and
 allowance as Fresh review loop.
 
 ## Someone else's pull request
 
-`git delegate OWNER/NAME#N` (or N for origin's), run from a clone of that
+`agent-review OWNER/NAME#N` (or N for origin's), run from a clone of that
 repository, fetches the pull request into the clone as
 `refs/pr-review/N/head` and `refs/pr-review/N/base`, so the clone's agent
 settings apply; run anywhere else, it fetches into a clone of its own under
@@ -212,27 +212,27 @@ in pr-review.
 
 1. The plan's goal is ours, never the pull request's text: "review
    OWNER/NAME#N at its head for the operator; propose comments only".
-   delegate writes the reviewer's goal statement itself; `--plan PLAN`
+   agent-review writes the reviewer's goal statement itself; `--plan PLAN`
    adds ours.
 2. For its tests, run red-check in a checkout of this clone:
    `git red-check $(git merge-base refs/pr-review/N/base refs/pr-review/N/head)..refs/pr-review/N/head
-   > red-check.json` where delegate fetched into this clone. Where it used a
+   > red-check.json` where agent-review fetched into this clone. Where it used a
    clone of its own, fetch from it first, a local read the sandbox allows:
    `git fetch $XDG_CACHE_HOME/pr-review/OWNER/NAME/N/clone refs/pr-review/head
    refs/pr-review/base`, then `git red-check MERGE_BASE..FETCH_HEAD >
    red-check.json` in the working directory. Use that evidence to settle
    the findings. If it leaves a concrete review question unanswered,
    select a targeted follow-up within the same review allowance and pass
-   the evidence with `--red-check red-check.json`; delegate refuses JSON
+   the evidence with `--red-check red-check.json`; agent-review refuses JSON
    of any other range.
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
    `duplicate-of` (with `--target`) or `needs-operator`: never fix, push,
    reply or resolve on someone else's pull request. Write a proposed
    finding's reason as the comment the operator would post.
-4. Record each outcome with `git delegate settle OWNER/NAME#N FINDING
+4. Record each outcome with `agent-review settle OWNER/NAME#N FINDING
    OUTCOME [--target X] [--reason-file F]`. The pull request's review
    record, under `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/`, is the
-   one record of them, every round's, and `git delegate show
+   one record of them, every round's, and `agent-review show
    OWNER/NAME#N` prints it with the threads. The plan's log gets only the
    round and the counts: `agent-plan log PLAN --item ID --kind reviewed
    --summary 'round 1: 5 findings, 3 proposed'`.
@@ -241,7 +241,7 @@ in pr-review.
 
 ## Harness choice
 
-- The general review, through `git delegate`: prefer a model family other
+- The general review, through `agent-review`: prefer a model family other
   than the author's. For a Claude author it is Codex, whose commands can read
   only the worktree under review, the git objects behind it and the system
   files they need, with none of the operator's Codex configuration, no
@@ -250,23 +250,23 @@ in pr-review.
   set) it is Claude Code's `adversarial-reviewer`, given the same contract
   and confined as the focused reviews are, and Codex, run fresh, where
   Claude cannot run; disclose that same-family fallback in the hand-back.
-  `git delegate ask` picks the other family the same
+  `agent-review ask` picks the other family the same
   way.
-- The focused reviews and the walkthrough, through `git delegate`: Claude
+- The focused reviews and the walkthrough, through `agent-review`: Claude
   Code's reviewer agents, run headless with no settings, MCP server or
   CLAUDE.md of anyone's, in a sandbox of their own.
 - A provider the operator says is exhausted or must not be called: run
-  `git delegate availability --disable claude` (or `codex`) before
-  reviewing. `git delegate availability` shows each provider's hold and
+  `agent-review availability --disable claude` (or `codex`) before
+  reviewing. `agent-review availability` shows each provider's hold and
   calls neither. A failed call records its own hold: a rate limit (a 429)
   holds its provider for five minutes; an exhausted quota holds it until
   its reset where Claude's quota windows show one, and otherwise until the
   operator reports recovery and you run
-  `git delegate availability --clear claude` (or `codex`).
-- Each review in `notRun` (exit 4): run `git delegate --print-prompt
+  `agent-review availability --clear claude` (or `codex`).
+- Each review in `notRun` (exit 4): run `agent-review --print-prompt
   --reviewer TYPE` with the same plan, range and files, and give what it
   prints to a new read-only sub-agent of the agent type stderr names, with
-  none of your own reasoning; for `git delegate ask`, add `--print-prompt`
+  none of your own reasoning; for `agent-review ask`, add `--print-prompt`
   to the same command. A diagram's prompt holds a drawing task and a
   critique task, each for a sub-agent of its own. Name each such review,
   and the harness it ran in, in the hand-back.
@@ -313,7 +313,7 @@ While the plan leaves an interface undecided, load the
 Where you and the design review disagree, or the designs leave no clear
 choice, get a second opinion from another model family before it is
 decided: write the question and its options to a file, and run
-`git delegate ask --question FILE PATH...`, naming each file in the
+`agent-review ask --question FILE PATH...`, naming each file in the
 repository the answer rests on (put what it needs from the plan into the
 question file, under the working directory). The selected reviewer reads
 those files and nothing else. On exit 4, ask a new sub-agent that only
@@ -337,13 +337,13 @@ where a pull request's `## Visuals` needs one, as the `pull-requests`
 skill's description says.
 
 Add `--reviewer diagram` to the review that needs it, as
-`git delegate --reviewer codex --reviewer diagram --plan PLAN BASE..TIP`.
+`agent-review --reviewer codex --reviewer diagram --plan PLAN BASE..TIP`.
 Claude Code's `diagrammer` agent draws at most three diagrams, each element
-citing the lines at TIP it stands for; delegate holds every citation to the
+citing the lines at TIP it stands for; agent-review holds every citation to the
 code, Codex critiques each element by element, and one the critic faults is
 redrawn once. Those that hold are kept in the review record, where review-guide
-and `git delegate show` render them; the rest are under the round's Dropped.
-delegate posts nothing to GitHub; a kept diagram reaches a pull request only
+and `agent-review show` render them; the rest are under the round's Dropped.
+agent-review posts nothing to GitHub; a kept diagram reaches a pull request only
 through its description's `## Visuals`.
 
 ## Triage
@@ -400,19 +400,19 @@ outcome goes against its plan item ID and in the hand-back.
   does, with the fresh review loop's round and the finding's `id`.
 - A reply names commits by subject, never by SHA: the signing pass rewrites
   every SHA.
-- **A review bot's thread:** draft the replies in the format `pr-loop
-  reply --from` reads, one file per pull request (`pr-loop --help`): a
+- **A review bot's thread:** draft the replies in the format `agent-pr
+  reply --from` reads, one file per pull request (`agent-pr --help`): a
   `=== thread THREAD` line, or `=== thread THREAD resolve` where the
   outcome resolves, then the reply. In a bots-mode loop (`review-loop
-  --bots`), post them with `pr-loop reply --from FILE` once the fixes are
-  pushed; pr-loop takes only threads whose every comment is a configured
+  --bots`), post them with `agent-pr reply --from FILE` once the fixes are
+  pushed; agent-pr takes only threads whose every comment is a configured
   bot's or the operator's. Outside one, the drafted replies go in the
   hand-back, as a person's thread's do.
 - **After a round of bot fixes, in a loop or not:** once the fixes are
   pushed and the replies posted, ask each bot that had threads to review
   again, on every pull request whose head moved, without being asked. In a
   bots-mode loop, the `review-loop` skill's round does this. Outside one,
-  `pr-loop request` refuses, so the hand-back gives the operator one line,
+  `agent-pr request` refuses, so the hand-back gives the operator one line,
   to run once they have posted the replies: `git sign-pass --push`, naming
   the top of each stack as the `signing-pass` skill says, and a `gh pr edit
   N --add-reviewer @copilot` per pull request, all joined with `&&`. `gh pr
@@ -420,21 +420,21 @@ outcome goes against its plan item ID and in the hand-back.
   the review_requested event in the issue timeline confirms the request.
 - **Then wait for the reviews, outside a bots-mode loop,** where the
   `review-loop` skill's round waits instead: once the sign-pass result shows
-  the push, or the operator says the request ran, run `pr-loop status`;
+  the push, or the operator says the request ran, run `agent-pr status`;
   while a bot asked again is neither pending nor has reviewed the new head,
-  its request has not run, so tell the operator. Then start `pr-loop wait
+  its request has not run, so tell the operator. Then start `agent-pr wait
   reviews --timeout 3600 PR...` in the background, as a command of its
   own, and start it again while it exits 3, at most three times, then tell
   the operator; reviews take 5 to 15 minutes. On any other exit, tell the operator what it printed. When it
-  exits 0, run `pr-loop threads` on each pull request and settle the new
-  threads as Triage says, without waiting to be asked. Stop when `pr-loop
+  exits 0, run `agent-pr threads` on each pull request and settle the new
+  threads as Triage says, without waiting to be asked. Stop when `agent-pr
   status` shows each bot asked again has reviewed the new head and its
   review left no new thread; or after six rounds, handing back what is
   still open.
 - **A person's thread,** in a people-mode loop (`review-loop
-  --people`): write each reply with `pr-loop draft THREAD --body-file F
+  --people`): write each reply with `agent-pr draft THREAD --body-file F
   --outcome OUTCOME`, and commit the fixups. Push nothing and post
   nothing: the operator reads the fixups and drafts, pushes with `git
-  sign-pass --push`, and posts with `pr-loop post` from a terminal.
+  sign-pass --push`, and posts with `agent-pr post` from a terminal.
   Outside people mode, a person's thread goes in the hand-back with its
   proposed answer.

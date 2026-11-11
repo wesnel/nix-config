@@ -46,7 +46,7 @@ func Merge(target, method string) (any, error) {
 	}
 	tty, err := openTTY()
 	if err != nil {
-		return nil, refuse("`pr-loop merge` asks the operator on the terminal before merging, and /dev/tty cannot be "+
+		return nil, refuse("`agent-pr merge` asks the operator on the terminal before merging, and /dev/tty cannot be "+
 			"opened here (%v); the operator runs it from a terminal of their own", err)
 	}
 	defer tty.Close()
@@ -81,7 +81,7 @@ func Merge(target, method string) (any, error) {
 	for _, pr := range merged {
 		if pr.IsDraft {
 			return nil, refuse("#%d is a draft, which GitHub does not merge; mark it ready with `gh pr ready %d`, "+
-				"then run `pr-loop merge %d` again", pr.Number, pr.Number, top.Number)
+				"then run `agent-pr merge %d` again", pr.Number, pr.Number, top.Number)
 		}
 		result.PRs = append(result.PRs, pr.Number)
 	}
@@ -128,7 +128,7 @@ func mergeTargets(repo *Repo, prs map[string]*PR, top *PR, stack *GitHubStack) (
 			pr := prs[m.Branch]
 			if pr == nil || pr.Number != m.PR {
 				return nil, "", refuse("#%d is below #%d in GitHub stack #%d and is not an open pull request by %s, so "+
-					"pr-loop leaves the stack alone; the operator merges it from GitHub's page instead", m.PR, top.Number, stack.Number, repo.Viewer)
+					"agent-pr leaves the stack alone; the operator merges it from GitHub's page instead", m.PR, top.Number, stack.Number, repo.Viewer)
 			}
 			merged = append(merged, pr)
 		}

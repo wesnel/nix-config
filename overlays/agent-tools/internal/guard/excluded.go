@@ -14,7 +14,7 @@ const excludedNotAlone = "`%s` is sure to run outside the sandbox only as a comm
 	"redirected, after cd or an assignment, or inside another command, it may run sandboxed, where it fails as if " +
 	"it were missing. " +
 	"Run it bare, as a command of its own in a call of its own, with absolute paths and its own arguments " +
-	"in place of cd: `-R OWNER/NAME`, a PR number or branch, or the range, which `git delegate` resolves from " +
+	"in place of cd: `-R OWNER/NAME`, a PR number or branch, or the range, which `agent-review` resolves from " +
 	"any worktree of the repository."
 
 // excludedSandboxed is why a line naming an excluded command is refused
@@ -98,7 +98,7 @@ func excludedPatterns() [][]string {
 // login, and fails with an error that reads as if there were no gh at all.
 const plainGh = "`gh` runs in the sandbox, which hides its login, so it cannot reach GitHub from here. " +
 	"Run `gh-read` with the same arguments, as a command of its own; it runs gh's reads of pull requests, runs " +
-	"and repositories, and says which when it refuses one. Make changes on GitHub with `pr-loop`, or put them in " +
+	"and repositories, and says which when it refuses one. Make changes on GitHub with `agent-pr`, or put them in " +
 	"your report for the operator."
 
 // checkPlainGh refuses a Claude Code command line that runs one of gh's

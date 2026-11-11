@@ -29,18 +29,18 @@ func TestPost(t *testing.T) {
 	for _, c := range []struct {
 		name, event, want string
 	}{
-		{"Claude Code open", claude("pr-loop open --title T --body-file - feature", opened), "`pr-loop wait ci 12`"},
-		{"Claude Code push after cd", claude("cd /r && pr-loop push", pushed), "`pr-loop wait ci a b`"},
-		{"Claude Code push and more", claude("pr-loop push && echo done", pushed+"\ndone\n"), "`pr-loop wait ci a b`"},
-		{"Claude Code sign-pass --push", claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`pr-loop wait ci a`"},
-		{"Codex push", codex("pr-loop push", pushed), "`pr-loop wait ci a b`"},
-		{"Codex open after cd", codex("cd /r && pr-loop open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`pr-loop wait ci 12`"},
-		{"Codex dry run", codex("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
-		{"Codex push without output", codex("pr-loop push", ""), ""},
-		{"Claude Code dry run", claude("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
-		{"Claude Code push of nothing", claude("pr-loop push", `{"pushed": {}}`), ""},
-		{"Claude Code push without output", claude("pr-loop push", ""), ""},
-		{"Claude Code status", claude("pr-loop status", pushed), ""},
+		{"Claude Code open", claude("agent-pr open --title T --body-file - feature", opened), "`agent-pr wait ci 12`"},
+		{"Claude Code push after cd", claude("cd /r && agent-pr push", pushed), "`agent-pr wait ci a b`"},
+		{"Claude Code push and more", claude("agent-pr push && echo done", pushed+"\ndone\n"), "`agent-pr wait ci a b`"},
+		{"Claude Code sign-pass --push", claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`agent-pr wait ci a`"},
+		{"Codex push", codex("agent-pr push", pushed), "`agent-pr wait ci a b`"},
+		{"Codex open after cd", codex("cd /r && agent-pr open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`agent-pr wait ci 12`"},
+		{"Codex dry run", codex("agent-pr push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{"Codex push without output", codex("agent-pr push", ""), ""},
+		{"Claude Code dry run", claude("agent-pr push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{"Claude Code push of nothing", claude("agent-pr push", `{"pushed": {}}`), ""},
+		{"Claude Code push without output", claude("agent-pr push", ""), ""},
+		{"Claude Code status", claude("agent-pr status", pushed), ""},
 		{"Claude Code sign-pass", claude("git sign-pass", `{"branch": "a", "signed": 1}`), ""},
 		{"Claude Code echo of a push", claude("echo '"+pushed+"'", pushed), ""},
 		{"Claude Code Edit", `{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/x"}}`, ""},
@@ -95,9 +95,9 @@ func testPostPullRequests(t *testing.T) {
 	}{
 		{"gh pr create", claude("gh pr create --draft --title T --body-file b.md"), "hookSpecificOutput"},
 		{"gh pr edit after cd", claude("cd /r && gh pr edit 12 --body-file b.md"), "hookSpecificOutput"},
-		{"pr-loop open", claude("pr-loop open --title T --body-file b.md feature"), "hookSpecificOutput"},
+		{"agent-pr open", claude("agent-pr open --title T --body-file b.md feature"), "hookSpecificOutput"},
 		{"gh pr view", claude("gh pr view 12"), ""},
-		{"pr-loop push", claude("pr-loop push"), ""},
+		{"agent-pr push", claude("agent-pr push"), ""},
 		{"echo of gh pr create", claude("echo gh pr create"), ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {

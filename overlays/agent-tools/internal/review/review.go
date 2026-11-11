@@ -1,4 +1,4 @@
-// Package review is `git delegate`: its reviewers' contracts and the shape
+// Package review is `agent-review`: its reviewers' contracts and the shape
 // of their replies, the runners that start them, and the review records it
 // keeps. The contract is what delegate gives each reviewer and prints for
 // a sub-agent, so a change to it changes every reviewer at once.

@@ -8,7 +8,7 @@ import (
 )
 
 // SignCheck squashes the fixups of the stack containing HEAD, as
-// `pr-loop stack` chains it, unsigned in a throwaway worktree and checks
+// `agent-pr stack` chains it, unsigned in a throwaway worktree and checks
 // that every branch would end with exactly its own commits, those that are
 // no fixup, and exactly the files it has now, so a conflict, a stray commit
 // or a fixup in the wrong branch shows up before the operator's
@@ -85,7 +85,7 @@ type signedStack struct {
 // rehearse squashes the stack, unsigned, in a throwaway worktree and checks
 // the result, so a conflict or a stray commit shows up before any key touch.
 func rehearse(stack *signedStack) error {
-	scratch, err := os.MkdirTemp("", "pr-loop-rehearsal-")
+	scratch, err := os.MkdirTemp("", "agent-pr-rehearsal-")
 	if err != nil {
 		return err
 	}

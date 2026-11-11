@@ -34,7 +34,7 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           github/status.json (the operator's open pull requests, with
           draft, CI, review decision and unresolved threads, and the
           reviews asked of the operator, directly or of a team, with since
-          when, head and its CI and whether pr-loop holds a review of it,
+          when, head and its CI and whether agent-pr holds a review of it,
           all with titles, and the one of each list each is stacked on),
           meta/sync.json (when this host's plans last reached the notes
           remote, whether they changed since, when the notes repository

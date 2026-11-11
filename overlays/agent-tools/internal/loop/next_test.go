@@ -102,7 +102,7 @@ func TestNext(t *testing.T) {
 		gitIn(t, dir, "switch", "-qc", "fresh", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add fresh")
 		step, ok := nextStep(t, "fresh").(ToOpen)
-		if !ok || step.Kind != "open" || !strings.HasPrefix(step.Command, "pr-loop open --title") || !strings.HasSuffix(step.Command, " fresh") {
+		if !ok || step.Kind != "open" || !strings.HasPrefix(step.Command, "agent-pr open --title") || !strings.HasSuffix(step.Command, " fresh") {
 			t.Errorf("fresh: %+v", step)
 		}
 	})

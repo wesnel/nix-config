@@ -22,14 +22,14 @@ func TestMCPPlan(t *testing.T) {
 	}
 	f := newMCPFixture(t)
 	profile := t.TempDir()
-	if err := os.Symlink(filepath.Join(bin, "pr-loop"), filepath.Join(profile, "pr-loop")); err != nil {
+	if err := os.Symlink(filepath.Join(bin, "agent-ops"), filepath.Join(profile, "agent-ops")); err != nil {
 		t.Fatal(err)
 	}
 	// A different sibling models a profile whose packages come from different installations.
 	if err := os.WriteFile(filepath.Join(profile, "agent-plan"), []byte("#!/bin/sh\necho wrong-sibling\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), filepath.Join(profile, "pr-loop"), "mcp")
+	cmd := exec.CommandContext(t.Context(), filepath.Join(profile, "agent-ops"), "mcp")
 	cmd.Env, cmd.Dir, cmd.Stderr = f.env, f.repo, os.Stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
