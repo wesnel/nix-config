@@ -169,19 +169,9 @@ func next(repo *Repo, branch string) (NextStep, error) {
 		return nextOpen(repo, view, branch)
 	}
 
-	retry := "run `pr-loop next` again"
-	dest, err := signpass.DestinationOf(branch, retry)
+	dest, err := nextDestination(branch, onGitHub, tip)
 	if err != nil {
 		return nil, err
-	}
-	if dest.Tracking != onGitHub {
-		return nil, refuse("%s/%s is at %.12s here but GitHub has %s at %.12s; run `git fetch %s %s`, then %s",
-			dest.Remote, branch, dest.Tracking, branch, onGitHub, shellQuote(dest.Remote), shellQuote(branch), retry)
-	}
-	if onGitHub != tip && !git.OK("merge-base", "--is-ancestor", onGitHub, tip) {
-		return nil, refuse("GitHub's %s, at %.12s, has history the local branch does not contain; fetch with "+
-			"`git fetch %s %s`, then reconcile the histories by hand and %s", branch, onGitHub,
-			shellQuote(dest.Remote), shellQuote(branch), retry)
 	}
 	if empty {
 		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
@@ -200,6 +190,24 @@ func next(repo *Repo, branch string) (NextStep, error) {
 	default:
 		return ToPush{Kind: "push", Branch: branch, Why: "GitHub is behind its signed tip", Command: pass, Notify: notify, PR: pr}, nil
 	}
+}
+
+func nextDestination(branch, onGitHub, tip string) (signpass.Destination, error) {
+	retry := "run `pr-loop next` again"
+	dest, err := signpass.DestinationOf(branch, retry)
+	if err != nil {
+		return dest, err
+	}
+	if dest.Tracking != onGitHub {
+		return dest, refuse("%s/%s is at %.12s here but GitHub has %s at %.12s; run `git fetch %s %s`, then %s",
+			dest.Remote, branch, dest.Tracking, branch, onGitHub, shellQuote(dest.Remote), shellQuote(branch), retry)
+	}
+	if onGitHub != tip && !git.OK("merge-base", "--is-ancestor", onGitHub, tip) {
+		return dest, refuse("GitHub's %s, at %.12s, has history the local branch does not contain; fetch with "+
+			"`git fetch %s %s`, then reconcile the histories by hand and %s", branch, onGitHub,
+			shellQuote(dest.Remote), shellQuote(branch), retry)
+	}
+	return dest, nil
 }
 
 func nextOpen(repo *Repo, view *remoteView, branch string) (NextStep, error) {

@@ -139,37 +139,37 @@ func (p *digestParser) change(start, end int) (Change, bool) {
 	}
 	marked := false
 	if i < end && drawerStart.MatchString(p.lines[i]) {
-		closed := false
-		for j := i + 1; j < end; j++ {
-			if drawerEnd.MatchString(p.lines[j]) {
-				closed = true
-				i = j + 1
-				break
-			}
-			pm := property.FindStringSubmatch(p.lines[j])
-			if pm == nil {
-				continue
-			}
-			switch strings.ToUpper(pm[1]) {
-			case "PLAN":
-				marked = true
-			case "PR":
-				marked = true
-				c.Repo, c.Number = pullRequest(strings.TrimSpace(pm[2]))
-				if c.Repo == "" {
-					p.drop(j+1, "pr", "not OWNER/NAME#N or a pull request's GitHub URL")
-				}
-			}
-		}
-		if !closed {
-			p.drop(i+1, "block", "its property drawer is never closed")
-			i = end
-		}
+		i, marked = p.changeProperties(i, end, &c)
 	}
 	var b body
 	p.body(i, end, &b, &c)
 	c.Summary = cut(b.summary(), long)
 	return c, marked
+}
+
+func (p *digestParser) changeProperties(i, end int, c *Change) (int, bool) {
+	marked := false
+	for j := i + 1; j < end; j++ {
+		if drawerEnd.MatchString(p.lines[j]) {
+			return j + 1, marked
+		}
+		pm := property.FindStringSubmatch(p.lines[j])
+		if pm == nil {
+			continue
+		}
+		switch strings.ToUpper(pm[1]) {
+		case "PLAN":
+			marked = true
+		case "PR":
+			marked = true
+			c.Repo, c.Number = pullRequest(strings.TrimSpace(pm[2]))
+			if c.Repo == "" {
+				p.drop(j+1, "pr", "not OWNER/NAME#N or a pull request's GitHub URL")
+			}
+		}
+	}
+	p.drop(i+1, "block", "its property drawer is never closed")
+	return end, marked
 }
 
 // pullRequest is the repository and number s names, as OWNER/NAME#N or
@@ -259,58 +259,66 @@ func (p *digestParser) body(i, end int, b *body, c *Change) {
 			i++
 			continue
 		}
-		kind, lang := strings.ToLower(m[2]), strings.ToLower(m[3])
-		what := "block"
-		switch {
-		case kind == "src" && lang == "sh":
-			what = "step"
-		case kind == "src" && lang == "mermaid":
-			what = "diagram"
-		}
-		content, next, ok := p.block(i, end, m[1], kind)
+		next, ok := p.bodyBlock(i, end, b, c, caption, m)
 		if !ok {
-			p.drop(i+1, what, "its block is never closed")
-			b.flush()
 			return
-		}
-		switch {
-		case c != nil && what == "step":
-			result, after, ok := p.result(next, end)
-			if !ok {
-				p.drop(i+1, "step", "its result's block is never closed")
-				b.flush()
-				return
-			}
-			text := b.last()
-			if len(c.Steps) == maxDemoSteps {
-				p.drop(i+1, "step", fmt.Sprintf("over the %d steps a change shows", maxDemoSteps))
-			} else {
-				c.Steps = append(c.Steps, DemoStep{Text: cut(text, long), Command: cut(content, long), Result: cut(result, resultCap)})
-			}
-			next = after
-		case c != nil && what == "diagram":
-			b.flush()
-			source := content + "\n"
-			switch {
-			case len(source) > maxMermaid:
-				p.drop(i+1, "diagram", fmt.Sprintf("over the %d bytes the page draws", maxMermaid))
-			case !diagram.ValidSource(source):
-				p.drop(i+1, "diagram", "not in the one grammar the page draws")
-			case len(c.Diagrams) == maxDigestDiagrams:
-				p.drop(i+1, "diagram", fmt.Sprintf("over the %d diagrams a change shows", maxDigestDiagrams))
-			default:
-				c.Diagrams = append(c.Diagrams, DigestDiagram{Caption: cut(caption, short), Source: source})
-			}
-		case kind == "example":
-			b.flush()
-			p.drop(i+1, "block", "a result with no step before it")
-		default:
-			b.flush()
-			p.drop(i+1, "block", "not a block the digest's format has")
 		}
 		caption = ""
 		i = next
 	}
+}
+
+func (p *digestParser) bodyBlock(i, end int, b *body, c *Change, caption string, m []string) (int, bool) {
+	kind, lang := strings.ToLower(m[2]), strings.ToLower(m[3])
+	what := "block"
+	switch {
+	case kind == "src" && lang == "sh":
+		what = "step"
+	case kind == "src" && lang == "mermaid":
+		what = "diagram"
+	}
+	content, next, ok := p.block(i, end, m[1], kind)
+	if !ok {
+		p.drop(i+1, what, "its block is never closed")
+		b.flush()
+		return next, false
+	}
+	switch {
+	case c != nil && what == "step":
+		result, after, ok := p.result(next, end)
+		if !ok {
+			p.drop(i+1, "step", "its result's block is never closed")
+			b.flush()
+			return after, false
+		}
+		text := b.last()
+		if len(c.Steps) == maxDemoSteps {
+			p.drop(i+1, "step", fmt.Sprintf("over the %d steps a change shows", maxDemoSteps))
+		} else {
+			c.Steps = append(c.Steps, DemoStep{Text: cut(text, long), Command: cut(content, long), Result: cut(result, resultCap)})
+		}
+		next = after
+	case c != nil && what == "diagram":
+		b.flush()
+		source := content + "\n"
+		switch {
+		case len(source) > maxMermaid:
+			p.drop(i+1, "diagram", fmt.Sprintf("over the %d bytes the page draws", maxMermaid))
+		case !diagram.ValidSource(source):
+			p.drop(i+1, "diagram", "not in the one grammar the page draws")
+		case len(c.Diagrams) == maxDigestDiagrams:
+			p.drop(i+1, "diagram", fmt.Sprintf("over the %d diagrams a change shows", maxDigestDiagrams))
+		default:
+			c.Diagrams = append(c.Diagrams, DigestDiagram{Caption: cut(caption, short), Source: source})
+		}
+	case kind == "example":
+		b.flush()
+		p.drop(i+1, "block", "a result with no step before it")
+	default:
+		b.flush()
+		p.drop(i+1, "block", "not a block the digest's format has")
+	}
+	return next, true
 }
 
 // block is the content of the block of kind that starts on line i and is
