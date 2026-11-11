@@ -2,6 +2,8 @@ package prcli
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +12,25 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/loop"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
+
+func TestReadyReport(t *testing.T) {
+	for _, cause := range []error{errors.New("GitHub unavailable"), refusal.New("head changed")} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := reportReady(loop.ReadyResult{PR: 3, Ready: []int{1}}, cause, &stdout, &stderr)
+			var got loop.ReadyResult
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.PR != 3 || len(got.Ready) != 1 || got.Ready[0] != 1 {
+				t.Fatalf("partial progress missing: stdout %q, error %v", stdout.String(), err)
+			}
+			if code == 0 || !strings.Contains(stderr.String(), cause.Error()) {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+		})
+	}
+}
 
 func TestRun(t *testing.T) {
 	for _, command := range []string{"merge-preview", "ready"} {

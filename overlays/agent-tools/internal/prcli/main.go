@@ -273,8 +273,11 @@ func Run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		result, err = loop.Link(rest)
 	case "merge":
 		result, err = mergeCommand(rest, *method)
-	case "merge-preview", "ready":
+	case "merge-preview":
 		result, err = mergeInspectionCommand(command, rest)
+	case "ready":
+		result, err = mergeInspectionCommand(command, rest)
+		return reportReady(result, err, stdout, stderr)
 	case "push":
 		result, err = pushCommand(rest, leases, *dryRun)
 	case "threads":
@@ -383,6 +386,15 @@ func mergeInspectionCommand(command string, rest []string) (any, error) {
 		return loop.Ready(target)
 	}
 	return loop.MergePreview(target)
+}
+
+func reportReady(result any, err error, stdout, stderr io.Writer) int {
+	if err != nil && result != nil {
+		if code := cli.Report("agent-pr", result, nil, 0, stdout, stderr); code != 0 {
+			return code
+		}
+	}
+	return cli.Report("agent-pr", result, err, 0, stdout, stderr)
 }
 
 func pushCommand(rest, leases []string, dryRun bool) (any, error) {
