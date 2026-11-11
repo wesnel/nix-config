@@ -60,8 +60,8 @@ measured as the `review-change` skill's goal statement says.
    from the PR description and its Linear ticket (read-only; the ticket ID
    is usually in the branch name, e.g. `agent-911` is `AGENT-911`), and
    what is explicitly not this PR's job.
-3. Work on each PR's branch in a worktree under `~/.claude/worktrees`,
-   made with `git worktree add`, with `git config --worktree
+3. Work on each PR's branch in a worktree at
+   `~/.claude/worktrees/<repo>/<branch>`, made with `git worktree add`, with `git config --worktree
    commit.gpgsign false` in it. In each new worktree run `pr-loop setup`,
    which runs the setup command the operator configured for the repository,
    such as generating files it does not commit. If a setup fails, stop and

@@ -55,8 +55,8 @@ A review loop over a stack, which the operator starts with
   a parent branch changes, record each child's fork point with
   `git merge-base <child> <parent>`; the restack needs it (the
   `restack-branches` skill).
-- Create each worktree yourself, outside the main checkout, on the branch the
-  part belongs to, and name both in the task. Base new independent work on
+- Create each worktree yourself, at the path below (AGENTS.md's "Session
+  worktree"), on the branch the part belongs to, and name both in the task. Base new independent work on
   `origin/<default>`, using the remote-tracking ref already available. For
   a local or stacked base, check that it contains that ref first:
 
@@ -71,8 +71,8 @@ A review loop over a stack, which the operator starts with
   `origin/<default>`, which the signing pass refuses to push to:
 
   ```sh
-  git worktree add --no-track <worktrees>/<repo>/<branch> -b <branch> <base>   # new work
-  git worktree add <worktrees>/<repo>/<branch> <branch>             # existing branch
+  git worktree add --no-track ~/.claude/worktrees/<repo>/<branch> -b <branch> <base>   # new work
+  git worktree add ~/.claude/worktrees/<repo>/<branch> <branch>             # existing branch
   ```
 
   A harness's own worktree option (Claude Code's `isolation: "worktree"`)
@@ -83,7 +83,7 @@ A review loop over a stack, which the operator starts with
   Assign the worktree before the sub-agent starts writing:
 
   ```sh
-  agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent <agent ID>
+  agent-plan own PLAN --worktree ~/.claude/worktrees/<repo>/<branch> --agent <agent ID>
   ```
 
   Once the sub-agent has stopped, hand the worktree back to yourself:

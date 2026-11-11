@@ -608,7 +608,7 @@ with lib; let
         isGo = hasInfix "go";
       in
         filter isGo sandboxLists.toolCaches
-        ++ ["~/.claude/worktrees"]
+        ++ [sandboxLists.worktrees]
         ++ filter (p: !isGo p) sandboxLists.toolCaches;
 
       denyWrite =

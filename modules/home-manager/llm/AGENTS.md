@@ -61,7 +61,10 @@ sub-agents as the `coordinate-subagents` skill says.
 
 Before the first repository edit, use a linked task worktree. For new
 independent work, create a unique branch based on the remote-tracking
-default branch; for a requested existing change, use its branch. Record
+default branch; for a requested existing change, use its branch. Task
+worktrees live at `~/.claude/worktrees/<repo>/<branch>`, the one directory
+outside the working directory that Claude Code's and Codex's sandboxes both
+write, so a plan begun in one harness continues in the other. Record
 the worktree and this session in the plan. An explicitly assigned task
 worktree may be reused; an intentional continuation adds its session to
 that plan. Independent tasks use separate worktrees, even when each has
