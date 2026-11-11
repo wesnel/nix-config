@@ -177,6 +177,20 @@ number you measured.
 with the same reproduction; load the `reproduce-first` skill before fixing
 one, and the `diagnose-failure` skill before looking for its cause.
 
+## Repository checks
+
+Before coding, read the repository's check instructions, CI workflows and
+lint configuration to find its required check entrypoints. Use those
+entrypoints with the repository-pinned tools and configuration, and run
+the required checks before handing back; report any check that could not
+run.
+
+Lint configuration, exclusions and suppressions are policy: justify their
+changes and include them in review. Fix findings against the existing
+policy; never weaken it solely to get a passing result. Numeric limits
+belong in project configuration. When a lint fix changes code structure,
+load the `minimize-reader-load` skill.
+
 ## Tests that can fail
 
 A test earns its place only if it can fail. A change in behaviour (a
