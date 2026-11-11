@@ -291,9 +291,9 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
   on Codex's older tool set has `send_input` in place of `followup_task`.
 - **No sub-agents:** do each part yourself, one at a time, in its worktree.
 
-Run at most three sub-agents at once, and one heavy job across all of
-them: a Nix build, a VM, `git red-check`, or a full `go test ./...` of
-agent-tools: more than that exhausts the machine's memory.
+Run one heavy job at a time across all sub-agents: a Nix build, a VM,
+`git red-check`, or a full `go test ./...` of agent-tools: more than that
+exhausts the machine's memory.
 Tell each sub-agent which heavy job it may run, and when.
 
 Never edit a sub-agent's worktree while it runs. To learn where something
