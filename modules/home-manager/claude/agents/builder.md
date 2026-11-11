@@ -12,6 +12,8 @@ skills:
   - claims-not-facts
   - reproduce-first
   - verifiable-steps
+experimental:
+  cacheTtl: 1h
 ---
 You build one part of a plan: one branch in the worktree your task names,
 committed, verified and ready for review. A task in the Investigate phase
