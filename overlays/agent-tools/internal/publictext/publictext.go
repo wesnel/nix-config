@@ -65,7 +65,7 @@ var (
 	// easily something else ("Q4 earnings").
 	planIDs = regexp.MustCompile(`^(?:(?:P[0-9]+\.)?[DQ][0-9]{2,4}|P[0-9]+\.[SQFD][0-9]+)$`)
 	// The review loop's words, and where its state lives.
-	terms = regexp.MustCompile(`(?i)\bpr-loop\b|\bpr-owners?\b|\b(?:loop|agent)(?:'s)?\s+coordinator\b|` +
+	terms = regexp.MustCompile(`(?i)\b(?:agent-pr|agent-review|agent-ops|pr-loop)\b|\bpr-owners?\b|\b(?:loop|agent)(?:'s)?\s+coordinator\b|` +
 		`\bcoordinator(?:'s)?\s+(?:agent|session|sub-?agent)s?\b|\bowner\s+(?:agent|sub-?agent)s?\b|\bsub-?agents?\b|` +
 		`\bround\s+[0-9]+\b|\breview\s+receipts?\b|\broute-receipts?\b|\breview\s+routes?\b|\bfresh-review\b|` +
 		`\breview-loop\b|\bagent-plan\b`)

@@ -115,7 +115,7 @@ it shows.
 
 What a step changes stays inside the checkout and `$TMPDIR`. The operator's
 plans, notes repository, `~/.claude`, `~/.codex`, `~/.config`, systemd
-units and GitHub are left as they are: no switch, push, `pr-loop` write,
+units and GitHub are left as they are: no switch, push, `agent-pr` write,
 or `agent-plan` write against the real plans. A refusal by the sandbox or
 the guard is an observed result to record as step 5 says.
 

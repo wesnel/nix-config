@@ -46,10 +46,10 @@ func (a *availability) check(p shared.Provider) error {
 	}
 	s, err := shared.Check(p, now)
 	if err != nil {
-		return providerUnavailable{p, fmt.Sprintf("cannot read availability state: %v; use `git delegate availability --clear %s` after checking it", err, p)}
+		return providerUnavailable{p, fmt.Sprintf("cannot read availability state: %v; use `agent-review availability --clear %s` after checking it", err, p)}
 	}
 	if s.Reason != "" {
-		return providerUnavailable{p, s.String() + "; use `git delegate availability --clear " + string(p) + "` after recovery"}
+		return providerUnavailable{p, s.String() + "; use `agent-review availability --clear " + string(p) + "` after recovery"}
 	}
 	if p == shared.Claude {
 		return quotaStop(now)
@@ -100,7 +100,7 @@ func (a *availability) failed(p shared.Provider, why shared.Reason) error {
 	return err
 }
 
-const availabilityUsage = `usage: git delegate availability [--disable claude|codex | --clear claude|codex]
+const availabilityUsage = `usage: agent-review availability [--disable claude|codex | --clear claude|codex]
 
 Prints, as JSON, whether each provider may be called, or why not, and
 calls neither. A held provider is not called by any review or ask on this

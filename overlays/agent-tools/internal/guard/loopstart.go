@@ -14,13 +14,13 @@ import (
 )
 
 // loopVars mark a review-loop session and its mode, which the operator's
-// review-loop alone sets: pr-loop reads PR_LOOP_MODE to gate request,
+// review-loop alone sets: agent-pr reads PR_LOOP_MODE to gate request,
 // reply, draft and push.
 var loopVars = set("PR_LOOP_SESSION", "PR_LOOP_MODE")
 
 // loopStart is why an agent may not start a loop or set its variables.
 const loopStart = "Only the operator starts a review loop, with `review-loop --harness claude|codex --bots|--people`, which sets " +
-	"PR_LOOP_SESSION and PR_LOOP_MODE. Run pr-loop without them, and put the loop you propose in the report for the operator."
+	"PR_LOOP_SESSION and PR_LOOP_MODE. Run agent-pr without them, and put the loop you propose in the report for the operator."
 
 // namers are the builtins that set or export a variable they are given by
 // name, such as `read PR_LOOP_MODE` or `export PR_LOOP_MODE`; printf does

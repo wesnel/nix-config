@@ -33,7 +33,7 @@ The week's changes.
 :END:
 Start the loop.
 #+begin_src sh
-pr-loop status 243
+agent-pr status 243
 #+end_src
 ** A detail
 * Draw the digest

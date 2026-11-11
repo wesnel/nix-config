@@ -27,8 +27,8 @@ func SetAPI(url string) (restore func()) {
 	return func() { api = old }
 }
 
-// Outside is where pr-loop runs gh: gh calls git with the repository's own
-// config and hooks when started inside one, and pr-loop names the repository
+// Outside is where agent-pr runs gh: gh calls git with the repository's own
+// config and hooks when started inside one, and agent-pr names the repository
 // explicitly instead.
 var Outside = os.TempDir()
 

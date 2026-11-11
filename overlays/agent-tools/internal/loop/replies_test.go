@@ -101,7 +101,7 @@ func TestReplyAll(t *testing.T) {
 		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
 		t.Cleanup(func() { openTTY = old })
 		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Outcome: "fix", Body: "a"}}, 1)
-		if !refused(err) || !strings.Contains(err.Error(), "pr-loop reply --from FILE --round") || len(f.replies) != 0 {
+		if !refused(err) || !strings.Contains(err.Error(), "agent-pr reply --from FILE --round") || len(f.replies) != 0 {
 			t.Errorf("replied outside a loop: %v, %v", err, f.replies)
 		}
 	})

@@ -62,7 +62,7 @@ one that is broken, too narrow or not wired in is the finding. Prefer
 repairing or simplifying it before adding a rule. Then classify the issue:
 
 - **Mechanical**, decidable without judgement (a command's shape, a path, a
-  missing flag, a trailer): propose a check. A `pr-loop guard` rule with
+  missing flag, a trailer): propose a check. A `agent-ops guard` rule with
   deny and allow examples, a hook, `git red-check` settings, a linter rule
   or a CI job.
 - **Judgement**, decidable only by reading the change: propose a check for

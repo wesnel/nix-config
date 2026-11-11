@@ -1,6 +1,6 @@
-// Command git-delegate reviews a range of commits or a pull request with
+// Command agent-review reviews a range of commits or a pull request with
 // reviewers that did not write it, and keeps their findings in its review
-// record. Installed on PATH, it runs as `git delegate`.
+// record.
 package main
 
 import (

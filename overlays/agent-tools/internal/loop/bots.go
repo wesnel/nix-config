@@ -50,7 +50,7 @@ type botConfig struct {
 	Repos              []string          `json:"repos"`
 }
 
-// configPath is pr-loop's config: pr-loop/config.json under the XDG config
+// configPath is agent-pr's config: pr-loop/config.json under the XDG config
 // directory, or $PR_LOOP_CONFIG where hostpaths allows it.
 func configPath() string {
 	return hostpaths.ConfigFile("PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))

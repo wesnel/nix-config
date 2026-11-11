@@ -191,7 +191,7 @@ func TestFocusCompat(t *testing.T) {
 			t.Errorf("stderr:\n%s", stderr)
 		}
 		code, _, stderr = runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
-		if code != 0 || !strings.Contains(stderr, "run `git delegate --reviewer compat --plan "+f.plan+" --description FILE "+
+		if code != 0 || !strings.Contains(stderr, "run `agent-review --reviewer compat --plan "+f.plan+" --description FILE "+
 			f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
@@ -203,7 +203,7 @@ func TestFocusCompat(t *testing.T) {
 		f := setUp(t, true)
 		t.Setenv("FAKE_CODEX", "unauthenticated")
 		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
-		if code != 4 || !strings.Contains(stderr, "`git delegate --print-prompt --reviewer codex --plan "+f.plan+" "+f.base+"..HEAD`") {
+		if code != 4 || !strings.Contains(stderr, "`agent-review --print-prompt --reviewer codex --plan "+f.plan+" "+f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
 	})
@@ -215,7 +215,7 @@ func TestFocusCompat(t *testing.T) {
 		f.config(t, map[string]any{})
 		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
-		if code != 4 || !strings.Contains(stderr, "start a new `compat-reviewer` sub-agent on what `git delegate "+
+		if code != 4 || !strings.Contains(stderr, "start a new `compat-reviewer` sub-agent on what `agent-review "+
 			"--print-prompt --reviewer compat --plan "+f.plan+" --description FILE "+f.base+"..HEAD` prints") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}

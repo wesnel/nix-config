@@ -14,7 +14,7 @@ import (
 
 // loopPlan makes a plan, in a plans directory of the test's own, that
 // names worktrees and branches and the Claude Code session the test runs
-// pr-loop in: the worktrees are main checkouts, which pick no plan.
+// agent-pr in: the worktrees are main checkouts, which pick no plan.
 func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	t.Helper()
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "s-loop")
@@ -63,7 +63,7 @@ func expectEvents(t *testing.T, p plans.Plan, want ...string) {
 	}
 }
 
-// What pr-loop does reaches the plan of the session that ran it as events,
+// What agent-pr does reaches the plan of the session that ran it as events,
 // whether or not the session has hooks: the replies, resolutions and CI
 // outcomes.
 func TestLoopEvents(t *testing.T) {

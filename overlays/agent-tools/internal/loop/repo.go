@@ -38,7 +38,7 @@ func repository() (*Repo, error) {
 		}
 		sort.Strings(found)
 		return nil, refuse("expected exactly one GitHub repository among this checkout's fetch URLs, found %v; "+
-			"run pr-loop from a checkout of one repository, or ask the operator to fix the remotes", found)
+			"run agent-pr from a checkout of one repository, or ask the operator to fix the remotes", found)
 	}
 	var slug string
 	for s := range slugs {

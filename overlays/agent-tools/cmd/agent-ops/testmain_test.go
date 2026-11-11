@@ -13,12 +13,12 @@ import (
 )
 
 // TestMain runs the tests; or, started by a TestMCP case with serveMCPEnv
-// set to its fake GitHub's URL, serves as pr-loop mcp against it; or, as
+// set to its fake GitHub's URL, serves as agent-ops mcp against it; or, as
 // git_stage's launcher or its child, runs the child.
 func TestMain(m *testing.M) {
 	// The real launcher runs this binary itself as the child and its probe
 	// (TestGitStageNative), in a sandbox that refuses the listener Isolate
-	// starts, so they run before it, as pr-loop runs them.
+	// starts, so they run before it, as agent-ops runs them.
 	if len(os.Args) > 1 && (os.Args[1] == "git-stage-child" || os.Args[1] == "git-stage-probe") {
 		os.Exit(run(os.Args[1], os.Args[2:], strings.NewReader(""), os.Stdout, os.Stderr))
 	}

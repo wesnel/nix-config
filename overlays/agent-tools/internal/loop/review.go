@@ -173,7 +173,7 @@ func headComment(comments []issueComment, bot *Bot, after, head string) *issueCo
 }
 
 // openThreads counts a PR's unresolved review threads by the bot that
-// started them, as `pr-loop threads` labels them, with people's under "",
+// started them, as `agent-pr threads` labels them, with people's under "",
 // and the bots' threads whose last comment is a bot's. It reads every page:
 // a request is gated on these counts.
 func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[string]int, err error) {
@@ -327,7 +327,7 @@ func checkRequestCI(number int, ci *CI, accepted map[string]bool) error {
 		if len(ci.Pending) > 0 {
 			reason = strings.Join(ci.Pending, ", ")
 		}
-		return refuse("CI on #%d has not finished (%s); run `pr-loop wait ci %d` first", number, reason, number)
+		return refuse("CI on #%d has not finished (%s); run `agent-pr wait ci %d` first", number, reason, number)
 	}
 	var own []string
 	for _, c := range ci.Failed {
@@ -338,7 +338,7 @@ func checkRequestCI(number int, ci *CI, accepted map[string]bool) error {
 	if len(own) > 0 {
 		return refuse("CI on #%d fails in %s, which do not fail on its base. Fix that before asking for "+
 			"review. If a failure is shown not to be this PR's, waiving it is the operator's call: put the evidence in "+
-			"the report, with `pr-loop request --accept-failure NAME %d` for them to run", number, strings.Join(own, ", "), number)
+			"the report, with `agent-pr request --accept-failure NAME %d` for them to run", number, strings.Join(own, ", "), number)
 	}
 	return nil
 }
@@ -367,8 +367,8 @@ func requestedBots(number int, head string, bots []*Bot, onlyBots []string, revi
 	// resolves its own, has been triaged.
 	if len(unanswered) > 0 {
 		return nil, nil, refuse("#%d has review threads nobody has answered (%s). Triage them before asking for another "+
-			"review: list them with `pr-loop threads %d`, reply to each, resolving it or fixing it first, "+
-			"then run `pr-loop request` again", number, strings.Join(unanswered, ", "), number)
+			"review: list them with `agent-pr threads %d`, reply to each, resolving it or fixing it first, "+
+			"then run `agent-pr request` again", number, strings.Join(unanswered, ", "), number)
 	}
 	return ask, log, nil
 }

@@ -56,7 +56,7 @@ func TestFocusAgentNamed(t *testing.T) {
 	f := setUp(t, true)
 	f.config(t, map[string]any{})
 	code, _, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
-	if code != 4 || !strings.Contains(stderr, "start a new `security-reviewer` sub-agent on what `git delegate --print-prompt "+
+	if code != 4 || !strings.Contains(stderr, "start a new `security-reviewer` sub-agent on what `agent-review --print-prompt "+
 		"--reviewer security") {
 		t.Errorf("exit %d\n%s", code, stderr)
 	}
@@ -64,7 +64,7 @@ func TestFocusAgentNamed(t *testing.T) {
 
 func refused(t *testing.T, what string, code int, stderr string) {
 	t.Helper()
-	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
+	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review: refused: ")
 	if code != 2 || !refusal.SaysInstead(reason) {
 		t.Errorf("%s: exit %d, %q", what, code, stderr)
 	}

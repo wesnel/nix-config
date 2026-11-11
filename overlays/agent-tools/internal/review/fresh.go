@@ -26,7 +26,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
-const name = "git-delegate"
+const name = "agent-review"
 
 // span is the range under review: as given, and resolved. For a pull
 // request, slug and pr name it, and top is where it was fetched: a

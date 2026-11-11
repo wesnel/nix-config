@@ -148,7 +148,7 @@ const (
 
 func TestReviewStatusThreads(t *testing.T) {
 	// pilot's login pattern also matches Copilot's: a thread is counted
-	// once, for the first bot by name that matches its author, as `pr-loop
+	// once, for the first bot by name that matches its author, as `agent-pr
 	// threads` labels it.
 	reviewRepo(t, `{"bots": {
 		"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}},
@@ -254,7 +254,7 @@ func TestRequest(t *testing.T) {
 			fakeReviewThread{first: copilotLogin, last: "me"},
 			fakeReviewThread{first: copilotLogin, last: copilotLogin})
 		_, err := Request(nil, nil, nil)
-		if !refused(err) || !strings.Contains(err.Error(), "pr-loop threads 1") {
+		if !refused(err) || !strings.Contains(err.Error(), "agent-pr threads 1") {
 			t.Errorf("an unanswered thread: %v", err)
 		}
 		if len(f.requested) > 0 {

@@ -1,6 +1,6 @@
 ---
 name: signing-pass
-description: Use before creating, amending or rewriting commits, before handing a change back, or after a signing failure. Commit unsigned, use pr-loop next to open a fresh branch as an unsigned draft PR, then hand over the operator's hardware-key signing pass.
+description: Use before creating, amending or rewriting commits, before handing a change back, or after a signing failure. Commit unsigned, use agent-pr next to open a fresh branch as an unsigned draft PR, then hand over the operator's hardware-key signing pass.
 ---
 
 # Unsigned work, one signing pass
@@ -72,16 +72,16 @@ branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
 not matter. For a branch that starts from somewhere else, put that ref in the
 range, hand over `--base REF`, and sign that branch in a pass of its own.
 
-Then ask `pr-loop next` for each branch's next step, and take that step:
+Then ask `agent-pr next` for each branch's next step, and take that step:
 
 ```sh
-pr-loop next <branch> ...
+agent-pr next <branch> ...
 ```
 
 It only reads, and prints one step per branch:
 
 - `open`: the branch's draft pull request, yours to open as the
-  `pull-requests` skill's Opening says; run `pr-loop next` again afterwards.
+  `pull-requests` skill's Opening says; run `agent-pr next` again afterwards.
   A branch GitHub lacks can open unsigned; one already on GitHub needs
   verified signatures by the protected operator key.
 - `sign` or `push`: the operator's command, a `git sign-pass -C WORKTREE`
@@ -103,7 +103,7 @@ git sign-pass -C WORKTREE --set-upstream   # the same, and publish those that ha
 Every `git sign-pass` you hand over carries `-C WORKTREE`, the absolute path
 of the worktree the branch is checked out in, which the plan records. The
 operator's terminal is not in that worktree, and `-C` runs the pass there as
-git's own `-C` does, so they need no `cd`. `pr-loop next` prints it; add it
+git's own `-C` does, so they need no `cd`. `agent-pr next` prints it; add it
 to a command you write yourself.
 
 Each push first checks protected operator signatures outside the destination's
@@ -178,8 +178,8 @@ changes), whose message after the `amend!` line becomes that commit's whole
 message.
 
 During a review loop (the `review-loop` skill), the commits are also
-fixups, which this pass squashes as well as signing them, once `pr-loop
-sign-check` has passed. On a ready PR, `pr-loop push` takes only
+fixups, which this pass squashes as well as signing them, once `agent-pr
+sign-check` has passed. On a ready PR, `agent-pr push` takes only
 `--fixup=<commit>`, never `amend!` or `squash!`, since the loop must not
 change the PR's commit messages.
 
@@ -219,20 +219,20 @@ hand over again. A line marked stale is for the record: take no follow-up.
 ## After a push
 
 After every push to a pull request that you make or are told about,
-including `pr-loop open` and the operator's `git sign-pass --push`, watch
+including `agent-pr open` and the operator's `git sign-pass --push`, watch
 its CI if you are still running. Run this in the background, naming the
 pull request's number or branch, as a command of its own with no `cd`
 before it, with the Bash tool's `run_in_background` or your harness's
 equivalent, and act when it exits:
 
 ```sh
-pr-loop wait ci --timeout 3600 PR
+agent-pr wait ci --timeout 3600 PR
 ```
 
 It waits for the pushed commit to become the pull request's head, so it
 never reports the previous head's checks, and prints a `result`: `passed`,
 `failed`, `failedOnBase`, `noChecks` (exit 4) or `timedOut` (exit 3). Each
-failed check names the `pr-loop logs` command for its log and says whether
+failed check names the `agent-pr logs` command for its log and says whether
 it fails on the base too (`onBase`).
 
 - A failure the pull request caused: fix it as a fixup, as above, and hand

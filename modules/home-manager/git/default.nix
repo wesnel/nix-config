@@ -82,7 +82,7 @@ in {
         # system config, and the keychain holds a GitHub login, with which
         # `git push https://github.com/...` would publish without a key touch.
         # An empty helper empties the list for github.com: HTTPS fetches stay
-        # anonymous and authenticated pushes use SSH. gh and pr-loop keep
+        # anonymous and authenticated pushes use SSH. gh and agent-pr keep
         # their own login.
         credential."https://github.com".helper = "";
 

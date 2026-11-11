@@ -89,7 +89,7 @@ func TestRouting(t *testing.T) {
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
 		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
 		if code != 0 || len(run_.Reviews) != 1 || run_.review("security").Reviewer != "" ||
-			!strings.Contains(stderr, "run `git delegate --reviewer security --plan "+f.plan+" HEAD~1..HEAD`") {
+			!strings.Contains(stderr, "run `agent-review --reviewer security --plan "+f.plan+" HEAD~1..HEAD`") {
 			t.Errorf("exit %d, %+v\n%s", code, run_, stderr)
 		}
 	})

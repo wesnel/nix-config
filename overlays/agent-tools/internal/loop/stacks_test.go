@@ -301,7 +301,7 @@ func TestStackOpened(t *testing.T) {
 		writes := len(f.writes)
 		got := opened(14, "k", "a")
 		reason, _ := got["unstacked"].(string)
-		if !refusal.SaysInstead(reason) || !strings.Contains(reason, "`pr-loop link 1 14`") || len(f.writes) != writes {
+		if !refusal.SaysInstead(reason) || !strings.Contains(reason, "`agent-pr link 1 14`") || len(f.writes) != writes {
 			t.Errorf("onto a PR with another above it: %v, writes %v", got, f.writes[writes:])
 		}
 	})

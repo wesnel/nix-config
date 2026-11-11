@@ -45,7 +45,7 @@ func privateStageArgs(t *testing.T, repo string, paths ...string) []string {
 // nest in another sandbox, so it runs only where PR_LOOP_NATIVE_CODEX names
 // the Codex executable, from a terminal outside every agent's sandbox:
 //
-//	PR_LOOP_NATIVE_CODEX=$HOME/.local/bin/codex go test ./cmd/pr-loop -run TestGitStageNative -count=1 -v
+//	PR_LOOP_NATIVE_CODEX=$HOME/.local/bin/codex go test ./cmd/agent-ops -run TestGitStageNative -count=1 -v
 func TestGitStageNative(t *testing.T) {
 	codex := os.Getenv("PR_LOOP_NATIVE_CODEX")
 	if codex == "" {
@@ -188,7 +188,7 @@ func TestGitStageProbe(t *testing.T) {
 // Codex is given it; TestGitStageNative checks that Codex enforces it.
 func TestGitStageSandbox(t *testing.T) {
 	layout := gitstage.Layout{Worktree: "/w/task", GitDir: "/r/.git/worktrees/task", CommonDir: "/r/.git"}
-	args, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop")
+	args, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/agent-ops")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestGitStageSandbox(t *testing.T) {
 		`"/w/task"="read"`, `"/r/.git/worktrees/task"="read"`,
 		`"/r/.git/HEAD"="read"`, `"/r/.git/config"="read"`, `"/r/.git/refs"="read"`,
 		`"/r/.git/packed-refs"="read"`, `"/r/.git/info"="read"`,
-		`"/bin/codex"="read"`, `"/bin/pr-loop"="read"`, `"/private/tmp"="deny"`,
+		`"/bin/codex"="read"`, `"/bin/agent-ops"="read"`, `"/private/tmp"="deny"`,
 		// Denied, not only left out, in case a read above holds it.
 		`"/r/.git/objects"="deny"`,
 	} {
@@ -220,17 +220,17 @@ func TestGitStageSandbox(t *testing.T) {
 	}
 	// A TOML table holds each key once, or Codex cannot load the profile.
 	t.Setenv("TMPDIR", "/tmp")
-	if args, err = gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop"); err != nil {
+	if args, err = gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/agent-ops"); err != nil {
 		t.Fatal(err)
 	}
 	if line = strings.Join(args, " "); strings.Count(line, `"/tmp"=`) != 1 {
 		t.Errorf("profile names /tmp more than once:\n%s", line)
 	}
-	if _, err := gitStageSandbox(layout, "/p/private", "/tmp", "/bin/pr-loop"); err == nil {
+	if _, err := gitStageSandbox(layout, "/p/private", "/tmp", "/bin/agent-ops"); err == nil {
 		t.Error("a path both read and denied reached Codex's configuration")
 	}
 	layout.Worktree = "/w/task\n"
-	if _, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop"); err == nil {
+	if _, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/agent-ops"); err == nil {
 		t.Error("a path with a control character reached Codex's configuration")
 	}
 }

@@ -7,11 +7,11 @@ func TestSaysInstead(t *testing.T) {
 		name, reason string
 		want         bool
 	}{
-		{"command only in the reason", "Pushing goes through `pr-loop push`.", false},
+		{"command only in the reason", "Pushing goes through `agent-pr push`.", false},
 		{"no hand-off after the reason", "No. Try something else.", false},
-		{"command after the reason", "Pushing is checked. Use `pr-loop push`.", true},
+		{"command after the reason", "Pushing is checked. Use `agent-pr push`.", true},
 		{"the operator only in the reason", "Pruning is the operator's call; leave it to them.", false},
-		{"command handed to the operator after the reason", "Pruning is a decision. Leave `pr-loop end --prune` to them.", true},
+		{"command handed to the operator after the reason", "Pruning is a decision. Leave `agent-pr end --prune` to them.", true},
 		{"full stop inside backticks", "`git x. y` is an alias; ask the operator.", true},
 		{"the operator after the reason", "Pruning is a decision. The operator decides.", true},
 	} {

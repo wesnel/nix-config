@@ -166,7 +166,7 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 				c.OnBase = "absent"
 			}
 			if c.Job != 0 {
-				c.Logs = fmt.Sprintf("pr-loop logs %d %s", number, shellQuote(c.Name))
+				c.Logs = fmt.Sprintf("agent-pr logs %d %s", number, shellQuote(c.Name))
 			}
 			ci.Failed = append(ci.Failed, c)
 		}
@@ -241,7 +241,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 	want := ""
 	if sha != "" {
 		if len(numbers) != 1 {
-			return nil, false, refuse("--sha names one head, so it takes exactly one PR; run `pr-loop wait ci --sha REV PR` for each")
+			return nil, false, refuse("--sha names one head, so it takes exactly one PR; run `agent-pr wait ci --sha REV PR` for each")
 		}
 		if want, err = fullOid(sha); err != nil {
 			return nil, false, err
@@ -343,7 +343,7 @@ func Logs(pr string, check string, lines int) (string, error) {
 			continue
 		}
 		if c.Job == 0 {
-			return "", refuse("%s is not a GitHub Actions job, so pr-loop cannot fetch its log; name %s in the report for the operator", check, c.URL)
+			return "", refuse("%s is not a GitHub Actions job, so agent-pr cannot fetch its log; name %s in the report for the operator", check, c.URL)
 		}
 		raw, err := gh.Raw(fmt.Sprintf("repos/%s/actions/jobs/%d/logs", slug, c.Job))
 		if err != nil {
@@ -356,10 +356,10 @@ func Logs(pr string, check string, lines int) (string, error) {
 		return strings.Join(all, "\n"), nil
 	}
 	if ci.State == "awaitingHead" {
-		return "", refuse("#%d's head is not yet %s on GitHub, so its checks are not in; run `pr-loop wait ci %d` first",
+		return "", refuse("#%d's head is not yet %s on GitHub, so its checks are not in; run `agent-pr wait ci %d` first",
 			number, ci.ExpectedOid, number)
 	}
-	return "", refuse("no failed check named %q on #%d; `pr-loop ci %d` lists its checks", check, number, number)
+	return "", refuse("no failed check named %q on #%d; `agent-pr ci %d` lists its checks", check, number, number)
 }
 
 // ciTargets resolves the PRs that ci, wait, logs, status, request and end
@@ -433,7 +433,7 @@ func checkPR(repo *Repo, number int) error {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) { `+prHeadFields+` } }
 	}`, map[string]any{"owner": owner, "name": name, "number": number}, &data)
 	if err == nil && !data.Repository.PullRequest.byViewer(repo) {
-		err = refuse("#%d is not an open pull request by %s in %s, and pr-loop reads CI only on those; "+
+		err = refuse("#%d is not an open pull request by %s in %s, and agent-pr reads CI only on those; "+
 			"name one that is, or leave this one to the operator", number, repo.Viewer, repo.Slug)
 	}
 	return err
@@ -472,5 +472,5 @@ func branchPR(repo *Repo, local string) (int, error) {
 		}
 	}
 	return 0, refuse("%s is not the head of an open pull request by %s in %s; name the pull request by number, "+
-		"or open one with `pr-loop open`", head, repo.Viewer, repo.Slug)
+		"or open one with `agent-pr open`", head, repo.Viewer, repo.Slug)
 }

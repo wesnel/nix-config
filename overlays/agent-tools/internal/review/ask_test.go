@@ -13,7 +13,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// askCodex runs `git delegate ask` with args, and returns its exit
+// askCodex runs `agent-review ask` with args, and returns its exit
 // status, its answer and stderr.
 func askCodex(t *testing.T, args ...string) (int, map[string]any, string) {
 	t.Helper()
@@ -115,7 +115,7 @@ func TestAsk(t *testing.T) {
 	t.Run("Codex unavailable", func(t *testing.T) {
 		f := askFixture(t, false)
 		code, _, stderr := askCodex(t, "--question", ".git/question.md", "code.txt")
-		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:")
+		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review:")
 		if code != 4 || !strings.Contains(reason, "sub-agent") || !refusal.SaysInstead(reason) {
 			t.Errorf("exit %d, %q", code, stderr)
 		}
@@ -220,7 +220,7 @@ func TestAsk(t *testing.T) {
 					t.Errorf("exit %d\n%s", code, stderr)
 				}
 				if !c.ok {
-					reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
+					reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review:refused: ")
 					if code != 2 || !refusal.SaysInstead(reason) || ran == nil {
 						t.Errorf("exit %d, Codex ran: %v, %q", code, ran == nil, stderr)
 					}
@@ -239,7 +239,7 @@ func TestAsk(t *testing.T) {
 			t.Fatal(err)
 		}
 		code, _, stderr := askCodex(t, "--question", ".git/question.md", "linked.txt")
-		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
+		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review:refused: ")
 		if code != 2 || !refusal.SaysInstead(reason) {
 			t.Errorf("exit %d, %q", code, stderr)
 		}
@@ -260,7 +260,7 @@ func TestAsk(t *testing.T) {
 			f := askFixture(t, true)
 			t.Setenv("FAKE_CODEX", "answer")
 			code, _, stderr := askCodex(t, args...)
-			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review:refused: ")
 			if code != 2 || !refusal.SaysInstead(reason) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)
 			}
@@ -290,7 +290,7 @@ func TestAsk(t *testing.T) {
 			t.Setenv("FAKE_CODEX", "answer")
 			arg := place(t, f)
 			code, _, stderr := askCodex(t, "--question", ".git/question.md", arg)
-			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review:refused: ")
 			if code != 2 || !strings.Contains(reason, "outside the repository") || !refusal.SaysInstead(reason) {
 				t.Errorf("%s: exit %d, %q", arg, code, stderr)
 			}

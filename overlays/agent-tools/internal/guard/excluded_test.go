@@ -17,7 +17,7 @@ import (
 func TestExcludedAlone(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"guard": {"excludedCommands": `+
-		`["gh-read *", "git delegate *", "git-delegate *", "pr-loop wait *", "agent-plan log *"]}}`), 0o600)
+		`["gh-read *", "agent-review *", "agent-pr wait *", "agent-plan log *"]}}`), 0o600)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	work := t.TempDir()
 	// hook runs the baseline hook on a shell call, as Claude Code makes it
@@ -77,9 +77,9 @@ func TestExcludedAlone(t *testing.T) {
 		says      string // what the reason holds
 	}{
 		{"agent-plan log /p.org --item S1 --kind started --summary '> a | b'", false, "may run sandboxed"},
-		{"git delegate --plan /p/2026-10-14-x.box.org main..topic", false, "may run sandboxed"},
+		{"agent-review --plan /p/2026-10-14-x.box.org main..topic", false, "may run sandboxed"},
 		{"gh-read pr view 5 -R o/r", false, "may run sandboxed"},
-		{"pr-loop wait ci 5", false, "may run sandboxed"},
+		{"agent-pr wait ci 5", false, "may run sandboxed"},
 		// gh cannot read its login in the sandbox, in any form.
 		{"gh pr view 5 -R o/r", true, "`gh-read`"},
 	} {
@@ -118,8 +118,8 @@ func TestExcludedAlone(t *testing.T) {
 			"agent-plan log /p.org --item S1 --kind started --summary '=word first'", "a word starting with ="},
 		{`agent-plan log /p.org --item S1 --kind started --summary "run $(make)"`,
 			`agent-plan log /p.org --item S1 --kind started --summary "run $make"`, "$("},
-		{"git delegate --goal goal.txt main..topic --items 'a `b`'",
-			"git delegate --goal goal.txt main..topic --items 'a b'", "a backtick"},
+		{"agent-review --goal goal.txt main..topic --items 'a `b`'",
+			"agent-review --goal goal.txt main..topic --items 'a b'", "a backtick"},
 	} {
 		t.Run(caseName(true, c.refused), func(t *testing.T) {
 			decision, reason := hook(t, c.refused, false)
@@ -162,11 +162,8 @@ func TestExcludedAlone(t *testing.T) {
 			t.Errorf("a reviewer's %q: %s", line, out.String())
 		}
 	}
-	// git's own options before delegate keep the line from matching. The
-	// hint names what works: delegate takes no -C, and resolves its range
-	// from any worktree.
 	decision, reason := hook(t, "git -C "+work+" delegate --plan /p/2026-10-14-x.box.org main..topic", false)
-	if decision != "deny" || strings.Contains(reason, "-C") || !strings.Contains(reason, "any worktree") {
+	if decision != "deny" || !strings.Contains(reason, "obsolete") {
 		t.Errorf("git -C DIR delegate: %q, %q", decision, reason)
 	}
 	// A subcommand left in the sandbox runs there in any line, and Codex,
@@ -177,11 +174,11 @@ func TestExcludedAlone(t *testing.T) {
 	}{
 		{"agent-plan status /p.org | head", false},
 		// A comment's > is no redirection.
-		{"pr-loop wait ci 5 # comment > x", false},
+		{"agent-pr wait ci 5 # comment > x", false},
 		{"gh --version", false},
 		// Not a read gh-read runs: it is left to fail, or not, as it would.
 		{"gh api graphql -f query=x", false},
-		{"cd " + work + " && pr-loop wait ci 5", true},
+		{"cd " + work + " && agent-pr wait ci 5", true},
 		{"gh pr view 5 -R o/r", true},
 	} {
 		if decision, reason := hook(t, c.line, c.codex); decision == "deny" {

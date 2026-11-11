@@ -81,12 +81,12 @@ func checkOpen(repo *Repo, view *remoteView, branch, base, local string) (string
 	if base != repo.Default {
 		if _, err := checkBranch(repo, view.PRs, base); err != nil {
 			return "", refuse("the base must be %s or the head of an open pull request by %s in %s (%v); "+
-				"open the base with `pr-loop open` first, or leave `--base` out", repo.Default, repo.Viewer, repo.Slug, err)
+				"open the base with `agent-pr open` first, or leave `--base` out", repo.Default, repo.Viewer, repo.Slug, err)
 		}
 	}
 	oid := view.Heads[base]
 	if oid == "" {
-		return "", refuse("%s does not exist on GitHub; open it with `pr-loop open` first, or leave `--base` out", base)
+		return "", refuse("%s does not exist on GitHub; open it with `agent-pr open` first, or leave `--base` out", base)
 	}
 	return oid, nil
 }
@@ -202,7 +202,7 @@ func lintNew(branch, local string, known []string) error {
 		if problems := history.LintMessage(c.Message); len(problems) > 0 {
 			return refuse("%s's commit %q has a message where %s. Fix it before opening: reword a commit with an amend! commit "+
 				"(`git -c commit.gpgsign=false commit --allow-empty -m 'amend! SUBJECT' -m 'NEW MESSAGE'`), "+
-				"or commit a fixup again without what is wrong, then run `pr-loop open` again",
+				"or commit a fixup again without what is wrong, then run `agent-pr open` again",
 				branch, history.Subject(c.Message), strings.Join(problems, ", and "))
 		}
 	}
@@ -258,7 +258,7 @@ type opening struct {
 // what viewRemote reports for branch and base, and returns what Open would
 // do. own checks the signatures of base..tip for a branch GitHub has:
 // ownCommits for Open, which proves them in a directory of the protected
-// state home, and operatorFormatSigned for pr-loop next, which writes
+// state home, and operatorFormatSigned for agent-pr next, which writes
 // nothing.
 func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
 	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
@@ -313,7 +313,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
 	}
-	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
+	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `agent-pr open` again"); err != nil {
 		return nil, err
 	}
 	repo, err := repository()

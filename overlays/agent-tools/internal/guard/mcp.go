@@ -104,14 +104,14 @@ var unlistedCodex = func() map[string]string {
 	return reasons
 }()
 
-// OpsServer is the name pr-loop mcp has as an MCP server, under which the
+// OpsServer is the name agent-ops mcp has as an MCP server, under which the
 // codex module registers it. The guard delegates approvals to Codex;
 // elsewhere a main session asks, and a
 // reviewer is refused.
 const OpsServer = "agent_ops"
 
 // opsCall is why a main session asks before a call to OpsServer's tools.
-const opsCall = "pr-loop mcp's tools act on GitHub and run reviews as the operator, who confirms each call. " +
+const opsCall = "agent-ops mcp's tools act on GitHub and run reviews as the operator, who confirms each call. " +
 	"If they decline, put what you wanted in your report."
 
 // asks are the reasons the guard asks the operator about rather than denies,

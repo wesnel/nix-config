@@ -250,7 +250,7 @@ func exists(path string) bool {
 // whether there is anything to fold, and refuses a fold whose target is not
 // in base..tip. A commit is unsigned when its object has no signature header
 // for the repository's object format, the one git reads (gpgsig, or
-// gpgsig-sha256 in a SHA-256 repository): no verifier runs, so pr-loop
+// gpgsig-sha256 in a SHA-256 repository): no verifier runs, so agent-pr
 // next, which only reads, can call it.
 func RangeStart(base, tip string) (string, bool, error) {
 	commits, err := readRange(base, tip)

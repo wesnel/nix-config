@@ -1,6 +1,6 @@
 # The operator's way into a review loop: an ordinary session of the harness
 # they choose, held by its sandbox and the baseline guard like any other,
-# with the loop's mode in its environment, which pr-loop gates its writes
+# with the loop's mode in its environment, which agent-pr gates its writes
 # on. `claude-review-loop` is `review-loop --harness claude`, by the name it
 # is run as. The guard refuses both, and any setting of PR_LOOP_SESSION or
 # PR_LOOP_MODE, to agents.
@@ -9,25 +9,25 @@
   pkgs,
 }: let
   loopTools = [
-    "pr_loop_ci"
-    "pr_loop_draft"
-    "pr_loop_end"
-    "pr_loop_link"
-    "pr_loop_logs"
-    "pr_loop_next"
-    "pr_loop_open"
-    "pr_loop_push"
-    "pr_loop_reply"
-    "pr_loop_request"
-    "pr_loop_sign_check"
-    "pr_loop_stack"
-    "pr_loop_status"
-    "pr_loop_threads"
-    "pr_loop_wait"
-    "git_delegate"
-    "git_delegate_ask"
-    "git_delegate_settle"
-    "git_delegate_show"
+    "agent_pr_ci"
+    "agent_pr_draft"
+    "agent_pr_end"
+    "agent_pr_link"
+    "agent_pr_logs"
+    "agent_pr_next"
+    "agent_pr_open"
+    "agent_pr_push"
+    "agent_pr_reply"
+    "agent_pr_request"
+    "agent_pr_sign_check"
+    "agent_pr_stack"
+    "agent_pr_status"
+    "agent_pr_threads"
+    "agent_pr_wait"
+    "agent_review"
+    "agent_review_ask"
+    "agent_review_settle"
+    "agent_review_show"
     "github_file"
     "github_pr_diff"
     "github_pr_view"
@@ -38,10 +38,10 @@
   # there.
   claudeSettings = builtins.toJSON {
     env.PR_LOOP_SESSION = "1";
-    permissions.allow = ["Bash(pr-loop *)"];
+    permissions.allow = ["Bash(agent-pr *)"];
     autoMode.environment = [
       "$defaults"
-      "This is the operator's review-loop session over the pull requests it was started for. Its GitHub writes go through `pr-loop`, which holds them to the loop's mode, PR_LOOP_MODE."
+      "This is the operator's review-loop session over the pull requests it was started for. Its GitHub writes go through `agent-pr`, which holds them to the loop's mode, PR_LOOP_MODE."
     ];
   };
 
@@ -118,7 +118,7 @@
         out_=$($launch --people 12 '#13')
         [[ "$(sed -n 1,3p <<<"$out_")" == $'1\npeople\n--settings' ]]
         jq -e '.env == {PR_LOOP_SESSION: "1", PR_LOOP_MODE: "people"}
-          and .permissions.allow == ["Bash(pr-loop *)"]
+          and .permissions.allow == ["Bash(agent-pr *)"]
           and .autoMode.environment[0] == "$defaults"' <<<"$(sed -n 4p <<<"$out_")"
         [[ "$(sed -n 5,7p <<<"$out_")" == $'--permission-mode\nauto\n/review-loop 12 #13' ]]
         $launch --bots 7 | sed -n 4p | jq -e '.env.PR_LOOP_MODE == "bots"'
@@ -128,10 +128,10 @@
         expected=$(printf '%s\n' 1 "$mode" --no-daemon \
           -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
           -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")
-        for tool in pr_loop_ci pr_loop_draft pr_loop_end pr_loop_link pr_loop_logs pr_loop_next \
-          pr_loop_open pr_loop_push pr_loop_reply pr_loop_request pr_loop_sign_check pr_loop_stack \
-          pr_loop_status pr_loop_threads pr_loop_wait git_delegate git_delegate_ask git_delegate_settle \
-          git_delegate_show github_file github_pr_diff github_pr_view github_profile; do
+        for tool in agent_pr_ci agent_pr_draft agent_pr_end agent_pr_link agent_pr_logs agent_pr_next \
+          agent_pr_open agent_pr_push agent_pr_reply agent_pr_request agent_pr_sign_check agent_pr_stack \
+          agent_pr_status agent_pr_threads agent_pr_wait agent_review agent_review_ask agent_review_settle \
+          agent_review_show github_file github_pr_diff github_pr_view github_profile; do
           expected+=$(printf '\n%s\n%s' -c "mcp_servers.agent_ops.tools.$tool.approval_mode=\"approve\"")
         done
         expected+=$(printf '\n%s' "\$review-loop Run the operator's $mode-mode review loop on these pull requests: 12 #13")

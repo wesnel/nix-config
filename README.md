@@ -91,9 +91,15 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
   directory.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
-  `git delegate`, `pr-loop` and `agent-plan`, built from
+  `agent-review`, `agent-pr`, `agent-ops` and `agent-plan`, built from
   `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
+
+`agent-review` runs reviews and reads or settles their findings. `agent-pr`
+publishes pull requests and manages their CI, stacks and discussions.
+`agent-ops` serves MCP tools, runs harness hooks and prepares checkouts.
+`agent-plan` keeps plans and their event logs. `review-loop` is the optional
+launcher for a session that handles review feedback.
 
 Agents write the files below themselves, so Nix merges its keys into them on
 every switch rather than owning them. Everything else in them is left alone,
@@ -104,7 +110,7 @@ next switch.
 | --- | --- |
 | `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume, compaction or `/clear` (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
-| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy, and `[mcp_servers.agent_ops]` for `pr-loop mcp` |
+| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy, and `[mcp_servers.agent_ops]` for `agent-ops mcp` |
 
 ## committing: unsigned work, one signing pass
 
@@ -112,7 +118,7 @@ Commits and pushes are signed with a YubiKey that needs a touch, so agents
 commit unsigned, fold corrections into the commit they correct with
 `git commit --fixup`, and never `git push` or tag. The instructions and the
 `signing-pass` skill tell them so. To open a pull request for a new branch,
-an agent runs `pr-loop open`, which pushes the unsigned commits through the
+an agent runs `agent-pr open`, which pushes the unsigned commits through the
 GitHub API with your `gh` login and opens a draft; for a branch GitHub
 already has at the local tip, with verified operator-key signatures and no open pull
 request, it opens the draft without pushing. It refuses a default branch,
@@ -121,9 +127,9 @@ the head of another open pull request of yours in the same repository, runs
 `git-push-guard`'s check, points the branch's upstream at its copy on
 GitHub, and puts a pull request based on another into that one's GitHub
 stack.
-`pr-loop link BOTTOM ... TOP` stacks pull requests whose bases already
-chain, such as those opened after a signed push, and `pr-loop stack PR`
-shows GitHub's stack beside the chain of bases. `pr-loop next [BRANCH...]`
+`agent-pr link BOTTOM ... TOP` stacks pull requests whose bases already
+chain, such as those opened after a signed push, and `agent-pr stack PR`
+shows GitHub's stack beside the chain of bases. `agent-pr next [BRANCH...]`
 prints each branch's single next step, which is what an agent hands you:
 nothing, opening its pull request, a signing pass or a push, or what blocks
 it. A branch GitHub already has needs verified signatures by the operator's
@@ -244,8 +250,8 @@ one outside it. Hooks, MCP servers and the file tools run outside it.
   each, and whether a token closes it.
 
 So in a session `git push`, `gh` writes and SSH fail rather than ask. The
-way to GitHub is `pr-loop`: `pr-loop open` for a new pull request, `pr-loop
-push`, `pr-loop reply`.
+way to GitHub is `agent-pr`: `agent-pr open` for a new pull request, `agent-pr
+push`, `agent-pr reply`.
 
 A few commands run outside the sandbox, as the operator, after the usual
 permission check, and only when the whole call is that one command, with no
@@ -255,10 +261,10 @@ names what it found:
 
 - `gh-read`, a `gh` that runs only pull request, workflow run and
   repository reads, and refuses `--web`, which opens a browser.
-- `git delegate`, whose Codex sandbox cannot start inside this one, which
+- `agent-review`, whose Codex sandbox cannot start inside this one, which
   fetches pull requests with your login and writes the review records the
   sandbox denies. Every one of its subcommands is one an agent may run.
-- `pr-loop`'s GitHub commands (`open`, `stack`, `link`, `push`, `threads`,
+- `agent-pr`'s GitHub commands (`open`, `stack`, `link`, `push`, `threads`,
   `reply`, `resolve`, `draft`, `post`, `request`, `status`, `ci`, `logs`,
   `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
@@ -271,18 +277,18 @@ names what it found:
 
 They are safe to run as the operator because none runs a program its
 arguments name, and `gh-read` only reads. The guard refuses a file argument
-that names a credential, and `pr-loop` refuses to post text that holds a
+that names a credential, and `agent-pr` refuses to post text that holds a
 secret's shape. In Claude Code, the read-only ones and `agent-plan`'s
 writes are allowed without a prompt.
 
 Codex's sandbox hides the gh login and the reviewers' logins from every
-command, approved or not, so in Codex `pr-loop`'s GitHub commands and
-`git delegate` run as the tools of `pr-loop mcp`, an MCP server Codex
+command, approved or not, so in Codex `agent-pr`'s GitHub commands and
+`agent-review` run as the tools of `agent-ops mcp`, an MCP server Codex
 starts as a process of its own outside that sandbox, registered as
 `agent_ops`. Its command tools take typed arguments and run in the
 worktree their call names. Routine `agent-plan` tools use inline text and
 the CLI's plan-directory checks; Codex preapproves their explicit catalog
-in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
+in `overlays/agent-tools/cmd/agent-ops/plan-tools.json`. Ownership reassignment
 (`agent-plan own`) remains an approved shell command because it changes
 the edit guard's worktree boundary. Other server tools prompt, with file inputs
 confined to the worktree. A Codex review loop preapproves its named agent_ops
@@ -308,12 +314,12 @@ or it is not UTF-8 text.
 Every agent session that commits a change runs the `review-change` skill's
 pipeline unless you opt out for the task. That skill selects reviews by
 the change's risks, sets the allowance across fixups and resumes, and says
-when fixes have enough verification. `git delegate` supplies one fresh
+when fixes have enough verification. `agent-review` supplies one fresh
 general reviewer, preferring the other model family. Focused reviews and
 walkthroughs are selected explicitly. Two commands give reviews evidence
 from the code and its tests.
 
-### `git delegate`
+### `agent-review`
 
 Reviews a range, or someone else's pull request, with reviewers that did
 not write it and see only the commits and what they are handed: a goal
@@ -322,13 +328,13 @@ change's plan or of a part of it, and optionally the items the change
 answers. It keeps what they found in a review record:
 
 ``` sh
-git delegate --plan PLAN origin/main..HEAD             # one general reviewer; reports specialist candidates
-git delegate --reviewer security --plan PLAN --part P1 origin/main..HEAD
-git delegate --reviewer compat --plan PLAN --description pr.md origin/main..HEAD
-git delegate --reviewer guide --plan PLAN origin/main..HEAD  # a requested walkthrough
-git delegate wesnel/emacs-config#2                     # someone else's pull request
-git delegate show wesnel/emacs-config#2                # the review record, as JSON
-git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
+agent-review --plan PLAN origin/main..HEAD             # one general reviewer; reports specialist candidates
+agent-review --reviewer security --plan PLAN --part P1 origin/main..HEAD
+agent-review --reviewer compat --plan PLAN --description pr.md origin/main..HEAD
+agent-review --reviewer guide --plan PLAN origin/main..HEAD  # a requested walkthrough
+agent-review wesnel/emacs-config#2                     # someone else's pull request
+agent-review show wesnel/emacs-config#2                # the review record, as JSON
+agent-review settle origin/main..HEAD F3 rebut --reason-file why.md
 ```
 
 For a Codex caller the general reviewer is Claude's `adversarial-reviewer`,
@@ -340,7 +346,7 @@ plugin; web search and the image viewer are off; and a permissions profile
 lets its commands read only the worktree, the parts of the git directory git
 needs, the codex executable, the Nix store and the system files they need,
 with no writes and no network. Codex's sandbox cannot start inside another
-macOS sandbox; delegate checks that it starts, confined, before the review.
+macOS sandbox; agent-review checks that it starts, confined, before the review.
 Its contract is `overlays/agent-tools/internal/review/reviewer.md`, the same
 text the prompt for a sub-agent carries, and its reply must fit
 `findings.schema.json` beside it.
@@ -368,7 +374,7 @@ description's `## Reverting` section against the code, from
 
 The upgrade review (`--reviewer upgrade`) reviews a change's version bumps
 (lock files, Nix pins, the actions CI runs) against what changed upstream
-between each pin's two versions. delegate gathers that text on the host
+between each pin's two versions. agent-review gathers that text on the host
 before the reviewer starts, over HTTPS and never over SSH: from a local
 clone under `~/git/github.com`, the hash-checked source trees, the public
 module proxy and GitHub's API, with private modules
@@ -402,17 +408,17 @@ BASE and HEAD being full commit IDs, so a repository with no GitHub origin
 has one too; it holds a round per reviewer per run. A record at
 `reviews/OWNER/NAME/BASE..HEAD.org` is read where it is, and a change to it
 is written under `ranges/`, which wins from then on. A pull request's threads and drafted
-replies are `reviews/OWNER/NAME/pr-N.org`, which `pr-loop threads` writes too. Only
-delegate and pr-loop write them: the sandbox denies the directory to every
+replies are `reviews/OWNER/NAME/pr-N.org`, which `agent-pr threads` writes too. Only
+agent-review and agent-pr write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
-reads them. delegate prints JSON and exits 0 with no open findings, 3 with
+reads them. agent-review prints JSON and exits 0 with no open findings, 3 with
 open findings, 4 when a reviewer could not run (its provider held, as below;
 Codex not installed or signed in, or its sandbox cannot start; claude or
 its config missing; a reply that did not fit twice), and 5 when a record fails
 its structure check, which only a hand edit makes. `--print-prompt` prints a
-reviewer's prompt instead of running it. See `git delegate -h`.
+reviewer's prompt instead of running it. See `agent-review -h`.
 
-`git delegate ask --question FILE PATH...` selects the other family the
+`agent-review ask --question FILE PATH...` selects the other family the
 same way, for a second opinion from copies of the named files alone.
 Add `--print-prompt` to export its contract and snapshots for a fresh
 read-only sub-agent without calling a provider.
@@ -421,9 +427,9 @@ A provider held is not called again, by any review type or invocation on
 this host, until its hold ends:
 
 ```sh
-git delegate availability                    # each provider's hold; calls neither
-git delegate availability --disable claude   # held until cleared
-git delegate availability --clear claude     # after recovery, or a change of account
+agent-review availability                    # each provider's hold; calls neither
+agent-review availability --disable claude   # held until cleared
+agent-review availability --clear claude     # after recovery, or a change of account
 ```
 
 A failed call records a hold itself. A rate limit (a 429, which both CLIs
@@ -435,14 +441,14 @@ no prompt or provider output. Calls already started may finish.
 
 It never runs `git red-check`, which runs the commits' code: the session runs
 it, as it runs any test, and passes its JSON with `--red-check FILE`, a
-file under the working directory. delegate refuses JSON whose commits are
+file under the working directory. agent-review refuses JSON whose commits are
 not the range's, or that ran other test suites than the repository's,
 records the round's red-check as the session's, and raises an `untested`
 finding of its own, `RC-…`, for each suite of a commit that passes without
 it, at that suite's test files. Where the repository has test suites and
 no `--red-check` is given, it
 says on stderr that the review has no red-check results. For someone else's
-pull request, the session fetches it from delegate's clone, a local read,
+pull request, the session fetches it from agent-review's clone, a local read,
 and runs red-check on it there.
 
 ### `git red-check`
@@ -686,7 +692,7 @@ purpose, for one push:
 git -c push-guard.allowUnsigned=true push ...
 ```
 
-`pr-loop`'s pushes go through the GitHub API, which runs no hook, so its
+`agent-pr`'s pushes go through the GitHub API, which runs no hook, so its
 unsigned commits are left for the signing pass.
 
 ## the review loop
@@ -704,7 +710,7 @@ in one of two modes you choose when you start it:
 
 ### starting a loop
 
-You need `gh auth login`, which `pr-loop` uses outside the sandbox, and open
+You need `gh auth login`, which `agent-pr` uses outside the sandbox, and open
 PRs by you, draft or ready, in one repository, stacked by base branch. On a
 ready PR, the loop's pushes, replies and review requests notify its
 reviewers and code owners. Then, in the repository:
@@ -725,17 +731,17 @@ satisfied or the loop needs a decision, and hands back.
 
 A repository whose fresh checkouts need preparing, such as generating files
 it does not commit, gets a `setup` command in each clone's agent settings
-(see [reviews](#reviews-fresh-eyes-and-tests-that-fail)). `pr-loop setup
+(see [reviews](#reviews-fresh-eyes-and-tests-that-fail)). `agent-ops setup
 [PATH]` runs it in the sandbox in a worktree,
 printing the command and its exit status; the loop runs it in each worktree
 it makes, and nothing runs it on its own. A repository cannot name a setup
 command itself.
 
-`pr-loop` writes only to open PRs by you in the same repository, never the
-default branch, and re-checks that before every write. `pr-loop push`
+`agent-pr` writes only to open PRs by you in the same repository, never the
+default branch, and re-checks that before every write. `agent-pr push`
 moves a branch only from the head your checkout last fetched, or the one
 `--lease BRANCH=SHA` names, so a push made elsewhere is never overwritten,
-and on a ready PR it takes only fixups of the PR's own commits. `pr-loop
+and on a ready PR it takes only fixups of the PR's own commits. `agent-pr
 reply` and `resolve` take only threads whose every comment is a configured
 bot's or yours.
 
@@ -745,44 +751,44 @@ In a terminal of your own, in the repository:
 
 ``` sh
 git sign-pass --push TOP   # squash the fixups, sign, and push the stack, TOP its top branch
-pr-loop post 12            # people mode: post the drafted answers, each after you confirm it
-pr-loop merge 14           # merge PR 14 and every open PR below it in its GitHub stack, after you confirm
+agent-pr post 12            # people mode: post the drafted answers, each after you confirm it
+agent-pr merge 14           # merge PR 14 and every open PR below it in its GitHub stack, after you confirm
 ```
 
-The loop runs `pr-loop sign-check` before it hands over, which squashes the
+The loop runs `agent-pr sign-check` before it hands over, which squashes the
 fixups unsigned in a throwaway worktree and stops unless every PR would end
-with exactly its own commits and the files the loop left. `pr-loop post`
+with exactly its own commits and the files the loop left. `agent-pr post`
 shows each draft on your terminal and posts exactly what it showed once you
 answer `y`; it resolves the threads answered fix or rebut, and once every
 person's thread has an answer, asks those people to review again. `gh pr
-merge` refuses a PR in a GitHub stack; `pr-loop merge` lists the PRs
+merge` refuses a PR in a GitHub stack; `agent-pr merge` lists the PRs
 GitHub's merge-async endpoint would merge and asks GitHub to merge them
 once you answer `y`, refusing if the top PR's head has moved since. A bots
-loop deletes its trigger comments with `pr-loop end` as it hands back.
+loop deletes its trigger comments with `agent-pr end` as it hands back.
 
-These stay yours: waiving a CI failure (`pr-loop request --accept-failure
+These stay yours: waiving a CI failure (`agent-pr request --accept-failure
 CHECK`), pushing and posting in people mode, marking a PR ready for review,
 merging, and any change to Linear, which the hand-back proposes instead.
 
 ### what the wrapper adds
 
 `review-loop` puts `PR_LOOP_SESSION` and `PR_LOOP_MODE` in the session's
-environment and its commands', which `pr-loop` gates its writes on. Claude
-Code also gets an allow rule for `pr-loop`, so its commands run without a
+environment and its commands', which `agent-pr` gates its writes on. Claude
+Code also gets an allow rule for `agent-pr`, so its commands run without a
 prompt, and auto mode. Codex runs in the permission profile and approval
 policy its module writes to `~/.codex/config.toml`, which the launcher
-leaves as they are: each run of `pr-loop`, `gh-read`, `git delegate` or
+leaves as they are: each run of `agent-pr`, `gh-read`, `agent-review` or
 another of the excluded commands waits for your approval, as the launcher
 says when it starts. The launcher starts Codex with `--no-daemon`, since a
 shared background server would run the loop's commands without its
 variables. The guard denies an agent running `review-loop` or
 `claude-review-loop`, setting either variable, including through Claude
 Code's `--settings` or a Codex `-c` override or `-p` profile, or running
-`pr-loop post` or `pr-loop merge`.
+`agent-pr post` or `agent-pr merge`.
 
 ## the guard in every session
 
-`pr-loop guard --baseline` runs before every tool call of every session:
+`agent-ops guard --baseline` runs before every tool call of every session:
 
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
   Monitor, ExitWorktree, the file tools and MCP tools. `Read` is denied the credential files
@@ -793,10 +799,12 @@ Code's `--settings` or a Codex `-c` override or `-p` profile, or running
 - Codex: `~/.codex/hooks.json`, for every tool but `write_stdin`, which
   runs no hook; so the guard refuses to start a command that only reads
   the terminal, which `write_stdin` could then drive. Codex skips a hook
-  until it is trusted, so trust it with `/hooks` once after the first switch.
+  until it is trusted. Trust it with `/hooks` after the first switch and
+  whenever a switch or rollback changes its command: trust follows the
+  command's hash.
 
 It denies what is yours to do: pushing (hand over `git sign-pass --push`,
-or open a draft with `pr-loop open`), anything else that waits for a key
+or open a draft with `agent-pr open`), anything else that waits for a key
 touch (`git sign-pass`, a fetch, pull, clone or ls-remote whose URL is SSH
 after `insteadOf`, and ssh, scp or sftp to github.com or git.sr.ht),
 merging, closing, marking ready,
@@ -824,16 +832,16 @@ confirmation policy. Reviewers get reads alone, and tools absent from a
 listed server's inventory are denied until reviewed.
 Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
-(`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
+(`agent-ops mcp`): the guard delegates approvals to Codex, which preapproves
 the routine plan-tool catalog and prompts for other calls outside a Codex
 review-loop session. For `git_stage` the guard answers `allow` with the
 call's grant added, after the same ownership check as a file edit. Each
 refusal says what to do instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
-with only Read, Bash and StructuredOutput, also runs `pr-loop guard
+with only Read, Bash and StructuredOutput, also runs `agent-ops guard
 --reviewer` from its own definition, which keeps it to reading in any
 session. The guard also denies starting a
 review loop or setting its variables (`review-loop`, `claude-review-loop`,
-`PR_LOOP_SESSION`, `PR_LOOP_MODE`), `pr-loop post` and `pr-loop merge`,
+`PR_LOOP_SESSION`, `PR_LOOP_MODE`), `agent-pr post` and `agent-pr merge`,
 which are yours.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
@@ -961,7 +969,7 @@ mcp-proxy-status
 A session started while a server was not authorized reports it as not
 found; reconnect it with `/mcp` in Claude Code, or start a new session.
 The proxy serves only the servers it connected, so a server whose token
-was refused is not found either. `pr-loop mcp-status` names each server
+was refused is not found either. `agent-ops mcp-status` names each server
 that is not connected and its recovery guidance; each Claude Code
 session runs it as it starts and shows you what it found, and tells the
 session too, so it can ask you rather than add the vendor's server itself. If one does add it, the guard's reason for a

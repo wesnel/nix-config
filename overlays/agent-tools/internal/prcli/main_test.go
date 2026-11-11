@@ -1,4 +1,4 @@
-package main
+package prcli
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ func TestRun(t *testing.T) {
 		os.Unsetenv("GIT_WORK_TREE")
 		t.Chdir(dir)
 		var stdout, stderr bytes.Buffer
-		if code := run("end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
+		if code := Run("end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
 			t.Errorf("exit %d\n%s", code, stderr.String())
 		}
 	})
@@ -45,7 +45,7 @@ func TestRun(t *testing.T) {
 		t.Run("merge/"+name, func(t *testing.T) {
 			_, calls := posting(t)
 			var stdout, stderr bytes.Buffer
-			if code := run("merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
+			if code := Run("merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
 				t.Errorf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(calls); err == nil {
@@ -80,7 +80,7 @@ func posting(t *testing.T) (string, string) {
 	return dir, calls
 }
 
-// pr-loop may run outside the sandbox with the operator's login, so text
+// agent-pr may run outside the sandbox with the operator's login, so text
 // it posts holds no secret's shape.
 func TestOutgoingText(t *testing.T) {
 	ghCalled := func(calls string) bool {
@@ -89,7 +89,7 @@ func TestOutgoingText(t *testing.T) {
 	}
 	pr := func(args ...string) (int, string) {
 		var stdout, stderr bytes.Buffer
-		code := run(args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
+		code := Run(args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
 		return code, stderr.String()
 	}
 	// The fake gh fails, so the reply gets as far as GitHub and no further.
