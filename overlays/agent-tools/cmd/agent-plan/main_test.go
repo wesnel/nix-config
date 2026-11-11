@@ -861,6 +861,92 @@ func TestLog(t *testing.T) {
 	})
 }
 
+// worktrees prints the worktrees this host's plans give a session, read
+// from the plan files as they are: trash-scratch runs it before every
+// delete, which must not wait on the plans' remote, as find does.
+func TestWorktrees(t *testing.T) {
+	t.Run("one path per line", func(t *testing.T) {
+		setup(t)
+		tree, _ := filepath.EvalSymlinks(t.TempDir())
+		if code, _, errs := agentPlan(t, "", "new", "--title", "Add it", "--slug", "add-it", "--session", "claude:s-1",
+			"--worktree", tree); code != 0 {
+			t.Fatalf("new: %d %s", code, errs)
+		}
+		if code, out, errs := agentPlan(t, "", "worktrees", "--session", "claude:s-1"); code != 0 || out != tree+"\n" {
+			t.Errorf("worktrees: %d %q %s", code, out, errs)
+		}
+		if code, out, errs := agentPlan(t, "", "worktrees", "--session", "claude:s-2"); code != 0 || out != "" {
+			t.Errorf("worktrees of a session no plan names: %d %q %s", code, out, errs)
+		}
+		for _, args := range [][]string{
+			{},
+			{"--session", "s-1"},
+			{"--session", "claude:s-1", "--worktree", tree},
+			{"--session", "claude:s-1", "--branch", "loop"},
+		} {
+			if code, out, _ := agentPlan(t, "", append([]string{"worktrees"}, args...)...); code == 0 || out != "" {
+				t.Errorf("worktrees %v: %d %q", args, code, out)
+			}
+		}
+	})
+
+	// The plans' remote holds a plan of this host naming the session,
+	// which a pull would bring into the plans directory, as find's does.
+	t.Run("never pulls", func(t *testing.T) {
+		dir, _ := filepath.EvalSymlinks(t.TempDir())
+		git := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false"}, args...)...)
+			cmd.Env = append(gitenv.Without(os.Environ()), "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@e",
+				"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		origin, notes, other := filepath.Join(dir, "origin.git"), filepath.Join(dir, "notes"), filepath.Join(dir, "other")
+		git("init", "-q", "--bare", "-b", "main", origin)
+		git("init", "-q", "-b", "main", notes)
+		git("-C", notes, "commit", "-q", "--allow-empty", "-m", "base")
+		git("-C", notes, "remote", "add", "origin", origin)
+		git("-C", notes, "push", "-q", "origin", "main")
+		git("clone", "-q", origin, other)
+		c := plans.Config{Dir: filepath.Join(notes, "agents"), Repo: notes, Host: "box"}
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		config := filepath.Join(dir, "config.json")
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+		t.Setenv("CODEX_THREAD_ID", "")
+		local, remote := filepath.Join(dir, "local-tree"), filepath.Join(dir, "remote-tree")
+		if code, _, errs := agentPlan(t, "", "new", "--title", "Add it", "--slug", "add-it", "--session", "claude:s-1",
+			"--worktree", local); code != 0 {
+			t.Fatalf("new: %d %s", code, errs)
+		}
+		name := "20261014000000-remote.box"
+		os.MkdirAll(filepath.Join(other, "agents"), 0o755)
+		os.WriteFile(filepath.Join(other, "agents", name+".org"), []byte("#+title: Remote\n\n* Plan\n:PROPERTIES:\n:CUSTOM_ID: "+name+
+			"\n:SESSIONS: claude:s-1\n:WORKTREES: "+remote+"\n:END:\n** Goal\n"), 0o644)
+		os.WriteFile(filepath.Join(other, "agents", name+".log.org"), nil, 0o644)
+		git("-C", other, "add", "agents")
+		git("-C", other, "commit", "-q", "-m", "remote plan")
+		git("-C", other, "push", "-q", "origin", "main")
+
+		if code, out, errs := agentPlan(t, "", "worktrees", "--session", "claude:s-1"); code != 0 || out != local+"\n" {
+			t.Errorf("worktrees before a pull: %d %q %s", code, out, errs)
+		}
+		if _, err := os.Stat(filepath.Join(c.Dir, name+".org")); err == nil {
+			t.Errorf("worktrees pulled the remote's plan")
+		}
+		if code, out, _ := agentPlan(t, "", "find", "--session", "claude:s-1"); code != 0 || !strings.Contains(out, name) {
+			t.Fatalf("find did not pull the remote's plan: %d %s", code, out)
+		}
+		if code, out, errs := agentPlan(t, "", "worktrees", "--session", "claude:s-1"); code != 0 || out != local+"\n"+remote+"\n" {
+			t.Errorf("worktrees after find's pull: %d %q %s", code, out, errs)
+		}
+	})
+}
+
 func TestHooks(t *testing.T) {
 	// planned makes a plan, as newPlan does, in session s-9 of Claude Code.
 	planned := func(t *testing.T) string {

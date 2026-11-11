@@ -23,13 +23,37 @@ within() { [[ "$(fold "$1")" == "$(fold "$2")" || "$(fold "$1")" == "$(fold "$2"
 repo=$(git_read rev-parse --show-toplevel 2>/dev/null) || repo=''
 if [[ -n "$repo" ]]; then repo=$(realpath -e -- "$repo"); fi
 
+# linked_worktree DIR: whether DIR is in a linked worktree, not a main
+# checkout, where the operator's own work is.
+linked_worktree() {
+  local dirs
+  dirs=$(git_read -C "$1" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || return 1
+  [[ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]]
+}
+
 # This session's own scratch directory, named by its ID under the scratch
-# base; another session's beside it is not this one's to remove.
+# base; another session's beside it is not this one's to remove. And the
+# linked worktrees agent-plan worktrees gives this session, such as its task
+# worktrees while the working directory is the main checkout: those this
+# host's plans and parts naming the session name, but those OWNERS gives
+# another agent. It reads the plan files without pulling the notes
+# repository, so a delete waits on no network. Where it fails, no plan's
+# worktree holds scratch.
 session=''
+plan_trees=()
+plans_failure=''
 if [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
   for candidate in "$scratch_base"/*/"$CLAUDE_CODE_SESSION_ID"; do
     if [[ -d "$candidate" ]]; then session=$(realpath -e -- "$candidate"); fi
   done
+  if listed=$("$agent_plan" worktrees --session "claude:$CLAUDE_CODE_SESSION_ID" 2>/dev/null); then
+    while IFS= read -r tree; do
+      tree=$(realpath -e -- "$tree" 2>/dev/null) || continue
+      if linked_worktree "$tree"; then plan_trees+=("$tree"); fi
+    done <<<"$listed"
+  else
+    plans_failure="; agent-plan could not list this session's plan worktrees (exit $?), which \`agent-plan worktrees --session claude:$CLAUDE_CODE_SESSION_ID\` explains"
+  fi
 fi
 
 paths=()
@@ -44,20 +68,38 @@ for arg in "$@"; do
     fi
   done
   allowed=false
-  if [[ -n "$repo" ]] && within "$path" "$repo"; then
-    [[ "$(fold "$path")" != "$(fold "$repo")" ]] || refuse 'the worktree root is not scratch'
-    relative=${path:${#repo}+1}
-    ! within "$relative" .git || refuse 'Git metadata is not scratch'
+  # The worktree holding the path: the working directory's, else one of
+  # this session's plans names.
+  tree=''
+  for candidate in ${repo:+"$repo"} "${plan_trees[@]}"; do
+    if within "$path" "$candidate"; then
+      tree=$candidate
+      break
+    fi
+  done
+  if [[ -n "$tree" ]]; then
+    [[ "$(fold "$path")" != "$(fold "$tree")" ]] || refuse 'the worktree root is not scratch'
+    relative=${path:${#tree}+1}
+    [[ "/$(fold "$relative")/" != */.git/* ]] || refuse 'Git metadata is not scratch'
     ! within "$relative" .claude || refuse "$arg is Claude Code's project configuration, which the sandbox protects"
-    tracked=$(git_read -C "$repo" ls-files -- ":($pathspec_magic)$relative") || refuse 'cannot inspect tracked paths'
+    tracked=$(git_read -C "$tree" ls-files -- ":($pathspec_magic)$relative") || refuse 'cannot inspect tracked paths'
     [[ -z "$tracked" ]] || refuse "$arg contains a tracked path"
+    # The worktree's index lists none of the files a worktree nested in it
+    # tracks, so no path in or holding a nested worktree is scratch, its
+    # untracked files included.
+    inner=$(git_read -C "${path%/*}" rev-parse --show-toplevel) || refuse 'cannot inspect the worktree holding the path'
+    [[ "$(fold "$(realpath -e -- "$inner")")" == "$(fold "$tree")" ]] || refuse "$arg is in a worktree nested in $tree"
+    if [[ -d "$path" ]]; then
+      nested=$(find "$path" -mindepth 1 -iname .git -print -quit) || refuse "cannot inspect $arg for nested worktrees"
+      [[ -z "$nested" ]] || refuse "$arg holds a nested worktree"
+    fi
     allowed=true
   elif [[ -n "$session" ]] && within "$path" "$session"; then
     [[ "$(fold "$path")" != "$(fold "$session")" ]] || refuse "the session's scratch directory itself is not scratch"
     ! within "$path" "$session/tasks" || refuse "the session's task output is not scratch"
     allowed=true
   fi
-  "$allowed" || refuse "$arg is outside the working directory worktree and this session's scratch directory"
+  "$allowed" || refuse "$arg is outside the working directory worktree, the linked worktrees this session's plans name and give no other agent, and this session's scratch directory$plans_failure"
   paths+=("$path")
 done
 

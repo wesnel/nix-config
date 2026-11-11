@@ -433,8 +433,10 @@ with lib; let
   sandboxDeniedWrites = [plans.dir "${plans.repository.path}/.git" records];
 
   # trash-scratch's settings are shell words: scratchBase holds each
-  # session's directory, under its project, named by the session's ID, and
-  # protectedPaths are the paths the sandbox keeps from writes.
+  # session's directory, under its project, named by the session's ID,
+  # protectedPaths are the paths the sandbox keeps from writes, and
+  # agentPlanCommand is the agent-plan that lists the session's plan
+  # worktrees from its config.json.
   mkTrashScratch = {
     trashCommand,
     scratchBase ? ''"${
@@ -443,28 +445,31 @@ with lib; let
         else "/tmp"
       }/claude-$(id -u)"'',
     protectedPaths ? concatMapStringsSep " " escapeShellArg sandboxDeniedWrites,
+    agentPlanCommand ? agentPlan,
     postCheck ? "",
   }:
     pkgs.writeShellApplication {
       name = "trash-scratch";
-      runtimeInputs = [pkgs.coreutils pkgs.git];
+      runtimeInputs = [pkgs.coreutils pkgs.findutils pkgs.git];
       derivationArgs = {inherit postCheck;};
       text =
         ''
           trash_command=${escapeShellArg trashCommand}
           scratch_base=${scratchBase}
           protected_paths=(${protectedPaths})
+          agent_plan=${escapeShellArg agentPlanCommand}
           case_insensitive=${boolToString darwin}
         ''
         + builtins.readFile ./trash-scratch.sh;
     };
-  trashScratch = mkTrashScratch {
+  # flake.nix's checks.trash-scratch reads its tests from passthru.tests.
+  trashScratch = (mkTrashScratch {
     trashCommand =
       if darwin
       then "/usr/bin/trash"
       else "${pkgs.trash-cli}/bin/trash";
     postCheck = ": ${trashScratchTests}";
-  };
+  }).overrideAttrs (old: {passthru = (old.passthru or {}) // {tests = trashScratchTests;};});
   trashScratchTests = let
     # A fake, since the real one moves to the operator's Trash: it moves
     # into the fixture's own directory instead, and reads every argument as
@@ -478,6 +483,10 @@ with lib; let
       trashCommand = getExe fakeTrash;
       scratchBase = ''"$TRASH_TEST_ROOT/scratch"'';
       protectedPaths = ''"$TRASH_TEST_ROOT/repo/protected"'';
+      # The overlay's build, which reads the config AGENT_TOOLS_CONFIG
+      # names; agentPlan reads only the operator's. Its tests are
+      # checks.agent-tools'.
+      agentPlanCommand = getExe' (pkgs.agent-tools.overrideAttrs {doCheck = false;}) "agent-plan";
     };
     run = pkgs.writeShellApplication {
       name = "trash-scratch-tests";
@@ -561,9 +570,11 @@ with lib; let
     #   the operator's gh login and prints what it read: pull requests, their
     #   diffs and checks, workflow runs and logs, and repositories, private
     #   ones included, from whichever host its arguments name.
-    # - trash-scratch validates every path before moving untracked worktree
-    #   files or files in this session's scratch directory to the system
-    #   Trash, and refuses what the sandbox protects.
+    # - trash-scratch validates every path before moving untracked files of
+    #   the working directory's worktree or of a linked worktree this
+    #   session's plan names and OWNERS gives no other agent, or files in this
+    #   session's scratch directory, to the system Trash, and refuses what
+    #   the sandbox protects.
     # - git delegate: Codex's own sandbox cannot start inside this one, a
     #   pull request is fetched with the operator's login, and it writes the
     #   review records the sandbox denies. api.openai.com stays out of the
