@@ -95,16 +95,8 @@ func ghTexts(args []string, expanded []bool, dir string) []string {
 func apiTexts(args []string, expanded []bool, dir string) []string {
 	var texts []string
 	for i := 0; i < len(args); i++ {
-		flag, value, at := args[i], "", i
-		switch {
-		case strings.HasPrefix(flag, "--") && strings.Contains(flag, "="):
-			flag, value, _ = strings.Cut(flag, "=")
-		case len(flag) > 2 && (flag[:2] == "-f" || flag[:2] == "-F"):
-			flag, value = flag[:2], flag[2:]
-		case ghAPIValueFlags[flag] && i+1 < len(args):
-			i++
-			value, at = args[i], i
-		}
+		flag, value, at, next := apiOption(args, i)
+		i = next
 		if expanded[at] {
 			continue
 		}
@@ -125,19 +117,22 @@ func apiTexts(args []string, expanded []bool, dir string) []string {
 				texts = append(texts, graphQLTexts(v)...)
 			}
 		case "--input":
-			data, err := readText(dir, value)
-			if err != nil {
-				continue
-			}
-			var doc any
-			if json.Unmarshal(data, &doc) != nil {
-				texts = append(texts, string(data))
-				continue
-			}
-			texts = append(texts, jsonTexts(doc)...)
+			texts = append(texts, apiInputTexts(dir, value)...)
 		}
 	}
 	return texts
+}
+
+func apiInputTexts(dir, value string) []string {
+	data, err := readText(dir, value)
+	if err != nil {
+		return nil
+	}
+	var doc any
+	if json.Unmarshal(data, &doc) != nil {
+		return []string{string(data)}
+	}
+	return jsonTexts(doc)
 }
 
 // graphQLTexts are the bodies and titles a GraphQL document writes as

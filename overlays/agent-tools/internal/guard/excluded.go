@@ -243,18 +243,17 @@ func unquotedRedirect(segment string) bool {
 			next = segment[i+1]
 		}
 		switch {
+		case quote == 'a' && c == '\\':
+			i++
 		case quote == 'a':
-			if c == '\\' {
-				i++
-			} else if c == '\'' {
+			if c == '\'' {
 				quote = 0
 			}
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote == '"' && c == '\\':
+			i++
 		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' {
-				i++
-			}
 		case c == '\\':
 			i++
 		case c == '$' && next == '\'':

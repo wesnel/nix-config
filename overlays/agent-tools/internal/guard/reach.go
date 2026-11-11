@@ -75,13 +75,8 @@ func reaches(path, target string, under, creating bool) bool {
 	targetInfo, err := os.Stat(target) //nolint:gosec // the guard looks at a path it judges, to tell where it leads, and opens nothing
 	exists := err == nil
 	if exists {
-		for q := path; ; q = filepath.Dir(q) {
-			if info, err := os.Stat(q); err == nil && os.SameFile(info, targetInfo) {
-				return q == path || under
-			}
-			if q == filepath.Dir(q) {
-				break
-			}
+		if same, found := reachesExisting(path, targetInfo, under); found {
+			return same
 		}
 		if under && targetInfo.IsDir() && hardLinkUnder(path, target) {
 			return true
@@ -100,6 +95,17 @@ func reaches(path, target string, under, creating bool) bool {
 		return rest == "" || under
 	}
 	return false
+}
+
+func reachesExisting(path string, targetInfo os.FileInfo, under bool) (bool, bool) {
+	for q := path; ; q = filepath.Dir(q) {
+		if info, err := os.Stat(q); err == nil && os.SameFile(info, targetInfo) {
+			return q == path || under, true
+		}
+		if q == filepath.Dir(q) {
+			return false, false
+		}
+	}
 }
 
 // reachesPrefix reports whether path, absolute, reaches a file in dir

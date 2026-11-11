@@ -27,25 +27,7 @@ import (
 // Shell edits are only those shellEditPaths names: a write through a script
 // it cannot read passes.
 func checkOwner(in input) string {
-	var paths []string
-	var reason string
-	switch in.ToolName {
-	case "Bash", "exec_command":
-		var args struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &args)
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, false)
-	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
-		// An input that does not decode is denied before the fence is
-		// asked.
-		changes, _ := fileChanges(in.ToolName, in.ToolInput)
-		for _, c := range changes {
-			if c.path != "" {
-				paths = append(paths, physical(rawPath(c.path, in.Cwd)))
-			}
-		}
-	}
+	paths, reason := ownerEditPaths(in, false)
 	if reason != "" {
 		return reason
 	}
@@ -67,6 +49,47 @@ func checkOwner(in input) string {
 	if in.AgentID != "" {
 		return subagentEdits(in.AgentID, paths, owners, c.Dir)
 	}
+	if reason := checkNamedOwners(paths, owners); reason != "" {
+		return reason
+	}
+	if in.ToolName == "Bash" || in.ToolName == "exec_command" {
+		// Creating isolation may start in the main checkout. Its existing
+		// owner was checked above; redirections and other calls still count.
+		paths, reason = ownerEditPaths(in, true)
+		if reason != "" {
+			return reason
+		}
+	}
+	for _, p := range paths {
+		if reason := checkAssociatedWorktree(p, in, c, err, owners); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func ownerEditPaths(in input, creatingWorktree bool) (paths []string, reason string) {
+	switch in.ToolName {
+	case "Bash", "exec_command":
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &args)
+		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, creatingWorktree)
+	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
+		// An input that does not decode is denied before the fence is
+		// asked.
+		changes, _ := fileChanges(in.ToolName, in.ToolInput)
+		for _, c := range changes {
+			if c.path != "" {
+				paths = append(paths, physical(rawPath(c.path, in.Cwd)))
+			}
+		}
+	}
+	return paths, reason
+}
+
+func checkNamedOwners(paths []string, owners map[string]string) string {
 	for _, p := range paths {
 		top, _ := worktreeOf(p)
 		if gitStalled.Load() {
@@ -78,76 +101,79 @@ func checkOwner(in input) string {
 				top, owner, top)
 		}
 	}
-	if in.ToolName == "Bash" || in.ToolName == "exec_command" {
-		var args struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &args)
-		// Creating isolation may start in the main checkout. Its existing
-		// owner was checked above; redirections and other calls still count.
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, true)
-		if reason != "" {
-			return reason
+	return ""
+}
+
+func checkAssociatedWorktree(p string, in input, c plans.Config, err error, owners map[string]string) string {
+	top, g := worktreeOf(p)
+	if gitStalled.Load() {
+		return stalledGit
+	}
+	if g.dir == "" {
+		return ""
+	}
+	opened, ok := openedRepo(g.dir)
+	if !ok {
+		return "The guard cannot determine the repository this edit changes. Ask the operator to repair its Git metadata before editing."
+	}
+	if top == "" && len(opened) != 0 {
+		return "This edit is outside a working tree, such as inside Git metadata or a bare repository. Make repository edits in your associated task worktree; report shared metadata changes to the operator."
+	}
+	if top == "" {
+		return ""
+	}
+	if err != nil {
+		return fmt.Sprintf("The guard cannot read the plans configuration: %v. Ask the operator to repair it before editing.", err)
+	}
+	association, findErr := associatedPlan(c, in.SessionID, top)
+	if findErr != nil {
+		return fmt.Sprintf("The guard cannot read worktree associations: %v. Ask the operator to repair the plans before editing.", findErr)
+	}
+	if association == nil && owners[top] == "" && len(opened) > 0 && !slices.ContainsFunc(opened, func(path string) bool {
+		return !slices.ContainsFunc(scratchRoots(), func(root string) bool { return within(path, root) })
+	}) {
+		return ""
+	}
+	if len(opened) < 3 || resolved(opened[0]) == resolved(opened[1]) {
+		return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
+	}
+	if reason := checkTaskBranch(g); reason != "" {
+		return reason
+	}
+	if in.SessionID == "" || association == nil || !slices.Contains(association.Matched, "session") {
+		return fmt.Sprintf("This session is not associated with %s in its newest plan. Work in your own task worktree and record its session and worktree with `agent-plan new`; for an intentional continuation, associate the session with that plan before editing.", top)
+	}
+	return ""
+}
+
+func associatedPlan(c plans.Config, session, top string) (*plans.Found, error) {
+	found, err := c.Find(plans.FindOptions{Session: session, Worktree: top})
+	if err != nil {
+		return nil, err
+	}
+	for i := range found {
+		if slices.Contains(found[i].Matched, "worktree") {
+			return &found[i], nil
 		}
 	}
-	for _, p := range paths {
-		top, g := worktreeOf(p)
-		if gitStalled.Load() {
-			return stalledGit
+	return nil, nil
+}
+
+func checkTaskBranch(g gitState) string {
+	branch, branchOK := g.run("branch", "--show-current")
+	defaults, defaultsOK := g.run("for-each-ref", "--format=%(symref)", "refs/remotes/*/HEAD")
+	if !branchOK || !defaultsOK {
+		return "The guard cannot read this worktree's branch. Ask the operator to repair its Git metadata before editing."
+	}
+	protected := branch == "" || branch == "main" || branch == "master"
+	for _, ref := range strings.Fields(defaults) {
+		parts := strings.SplitN(ref, "/", 4)
+		if len(parts) == 4 && branch == parts[3] {
+			protected = true
 		}
-		if g.dir == "" {
-			continue
-		}
-		opened, ok := openedRepo(g.dir)
-		if !ok {
-			return "The guard cannot determine the repository this edit changes. Ask the operator to repair its Git metadata before editing."
-		}
-		if top == "" && len(opened) != 0 {
-			return "This edit is outside a working tree, such as inside Git metadata or a bare repository. Make repository edits in your associated task worktree; report shared metadata changes to the operator."
-		}
-		if top == "" {
-			continue
-		}
-		if err != nil {
-			return fmt.Sprintf("The guard cannot read the plans configuration: %v. Ask the operator to repair it before editing.", err)
-		}
-		found, findErr := c.Find(plans.FindOptions{Session: in.SessionID, Worktree: top})
-		if findErr != nil {
-			return fmt.Sprintf("The guard cannot read worktree associations: %v. Ask the operator to repair the plans before editing.", findErr)
-		}
-		var association *plans.Found
-		for i := range found {
-			if slices.Contains(found[i].Matched, "worktree") {
-				association = &found[i]
-				break
-			}
-		}
-		if association == nil && owners[top] == "" && len(opened) > 0 && !slices.ContainsFunc(opened, func(path string) bool {
-			return !slices.ContainsFunc(scratchRoots(), func(root string) bool { return within(path, root) })
-		}) {
-			continue
-		}
-		if len(opened) < 3 || resolved(opened[0]) == resolved(opened[1]) {
-			return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
-		}
-		branch, branchOK := g.run("branch", "--show-current")
-		defaults, defaultsOK := g.run("for-each-ref", "--format=%(symref)", "refs/remotes/*/HEAD")
-		if !branchOK || !defaultsOK {
-			return "The guard cannot read this worktree's branch. Ask the operator to repair its Git metadata before editing."
-		}
-		protected := branch == "" || branch == "main" || branch == "master"
-		for _, ref := range strings.Fields(defaults) {
-			parts := strings.SplitN(ref, "/", 4)
-			if len(parts) == 4 && branch == parts[3] {
-				protected = true
-			}
-		}
-		if protected {
-			return "This worktree is on a default branch or a detached HEAD. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH HEAD`) before editing."
-		}
-		if in.SessionID == "" || association == nil || !slices.Contains(association.Matched, "session") {
-			return fmt.Sprintf("This session is not associated with %s in its newest plan. Work in your own task worktree and record its session and worktree with `agent-plan new`; for an intentional continuation, associate the session with that plan before editing.", top)
-		}
+	}
+	if protected {
+		return "This worktree is on a default branch or a detached HEAD. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH HEAD`) before editing."
 	}
 	return ""
 }
@@ -248,25 +274,7 @@ func stashWrites(text string, depth int) string {
 	}
 	v := visitor{
 		script: func(text string) string { return stashWrites(text, depth+1) },
-		call: func(c call) string {
-			if c = c.named(); len(c.words) == 0 || c.expands[0] || base(c.words[0]) != "git" {
-				return ""
-			}
-			words := c.words[1:]
-			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
-				if gitValueFlags[words[0]] {
-					words = words[1:]
-				}
-				words = words[min(1, len(words)):]
-			}
-			if len(words) == 0 || words[0] != "stash" {
-				return ""
-			}
-			if len(words) > 1 && (words[1] == "list" || words[1] == "show") {
-				return ""
-			}
-			return subagentStash
-		},
+		call:   checkStashWrite,
 	}
 	for _, segment := range segments(text) {
 		if words, expands := split(segment); len(words) > 0 {
@@ -276,6 +284,26 @@ func stashWrites(text string, depth int) string {
 		}
 	}
 	return ""
+}
+
+func checkStashWrite(c call) string {
+	if c = c.named(); len(c.words) == 0 || c.expands[0] || base(c.words[0]) != "git" {
+		return ""
+	}
+	words := c.words[1:]
+	for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+		if gitValueFlags[words[0]] {
+			words = words[1:]
+		}
+		words = words[min(1, len(words)):]
+	}
+	if len(words) == 0 || words[0] != "stash" {
+		return ""
+	}
+	if len(words) > 1 && (words[1] == "list" || words[1] == "show") {
+		return ""
+	}
+	return subagentStash
 }
 
 // worktreeOf is the top level of the worktree holding path, which need not
@@ -323,13 +351,11 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 	end := ""
 	v := visitor{
 		script: func(text string) string {
-			for _, cwd := range w.here {
-				paths, reason := shellEditPaths(text, cwd, depth+1, creatingWorktree)
-				if reason != "" {
-					return reason
-				}
-				out = append(out, paths...)
+			paths, reason := editPathsInDirs(text, w.here, depth+1, creatingWorktree)
+			if reason != "" {
+				return reason
 			}
+			out = append(out, paths...)
 			return ""
 		},
 		call: func(c call) string {
@@ -340,23 +366,12 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 			if named.words[0] == "cd" || named.words[0] == "pushd" {
 				// Redirections before cd open their files where the
 				// command starts, before it changes directory.
-				for _, cwd := range w.here {
-					for _, t := range redirections(c.words) {
-						if p := fencePath(t, cwd); filepath.IsAbs(p) {
-							out = append(out, p)
-						}
-					}
-				}
+				out = append(out, fencedPaths(redirections(c.words), w.here)...)
 				w.cd(named, end)
 				return ""
 			}
 			for _, cwd := range w.here {
-				for _, t := range changedFiles(base(named.words[0]), named.words[1:], redirections(c.words)) {
-					if p := fencePath(t, cwd); filepath.IsAbs(p) {
-						out = append(out, p)
-					}
-				}
-				paths, reason := gitWritePaths(named, cwd, creatingWorktree)
+				paths, reason := callEditPaths(c, named, cwd, creatingWorktree)
 				if reason != "" {
 					return reason
 				}
@@ -367,17 +382,51 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 	}
 	texts, _, ends, _ := backgroundSegments(text)
 	for i, segment := range texts {
-		if words, expands := split(segment); len(words) > 0 {
-			end = ends[i]
-			c := call{words: words, expands: expands}
-			w.begin(c)
-			if reason := unwrap(c, v); reason != "" {
-				return nil, reason
-			}
-			w.next(end)
+		words, expands := split(segment)
+		if len(words) == 0 {
+			continue
 		}
+		end = ends[i]
+		c := call{words: words, expands: expands}
+		w.begin(c)
+		if reason := unwrap(c, v); reason != "" {
+			return nil, reason
+		}
+		w.next(end)
 	}
 	return out, ""
+}
+
+func editPathsInDirs(text string, dirs []string, depth int, creatingWorktree bool) (out []string, reason string) {
+	for _, cwd := range dirs {
+		paths, reason := shellEditPaths(text, cwd, depth, creatingWorktree)
+		if reason != "" {
+			return nil, reason
+		}
+		out = append(out, paths...)
+	}
+	return out, ""
+}
+
+func fencedPaths(targets, dirs []string) (out []string) {
+	for _, cwd := range dirs {
+		for _, t := range targets {
+			if p := fencePath(t, cwd); filepath.IsAbs(p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+func callEditPaths(c, named call, cwd string, creatingWorktree bool) ([]string, string) {
+	targets := changedFiles(base(named.words[0]), named.words[1:], redirections(c.words))
+	out := fencedPaths(targets, []string{cwd})
+	paths, reason := gitWritePaths(named, cwd, creatingWorktree)
+	if reason != "" {
+		return nil, reason
+	}
+	return append(out, paths...), ""
 }
 
 // fencePath is word, a file a command run in cwd names, as the owner fence
@@ -418,6 +467,31 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 	if base(c.words[0]) != "git" {
 		return nil, ""
 	}
+	words, dir, relocated := gitMutationLocation(c, cwd)
+	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
+		return nil, ""
+	}
+	if relocated {
+		return nil, "The guard requires an explicit working directory for Git mutations. Use `git -C /ABSOLUTE/TASK/WORKTREE` without repository-location flags or GIT_* path overrides."
+	}
+	if len(words) > 1 && words[0] == "worktree" && words[1] == "add" {
+		positional := gitPositionals(words[0], words[1:])
+		var paths []string
+		if len(positional) > 1 {
+			paths = append(paths, fencePath(words[1+positional[1]], dir))
+		}
+		if !creatingWorktree {
+			paths = append(paths, dir)
+		}
+		return paths, ""
+	}
+	if len(words) > 1 && words[0] == "worktree" && (words[1] == "remove" || words[1] == "move") {
+		return worktreeMutationTargets(words, dir)
+	}
+	return []string{dir}, ""
+}
+
+func gitMutationLocation(c call, cwd string) ([]string, string, bool) {
 	dir, words := cwd, c.words[1:]
 	relocated := false
 	for _, kv := range append(slices.Clone(c.env), c.assigned...) {
@@ -441,49 +515,33 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 			words = words[1:]
 		}
 	}
-	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
-		return nil, ""
+	return words, dir, relocated
+}
+
+func worktreeMutationTargets(words []string, dir string) ([]string, string) {
+	args := words[2:]
+	for len(args) > 0 && (args[0] == "-f" || args[0] == "--force") {
+		args = args[1:]
 	}
-	if relocated {
-		return nil, "The guard requires an explicit working directory for Git mutations. Use `git -C /ABSOLUTE/TASK/WORKTREE` without repository-location flags or GIT_* path overrides."
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
 	}
-	if len(words) > 1 && words[0] == "worktree" && words[1] == "add" {
-		positional := gitPositionals(words[0], words[1:])
-		var paths []string
-		if len(positional) > 1 {
-			paths = append(paths, fencePath(words[1+positional[1]], dir))
-		}
-		if !creatingWorktree {
-			paths = append(paths, dir)
-		}
-		return paths, ""
+	want := 1
+	if words[1] == "move" {
+		want = 2
 	}
-	if len(words) > 1 && words[0] == "worktree" && (words[1] == "remove" || words[1] == "move") {
-		args := words[2:]
-		for len(args) > 0 && (args[0] == "-f" || args[0] == "--force") {
-			args = args[1:]
-		}
-		if len(args) > 0 && args[0] == "--" {
-			args = args[1:]
-		}
-		want := 1
-		if words[1] == "move" {
-			want = 2
-		}
-		if len(args) != want || strings.HasPrefix(args[0], "-") {
-			return nil, "The guard cannot determine this worktree command's targets. Use an explicit worktree path and only --force or -- before it."
-		}
-		target, reason := worktreeTarget(dir, args[0])
-		if reason != "" {
-			return nil, reason
-		}
-		paths := []string{target}
-		if want == 2 {
-			paths = append(paths, fencePath(args[1], dir))
-		}
-		return paths, ""
+	if len(args) != want || strings.HasPrefix(args[0], "-") {
+		return nil, "The guard cannot determine this worktree command's targets. Use an explicit worktree path and only --force or -- before it."
 	}
-	return []string{dir}, ""
+	target, reason := worktreeTarget(dir, args[0])
+	if reason != "" {
+		return nil, reason
+	}
+	paths := []string{target}
+	if want == 2 {
+		paths = append(paths, fencePath(args[1], dir))
+	}
+	return paths, ""
 }
 
 // Require an absolute path so Git's suffix and case-matching rules cannot

@@ -45,23 +45,8 @@ func gitCalls(text, dir string, depth int) []gitCall {
 			case w[0] == "cd" || w[0] == "pushd":
 				cwd = cdTarget(c, cwd)
 			case base(w[0]) == "git":
-				where, i := cwd, 1
-				for i < len(w) && strings.HasPrefix(w[i], "-") {
-					switch {
-					case w[i] == "-C" && i+1 < len(w):
-						if where = expandPath(w[i+1], where); !filepath.IsAbs(where) {
-							where = ""
-						}
-					case w[i] == "--git-dir" || w[i] == "--work-tree" || strings.HasPrefix(w[i], "--git-dir=") || strings.HasPrefix(w[i], "--work-tree="):
-						where = ""
-					}
-					if gitValueFlags[w[i]] {
-						i++
-					}
-					i++
-				}
-				if i < len(w) && where != "" {
-					out = append(out, gitCall{dir: where, sub: w[i], args: w[i+1:]})
+				if g, ok := locatedGitCall(w, cwd); ok {
+					out = append(out, g)
 				}
 			}
 			return ""
@@ -73,6 +58,28 @@ func gitCalls(text, dir string, depth int) []gitCall {
 		}
 	}
 	return out
+}
+
+func locatedGitCall(w []string, cwd string) (gitCall, bool) {
+	where, i := cwd, 1
+	for i < len(w) && strings.HasPrefix(w[i], "-") {
+		switch {
+		case w[i] == "-C" && i+1 < len(w):
+			if where = expandPath(w[i+1], where); !filepath.IsAbs(where) {
+				where = ""
+			}
+		case w[i] == "--git-dir" || w[i] == "--work-tree" || strings.HasPrefix(w[i], "--git-dir=") || strings.HasPrefix(w[i], "--work-tree="):
+			where = ""
+		}
+		if gitValueFlags[w[i]] {
+			i++
+		}
+		i++
+	}
+	if i < len(w) && where != "" {
+		return gitCall{dir: where, sub: w[i], args: w[i+1:]}, true
+	}
+	return gitCall{}, false
 }
 
 // toplevel is the top level of the worktree dir is in, free of symlinks,
@@ -94,78 +101,84 @@ var summaryLine = regexp.MustCompile(`(?m)^\[(.+?)(?: \(root-commit\))? ([0-9a-f
 // newBranch is the branch a branch-making call made, and the start point
 // it names, if any.
 func newBranch(g gitCall) (name, start string, switched bool) {
-	positional := func(args []string, values map[string]bool) []string {
-		var out []string
-		for i := 0; i < len(args); i++ {
-			switch a := args[i]; {
-			case a == "--":
-				return append(out, args[i+1:]...)
-			case strings.HasPrefix(a, "-"):
-				if values[a] {
-					i++
-				}
-			default:
-				out = append(out, a)
-			}
-		}
-		return out
-	}
-	valueOf := func(names ...string) string {
-		for i, a := range g.args {
-			for _, n := range names {
-				if a == n && i+1 < len(g.args) {
-					return g.args[i+1]
-				}
-				if strings.HasPrefix(n, "--") && strings.HasPrefix(a, n+"=") {
-					return strings.TrimPrefix(a, n+"=")
-				}
-			}
-		}
-		return ""
-	}
 	switch g.sub {
 	case "switch", "checkout":
 		flags := []string{"-c", "-C", "--create", "--force-create"}
 		if g.sub == "checkout" {
 			flags = []string{"-b", "-B"}
 		}
-		if name = valueOf(flags...); name == "" {
+		if name = branchOption(g.args, flags...); name == "" {
 			return "", "", false
 		}
-		rest := positional(g.args, set(append(flags, "--orphan", "--conflict")...))
+		rest := branchOperands(g.args, set(append(flags, "--orphan", "--conflict")...))
 		if len(rest) > 0 {
 			start = rest[0]
 		}
 		return name, start, true
 	case "branch":
-		for _, a := range g.args {
-			if strings.HasPrefix(a, "-") && a != "--track" && a != "--no-track" {
-				return "", "", false
-			}
-		}
-		rest := positional(g.args, nil)
-		if len(rest) == 0 || len(rest) > 2 {
-			return "", "", false
-		}
-		if len(rest) == 2 {
-			start = rest[1]
-		}
-		return rest[0], start, false
+		return plainNewBranch(g.args)
 	case "worktree":
 		if len(g.args) == 0 || g.args[0] != "add" {
 			return "", "", false
 		}
 		args := g.args[1:]
-		if name = valueOf("-b", "-B"); name == "" {
+		if name = branchOption(g.args, "-b", "-B"); name == "" {
 			return "", "", false
 		}
-		rest := positional(args, set("-b", "-B", "--reason"))
+		rest := branchOperands(args, set("-b", "-B", "--reason"))
 		if len(rest) > 1 {
 			start = rest[1]
 		}
 		return name, start, false
 	}
 	return "", "", false
+}
+
+func plainNewBranch(args []string) (name, start string, switched bool) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && a != "--track" && a != "--no-track" {
+			return "", "", false
+		}
+	}
+	rest := branchOperands(args, nil)
+	if len(rest) == 0 || len(rest) > 2 {
+		return "", "", false
+	}
+	if len(rest) == 2 {
+		start = rest[1]
+	}
+	return rest[0], start, false
+}
+
+func branchOperands(args []string, values map[string]bool) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--":
+			return append(out, args[i+1:]...)
+		case strings.HasPrefix(a, "-"):
+			if values[a] {
+				i++
+			}
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func branchOption(args []string, names ...string) string {
+	for i, a := range args {
+		for _, n := range names {
+			if a == n && i+1 < len(args) {
+				return args[i+1]
+			}
+			if strings.HasPrefix(n, "--") && strings.HasPrefix(a, n+"=") {
+				return strings.TrimPrefix(a, n+"=")
+			}
+		}
+	}
+	return ""
 }
 
 // newWorktree is the worktree a `git worktree add` made, or "".
@@ -204,96 +217,111 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	if err != nil {
 		return nil
 	}
-	at := func(dir string) (plans.Plan, string, bool) {
-		top := ""
-		if dir != "" {
-			top = toplevel(dir)
-		}
-		return c.Locate(session, top)
-	}
 	output := strings.Join(texts, "\n")
 	for _, g := range gitCalls(command, cwd, 0) {
 		if g.sub == "commit" {
 			for _, m := range summaryLine.FindAllStringSubmatch(output, -1) {
-				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
-					continue
-				}
-				branch := m[1]
-				if strings.ContainsAny(branch, " \t") {
-					branch = ""
-				}
-				who := session
-				if strings.ContainsAny(who, " \t\r\n") {
-					who = ""
-				}
-				top := toplevel(g.dir)
-				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
-				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
-					e.Repository, e.Revision = identity.Repository, identity.Revision
-				}
-				p, created, err := c.RecordCommit(who, top, e, now)
-				if err != nil {
-					continue
-				}
-				c.LinkEvidence(p.File(), now)
-				if created {
-					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
-						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
-				}
-				association := "--commit " + shellQuote(m[3])
-				if e.Revision != "" {
-					association = "--revision " + e.Revision
-				}
-				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-					"Log `done` for it with `%s` in its worktree; if none, carry on.", m[3], p.File(), association))
-				if who != "" && commits(p, who) == 1 {
-					context = append(context, commitRules)
-				}
+				context = append(context, recordCommitFact(c, session, g, m, now)...)
 			}
 			continue
 		}
-		state := gitState{dir: g.dir}
-		if path := newWorktree(g); path != "" {
-			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
-				if p, part, ok := at(g.dir); ok {
-					p.AddToProperty(part, "WORKTREES", real, now)
-				}
-			}
-		}
-		name, start, switched := newBranch(g)
-		if name == "" {
-			continue
-		}
-		if switched {
-			if current, _ := state.run("branch", "--show-current"); current != name {
-				continue
-			}
-			if start == "" {
-				start, _ = state.run("rev-parse", "--abbrev-ref", "@{-1}")
-			}
-		} else {
-			if _, ok := state.run("rev-parse", "--verify", "-q", "refs/heads/"+name); !ok {
-				continue
-			}
-			if start == "" {
-				start, _ = state.run("branch", "--show-current")
-			}
-		}
-		value := name
-		if start != "" {
-			value = start + ".." + name
-		}
-		if p, part, ok := at(g.dir); ok {
-			if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
-				c.LinkEvidence(p.File(), now)
+		recordBranchFact(c, session, g, now)
+	}
+	recordPushFacts(c, session, cwd, command, texts, now)
+	return context
+}
+
+func locateFactPlan(c plans.Config, session, dir string) (plans.Plan, string, bool) {
+	top := ""
+	if dir != "" {
+		top = toplevel(dir)
+	}
+	return c.Locate(session, top)
+}
+
+func recordCommitFact(c plans.Config, session string, g gitCall, m []string, now time.Time) (context []string) {
+	if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
+		return nil
+	}
+	branch := m[1]
+	if strings.ContainsAny(branch, " \t") {
+		branch = ""
+	}
+	who := session
+	if strings.ContainsAny(who, " \t\r\n") {
+		who = ""
+	}
+	top := toplevel(g.dir)
+	e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
+	if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
+		e.Repository, e.Revision = identity.Repository, identity.Revision
+	}
+	p, created, err := c.RecordCommit(who, top, e, now)
+	if err != nil {
+		return nil
+	}
+	c.LinkEvidence(p.File(), now)
+	if created {
+		context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
+			"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+	}
+	association := "--commit " + shellQuote(m[3])
+	if e.Revision != "" {
+		association = "--revision " + e.Revision
+	}
+	context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+		"Log `done` for it with `%s` in its worktree; if none, carry on.", m[3], p.File(), association))
+	if who != "" && commits(p, who) == 1 {
+		context = append(context, commitRules)
+	}
+	return context
+}
+
+func recordBranchFact(c plans.Config, session string, g gitCall, now time.Time) {
+	state := gitState{dir: g.dir}
+	if path := newWorktree(g); path != "" {
+		if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
+			if p, part, ok := locateFactPlan(c, session, g.dir); ok {
+				p.AddToProperty(part, "WORKTREES", real, now)
 			}
 		}
 	}
+	name, start, switched := newBranch(g)
+	if name == "" {
+		return
+	}
+	if switched {
+		if current, _ := state.run("branch", "--show-current"); current != name {
+			return
+		}
+		if start == "" {
+			start, _ = state.run("rev-parse", "--abbrev-ref", "@{-1}")
+		}
+	} else {
+		if _, ok := state.run("rev-parse", "--verify", "-q", "refs/heads/"+name); !ok {
+			return
+		}
+		if start == "" {
+			start, _ = state.run("branch", "--show-current")
+		}
+	}
+	value := name
+	if start != "" {
+		value = start + ".." + name
+	}
+	if p, part, ok := locateFactPlan(c, session, g.dir); ok {
+		if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
+			c.LinkEvidence(p.File(), now)
+		}
+	}
+}
+
+func recordPushFacts(c plans.Config, session, cwd, command string, texts []string, now time.Time) {
 	who := pushers(command, 0)
 	if len(who) == 0 {
 		return
 	}
-	p, part, ok := at(cwd)
+	p, part, ok := locateFactPlan(c, session, cwd)
 	if !ok {
 		return
 	}
@@ -312,7 +340,6 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
-	return context
 }
 
 // commitRules hands over the commit rules, which AGENTS.md keeps in the
