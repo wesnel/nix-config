@@ -59,21 +59,18 @@ in {
           mirror = "git@git.sr.ht:~wgn/${repo}";
         in {
           condition = "gitdir:~/git/github.com/wesnel/${repo}/";
-          contents =
-            {
-              url."https://github.com/wesnel/${repo}.git".insteadOf = "git@github.com:wesnel/${repo}.git";
-              remote.origin.pushurl = [
-                "ssh://git@github.com/wesnel/${repo}.git"
-                mirror
-              ];
-            }
-            // optionalAttrs (repo == "nix-config") {
-              signpass.mirror = {
-                commonDir = "${config.home.homeDirectory}/git/github.com/wesnel/${repo}/.git";
-                destination = mirror;
-                github = "wesnel/${repo}";
-              };
+          contents = {
+            url."https://github.com/wesnel/${repo}.git".insteadOf = "git@github.com:wesnel/${repo}.git";
+            remote.origin.pushurl = [
+              "ssh://git@github.com/wesnel/${repo}.git"
+              mirror
+            ];
+            signpass.mirror = {
+              commonDir = "${config.home.homeDirectory}/git/github.com/wesnel/${repo}/.git";
+              destination = mirror;
+              github = "wesnel/${repo}";
             };
+          };
         }) ["nix-config" "emacs-config"];
 
       settings = {

@@ -174,7 +174,8 @@ Before each push, the pass checks its destination lease and requires
 protected operator signatures on commits outside that destination's existing
 history. A push passing that signature check proceeds without an upstream
 lookup. If it fails, the protected `signpass.mirror` mapping can authorize
-GitHub default-branch history for the configured nix-config SourceHut mirror.
+GitHub default-branch history for the configured nix-config and emacs-config
+SourceHut mirrors.
 It binds the clone's common Git directory, exact destination and GitHub
 repository. The pass reads symbolic HEAD over anonymous HTTPS with verified
 TLS, then verifies the complete raw commit ancestry locally. Missing objects
