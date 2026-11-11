@@ -87,10 +87,10 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 	if err != nil {
 		return nil, err
 	}
-	var mine []issueComment
+	var comments []issueComment
 	for _, bot := range bots {
 		if bot.Request.Comment != "" {
-			if mine, err = viewerComments(slug, number, viewer); err != nil {
+			if comments, err = prComments(slug, number); err != nil {
 				return nil, err
 			}
 			break
@@ -99,14 +99,14 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 	out := &Review{PR: number, Branch: pr.HeadRefName, Draft: pr.IsDraft, HeadOid: pr.HeadRefOid, Bots: map[string]*BotReview{},
 		OpenHumanThreads: open[""]}
 	for _, bot := range bots {
-		review := botReview(bot, pr.Reviews.Nodes, pr.HeadRefOid, requested, mine)
+		review := botReview(bot, pr.Reviews.Nodes, pr.HeadRefOid, requested, comments, viewer)
 		review.OpenThreads, review.UnansweredThreads = open[bot.Name], unanswered[bot.Name]
 		out.Bots[bot.Name] = review
 	}
 	return out, nil
 }
 
-func botReview(bot *Bot, reviews []submittedReview, head string, requested []string, mine []issueComment) *BotReview {
+func botReview(bot *Bot, reviews []submittedReview, head string, requested []string, comments []issueComment, viewer string) *BotReview {
 	review := &BotReview{ResolvesOwnThreads: bot.ResolvesOwnThreads}
 	var latest *submittedReview
 	for i := range reviews {
@@ -131,11 +131,45 @@ func botReview(bot *Bot, reviews []submittedReview, head string, requested []str
 		for _, login := range requested {
 			review.Pending = review.Pending || bot.Pattern.MatchString(login)
 		}
-	} else if t := lastTrigger(mine, bot.Request.Comment); t != nil && !review.ReviewedHead {
+		return review
+	}
+	t := lastTrigger(comments, viewer, bot.Request.Comment)
+	if t == nil {
+		return review
+	}
+	c := headComment(comments, bot, t.At, head)
+	if c != nil && (latest == nil || c.At > latest.SubmittedAt) {
+		review.At, review.ReviewedHead, review.Verdict, review.NewComments = c.At, true, verdictOf(bot.Verdicts, c.Body), nil
+	}
+	if !review.ReviewedHead {
 		// A trigger the bot has not answered with a review since.
 		review.Pending = latest == nil || latest.SubmittedAt <= t.At
 	}
 	return review
+}
+
+// headComment is bot's newest top-level comment posted after the trigger at
+// after that links head's commit and holds one of bot's ResultComments, or
+// nil. A bot asked by comment can answer with such a comment and no review:
+// Qodo posts its summary comment when its first review finds nothing, and a
+// comment linking the commit when a later review has finished. Only a
+// comment's creation counts: Qodo edits its summary comment to link each new
+// head soon after a push, reviewed or not.
+func headComment(comments []issueComment, bot *Bot, after, head string) *issueComment {
+	var found *issueComment
+	for i := range comments {
+		c := &comments[i]
+		if c.At <= after || !bot.Pattern.MatchString(c.Login) || !strings.Contains(c.Body, "/commit/"+head) {
+			continue
+		}
+		for _, text := range bot.ResultComments {
+			if strings.Contains(c.Body, text) {
+				found = c
+				break
+			}
+		}
+	}
+	return found
 }
 
 // openThreads counts a PR's unresolved review threads by the bot that

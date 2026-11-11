@@ -215,6 +215,15 @@ func TestRequest(t *testing.T) {
 		}
 	})
 
+	// Someone else's trigger is not the loop's request: qodo is asked.
+	t.Run("qodo after someone else's trigger", func(t *testing.T) {
+		f := reviewRepo(t, qodo)
+		f.comments = []fakeIssueComment{{id: 8, login: "josh", body: "/agentic_review", at: "2026-10-19T09:00:00Z"}}
+		if _, err := Request(nil, nil, nil); err != nil || fmt.Sprint(f.posted) != "[/agentic_review]" {
+			t.Errorf("not asked: %v, posted %v", err, f.posted)
+		}
+	})
+
 	t.Run("qodo has reviewed this head", func(t *testing.T) {
 		f := reviewRepo(t, qodo)
 		f.reviews = []fakeSubmitted{{login: qodoLogin, commit: "a1", at: "2026-10-19T10:00:00Z"}}
@@ -277,6 +286,131 @@ func TestRequest(t *testing.T) {
 		}
 		if _, err := Request(nil, nil, []string{"build"}); err != nil || len(f.requested) != 1 {
 			t.Errorf("an accepted failure: %v, %v", err, f.requested)
+		}
+	})
+}
+
+// Qodo can answer the trigger with a top-level comment and no review: its
+// summary comment when its first review finds nothing, and a short comment
+// saying its review was updated up to the latest commit when it reviews again.
+// The fixtures are such comments as Qodo posted them, with their links
+// pointing at o/r and the commit they name at head.
+func TestQodoResultComment(t *testing.T) {
+	const (
+		config = `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"},
+			"resultComments": ["Great, no issues found!", "was updated up to the latest commit"],
+			"verdicts": {"approval": "Great, no issues found!"}}}}`
+		head    = "0fd032cfabad4fc7f2a8358556a192dcb00b1c5d" // the commit the fixtures link
+		trigger = "2026-11-06T23:19:23Z"
+		answer  = "2026-11-06T23:20:24Z"
+	)
+	read := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	clean, updated := read("qodo-no-issues.html"), read("qodo-updated.md")
+	// repo is PR 1 at headOid, with CI passing, the operator's trigger, and
+	// Qodo's comment with body at answer.
+	repo := func(t *testing.T, headOid, body, at string) *fakeReview {
+		t.Helper()
+		f := reviewRepo(t, config)
+		f.prs[1].headOid, f.prs[1].branchOid = headOid, headOid
+		f.checks[headOid] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "SUCCESS"}}
+		f.comments = []fakeIssueComment{{id: 7, login: "me", body: "/agentic_review", at: trigger},
+			{id: 8, login: qodoLogin, body: body, at: at}}
+		return f
+	}
+	// standing is qodo's standing on PR 1 as status and wait reviews report
+	// it, after checking that both agree.
+	standing := func(t *testing.T) *BotReview {
+		t.Helper()
+		statuses, err := Status([]string{"1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fromStatus := statuses.([]map[string]any)[0]["bots"].(map[string]*BotReview)["qodo"]
+		waited, settled, err := WaitReviews([]string{"1"}, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fromWait := waited.([]any)[0].(*Review).Bots["qodo"]
+		if *fromStatus != *fromWait {
+			t.Errorf("status says %+v, wait reviews %+v", *fromStatus, *fromWait)
+		}
+		if settled == fromWait.Pending {
+			t.Errorf("wait reviews settled %v with qodo pending %v", settled, fromWait.Pending)
+		}
+		return fromWait
+	}
+
+	t.Run("no issues on the head", func(t *testing.T) {
+		repo(t, head, clean, answer)
+		got := standing(t)
+		if !got.ReviewedHead || got.Pending || got.Verdict != "approval" || got.At != answer {
+			t.Errorf("qodo %+v, want the head reviewed at %s, approval, not pending", *got, answer)
+		}
+	})
+
+	// After a push, the comment on the earlier head says nothing of the new one.
+	t.Run("no issues on an earlier head", func(t *testing.T) {
+		repo(t, "b2", clean, answer)
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want the new head pending", *got)
+		}
+	})
+
+	// A comment older than the trigger answers an earlier request.
+	t.Run("no issues before the trigger", func(t *testing.T) {
+		repo(t, head, clean, "2026-11-06T23:18:00Z")
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want pending", *got)
+		}
+	})
+
+	// A review submitted after the comment is the newer standing.
+	t.Run("a later review", func(t *testing.T) {
+		f := repo(t, head, clean, answer)
+		f.reviews = []fakeSubmitted{{login: qodoLogin, commit: head, at: "2026-11-06T23:25:00Z"}}
+		if got := standing(t); !got.ReviewedHead || got.Pending || got.At != "2026-11-06T23:25:00Z" {
+			t.Errorf("qodo %+v, want the review's standing", *got)
+		}
+	})
+
+	// Someone else quoting Qodo's comment has not reviewed anything.
+	t.Run("not from qodo", func(t *testing.T) {
+		f := repo(t, head, clean, answer)
+		f.comments[1].login = "josh"
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want pending", *got)
+		}
+	})
+
+	// A comment on the head without a result's text, such as a chat reply,
+	// is not a review.
+	t.Run("no result", func(t *testing.T) {
+		repo(t, head, strings.Replace(clean, "Great, no issues found!", "Looking into it", 1), answer)
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want pending", *got)
+		}
+	})
+
+	// A review again, which edits the summary comment in place, ends with
+	// the link comment; it names no verdict.
+	t.Run("updated on the head", func(t *testing.T) {
+		repo(t, head, updated, answer)
+		got := standing(t)
+		if !got.ReviewedHead || got.Pending || got.Verdict != "unknown" || got.At != answer {
+			t.Errorf("qodo %+v, want the head reviewed at %s, verdict unknown, not pending", *got, answer)
+		}
+	})
+
+	t.Run("updated on an earlier head", func(t *testing.T) {
+		repo(t, "b2", updated, answer)
+		if got := standing(t); got.ReviewedHead || !got.Pending {
+			t.Errorf("qodo %+v, want the new head pending", *got)
 		}
 	})
 }
