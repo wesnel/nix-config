@@ -370,13 +370,11 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 				w.cd(named, end)
 				return ""
 			}
-			for _, cwd := range w.here {
-				paths, reason := callEditPaths(c, named, cwd, creatingWorktree)
-				if reason != "" {
-					return reason
-				}
-				out = append(out, paths...)
+			paths, reason := callEditPaths(c, named, w.here, creatingWorktree)
+			if reason != "" {
+				return reason
 			}
+			out = append(out, paths...)
 			return ""
 		},
 	}
@@ -419,14 +417,17 @@ func fencedPaths(targets, dirs []string) (out []string) {
 	return out
 }
 
-func callEditPaths(c, named call, cwd string, creatingWorktree bool) ([]string, string) {
-	targets := changedFiles(base(named.words[0]), named.words[1:], redirections(c.words))
-	out := fencedPaths(targets, []string{cwd})
-	paths, reason := gitWritePaths(named, cwd, creatingWorktree)
-	if reason != "" {
-		return nil, reason
+func callEditPaths(c, named call, dirs []string, creatingWorktree bool) (out []string, reason string) {
+	for _, cwd := range dirs {
+		targets := changedFiles(base(named.words[0]), named.words[1:], redirections(c.words))
+		out = append(out, fencedPaths(targets, []string{cwd})...)
+		paths, reason := gitWritePaths(named, cwd, creatingWorktree)
+		if reason != "" {
+			return nil, reason
+		}
+		out = append(out, paths...)
 	}
-	return append(out, paths...), ""
+	return out, ""
 }
 
 // fencePath is word, a file a command run in cwd names, as the owner fence

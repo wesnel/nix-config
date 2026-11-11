@@ -279,13 +279,7 @@ func recordCommitFact(c plans.Config, session string, g gitCall, m []string, now
 
 func recordBranchFact(c plans.Config, session string, g gitCall, now time.Time) {
 	state := gitState{dir: g.dir}
-	if path := newWorktree(g); path != "" {
-		if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
-			if p, part, ok := locateFactPlan(c, session, g.dir); ok {
-				p.AddToProperty(part, "WORKTREES", real, now)
-			}
-		}
-	}
+	recordWorktreeFact(c, session, g, now)
 	name, start, switched := newBranch(g)
 	if name == "" {
 		return
@@ -313,6 +307,20 @@ func recordBranchFact(c plans.Config, session string, g gitCall, now time.Time) 
 		if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
 			c.LinkEvidence(p.File(), now)
 		}
+	}
+}
+
+func recordWorktreeFact(c plans.Config, session string, g gitCall, now time.Time) {
+	path := newWorktree(g)
+	if path == "" {
+		return
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil || toplevel(real) != real {
+		return
+	}
+	if p, part, ok := locateFactPlan(c, session, g.dir); ok {
+		p.AddToProperty(part, "WORKTREES", real, now)
 	}
 }
 

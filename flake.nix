@@ -1605,19 +1605,20 @@
           touch $out
         '';
 
-      # gosec over agent-tools, with the rules and exclusions in
+      # Security and complexity lint over agent-tools, with the rules in
       # overlays/agent-tools/.golangci.yml; .github/workflows/agent-tools-lint.yml
       # runs it. Run it with `nix build .#checks.<system>.agent-tools-lint`.
-      # It is kept out of the package's check phase so that a new gosec rule
+      # It is kept out of the package's check phase so that a new lint rule
       # fails CI and never a switch. It runs without network, on the module
       # dependencies the package vendors (its vendorHash).
       checks.agent-tools-lint =
         pkgs.runCommand "agent-tools-lint" {
-          nativeBuildInputs = [pkgs.go pkgs.golangci-lint];
+          nativeBuildInputs = [pkgs.go pkgs.golangci-lint pkgs.python3];
           src = pkgs.lib.fileset.toSource {
             root = ./overlays/agent-tools;
             fileset = pkgs.lib.fileset.unions [
               ./overlays/agent-tools/.golangci.yml
+              ./overlays/agent-tools/lint-tests.py
               ./overlays/agent-tools/go.mod
               ./overlays/agent-tools/go.sum
               ./overlays/agent-tools/cmd
@@ -1633,6 +1634,7 @@
           chmod -R u+w agent-tools
           cp -r $vendor agent-tools/vendor
           cd agent-tools
+          python3 lint-tests.py .golangci.yml
           golangci-lint run ./...
           touch $out
         '';
