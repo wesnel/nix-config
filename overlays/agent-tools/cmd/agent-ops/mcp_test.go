@@ -57,7 +57,7 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		case strings.Contains(req.Query, "stack {"):
 			data = `{"repository":{"pullRequest":{"stack":null}}}`
 		case strings.Contains(req.Query, "mergeable mergeStateStatus reviewDecision"):
-			data = `{"repository":{"pullRequest":{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED"}}}`
+			data = `{"repository":{"pullRequest":{"headRefOid":"abc","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"oid":"abc","statusCheckRollup":null}}]}}}}`
 		case strings.Contains(req.Query, "reviewThreads(first: 50"):
 			data = `{"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": [
 				{"id": "T1", "isResolved": false, "isOutdated": false, "path": "a.go", "line": 3, "comments": {
