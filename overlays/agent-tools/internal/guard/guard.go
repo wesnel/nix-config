@@ -115,10 +115,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	decision := "deny"
 	if asks[reason] && who == baseline {
 		// Claude Code can ask from a hook; Codex needs native tool policy.
-		if in.TurnID != "" {
-			reason = cannotAsk(reason)
-		} else {
+		switch in.TurnID {
+		case "":
 			decision = "ask"
+		default:
+			reason = cannotAsk(reason)
 		}
 	}
 	if err := json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
