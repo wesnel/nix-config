@@ -1,6 +1,6 @@
 [
   {
-    "why": "Publishing goes through the operator's signed push or `pr-loop`, never a plain push.",
+    "why": "Publishing goes through the operator's signed push or `agent-pr`, never a plain push.",
     "scope": "baseline",
     "deny": ["git push origin feature/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push",
       "nice -n 5 git push", "env -u HOME git push", "if true; then git push; fi", "find . -maxdepth 0 -exec git push \\;",
@@ -52,7 +52,7 @@
     "allow": ["gh issue view 1", "gh issue list --state open"]
   },
   {
-    "why": "GitHub credentials stay with gh and pr-loop.",
+    "why": "GitHub credentials stay with gh and agent-pr.",
     "scope": "baseline",
     "deny": ["gh auth token", "gh auth status -t", "gh auth status --show-token", "gh auth setup-git", "gh auth login"],
     "allow": ["gh auth status"]
@@ -66,7 +66,7 @@
     "allow": ["gh repo clone o/r", "gh repo set-default o/r", "gh release download v1", "gh run watch 1", "gh run view 1 --log"]
   },
   {
-    "why": "GitHub writes go through pr-loop or gh's checked commands; reading is fine.",
+    "why": "GitHub writes go through agent-pr or gh's checked commands; reading is fine.",
     "scope": "baseline",
     "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x",
       "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\"",
@@ -103,7 +103,7 @@
     "allow": ["git config alias.st status", "git lg", "git config --get alias.zz"]
   },
   {
-    "why": "GitHub writes go through gh or pr-loop, which the guard can check.",
+    "why": "GitHub writes go through gh or agent-pr, which the guard can check.",
     "scope": "baseline",
     "deny": ["curl -X POST https://api.github.com/repos/o/r/issues -d '{}'", "wget --post-data=x https://api.github.com/repos/o/r/issues",
       "http POST https://api.github.com/repos/o/r/issues title=x", "curl -T f https://uploads.github.com/repos/o/r/releases/1/assets"],
@@ -265,26 +265,26 @@
   {
     "why": "Whether a CI failure is not the PR's doing is the operator's call.",
     "scope": "baseline",
-    "deny": ["pr-loop request --accept-failure windows-tuntap 663", "pr-loop request 663 --accept-failure=ci"],
-    "allow": ["pr-loop request 663"]
+    "deny": ["agent-pr request --accept-failure windows-tuntap 663", "agent-pr request 663 --accept-failure=ci"],
+    "allow": ["agent-pr request 663"]
   },
   {
-    "why": "Only the operator starts a review loop and sets its mode, which pr-loop's writes depend on.",
+    "why": "Only the operator starts a review loop and sets its mode, which agent-pr's writes depend on.",
     "scope": "baseline",
     "deny": ["review-loop --harness codex --bots 12", "claude-review-loop --bots 12", "/nix/store/x/bin/claude-review-loop --people 12",
-      "codex -c 'shell_environment_policy.set.PR_LOOP_MODE=\"bots\"'", "claude --settings '{\"env\":{\"PR_LOOP_SESSION\":\"1\"}}'", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
-      "export PR_LOOP_SESSION=1", "env PR_LOOP_MODE=bots pr-loop request", "set -x PR_LOOP_MODE bots", "PR_LOOP_SESSION=1",
+      "codex -c 'shell_environment_policy.set.PR_LOOP_MODE=\"bots\"'", "claude --settings '{\"env\":{\"PR_LOOP_SESSION\":\"1\"}}'", "PR_LOOP_MODE=people agent-pr draft T --body-file d.md --outcome fix",
+      "export PR_LOOP_SESSION=1", "env PR_LOOP_MODE=bots agent-pr request", "set -x PR_LOOP_MODE bots", "PR_LOOP_SESSION=1",
       "launchctl setenv PR_LOOP_MODE bots", "declare -x PR_LOOP_MODE=bots",
-      "printf -v PR_LOOP_MODE bots; export PR_LOOP_MODE; pr-loop reply --from f", "printf -vPR_LOOP_MODE %s bots",
+      "printf -v PR_LOOP_MODE bots; export PR_LOOP_MODE; agent-pr reply --from f", "printf -vPR_LOOP_MODE %s bots",
       "read PR_LOOP_MODE <<< bots", "read -r PR_LOOP_SESSION < f", "export PR_LOOP_MODE", "mapfile -t PR_LOOP_MODE < f"],
-    "allow": ["pr-loop request 663", "codex -c model=o3 exec hi", "echo $PR_LOOP_MODE", "grep -n PR_LOOP_MODE README.md", "printenv PR_LOOP_MODE",
+    "allow": ["agent-pr request 663", "codex -c model=o3 exec hi", "echo $PR_LOOP_MODE", "grep -n PR_LOOP_MODE README.md", "printenv PR_LOOP_MODE",
       "printf '%s\\n' PR_LOOP_MODE", "printf -v line %s PR_LOOP_MODE", "read -r line < f"]
   },
   {
     "why": "Posting the answers to people's threads is the operator's, each confirmed on their terminal.",
     "scope": "baseline",
-    "deny": ["pr-loop post 12", "pr-loop post 12 PRRT_kwDOx", "cd r && pr-loop post 12"],
-    "allow": ["pr-loop draft PRRT_kwDOx --body-file d.md --outcome fix", "grep -n 'pr-loop post' SKILL.md"]
+    "deny": ["agent-pr post 12", "agent-pr post 12 PRRT_kwDOx", "cd r && agent-pr post 12"],
+    "allow": ["agent-pr draft PRRT_kwDOx --body-file d.md --outcome fix", "grep -n 'agent-pr post' SKILL.md"]
   },
   {
     "why": "pr-loop.* settings are the operator's to change.",
@@ -301,8 +301,8 @@
   {
     "why": "A reviewer only reads; whoever started it acts on its findings.",
     "scope": "reviewer",
-    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12", "pr-loop link 12 13"],
-    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop stack 12", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
+    "deny": ["agent-pr wait reviews", "agent-pr push", "agent-pr reply T --body-file -", "agent-ops setup .pr-loop/12", "agent-pr link 12 13"],
+    "allow": ["agent-pr threads 12", "agent-pr logs 12 test", "agent-pr status", "agent-pr stack 12", "agent-pr wait ci --timeout 3600", "agent-ops setup-command"]
   },
   {
     "why": "A reviewer only reads; whoever started it changes the code.",
@@ -313,7 +313,7 @@
   {
     "why": "A reviewer does not start a review of its own; whoever started it decides on another round.",
     "scope": "reviewer",
-    "deny": ["git delegate --plan /p/2026-10-14-x.box.org main..HEAD", "git -C .pr-loop/12 delegate --print-prompt --plan /p/2026-10-14-x.box.org --part P1 a..b", "git-delegate --plan /p/2026-10-14-x.box.org a..b", "git delegate settle a..b F1 fix", "git delegate o/r#12"],
+    "deny": ["agent-review --plan /p/2026-10-14-x.box.org main..HEAD", "agent-review --print-prompt --plan /p/2026-10-14-x.box.org --part P1 a..b", "/bin/agent-review --plan /p/2026-10-14-x.box.org a..b", "agent-review settle a..b F1 fix", "agent-review o/r#12"],
     "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+delegate' SKILL.md"]
   },
   {

@@ -330,7 +330,7 @@ func (a *adequacy) prompt(printed bool) string {
 	var b strings.Builder
 	if printed {
 		b.WriteString("Each commit whose tests pass without the rest of it is an `untested` finding with an ID " +
-			"starting " + mechanicalPrefix + ". This prompt was printed for a reviewer whose reply git delegate never " +
+			"starting " + mechanicalPrefix + ". This prompt was printed for a reviewer whose reply agent-review never " +
 			"sees, so nothing raises them for you: report each finding below yourself, as a finding of kind " +
 			"`untested` with the `id`, `path` and `line` given, and its claim and evidence.\n")
 	} else {

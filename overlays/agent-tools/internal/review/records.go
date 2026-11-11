@@ -211,8 +211,8 @@ func recordOf(s *source) (string, error) {
 	return record.RangeFile(s.owner, s.repo, r.base, r.tip)
 }
 
-// ShowUsage is `git delegate show -h`.
-const ShowUsage = `usage: git delegate show SOURCE
+// ShowUsage is `agent-review show -h`.
+const ShowUsage = `usage: agent-review show SOURCE
 
 Prints the review of SOURCE as one JSON document, computed from its
 review records: for a range, BASE..TIP resolved in this repository, its
@@ -380,7 +380,7 @@ func showRange(path string, rec *record.Range) *ShowRange {
 	return out
 }
 
-// show runs `git delegate show` with args.
+// show runs `agent-review show` with args.
 func show(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" show", flag.ContinueOnError)
 	if code, ok := cli.Parse(flags, args, ShowUsage, stdout, stderr); !ok {
@@ -434,7 +434,7 @@ func showDoc(s *source) (*ShowDoc, error) {
 		}
 	}
 	if doc.Range == nil && doc.PR == nil {
-		return nil, refusal.New("there is no review of %s; run `git delegate %s` to make one", s.given, s.given)
+		return nil, refusal.New("there is no review of %s; run `agent-review %s` to make one", s.given, s.given)
 	}
 	return doc, nil
 }
@@ -466,8 +466,8 @@ func reportRecord(result any, err error, code int, stdout, stderr io.Writer) int
 	return cli.Report(name, result, err, code, stdout, stderr)
 }
 
-// SettleUsage is `git delegate settle -h`.
-const SettleUsage = `usage: git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
+// SettleUsage is `agent-review settle -h`.
+const SettleUsage = `usage: agent-review settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
 
 Records how a finding of SOURCE's review was settled, in its record: the
 one change to a record made by hand. FINDING is its record ID, as F3 or
@@ -484,7 +484,7 @@ var outcomes = map[string]record.State{"fix": record.Fix, "propose": record.Prop
 	"defer": record.Defer, "duplicate-of": record.Duplicate, "belongs-in": record.Belongs,
 	"needs-operator": record.Operator, "open": record.Open}
 
-// settle runs `git delegate settle` with args.
+// settle runs `agent-review settle` with args.
 func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" settle", flag.ContinueOnError)
 	target := flags.String("target", "", "")
@@ -562,7 +562,7 @@ func settleFinding(rec *record.Range, source, id string, state record.State, tar
 		sf := showFinding(*f)
 		return &sf, nil
 	}
-	return nil, refusal.New("the review of %s has no finding %s; pass a finding ID that `git delegate show %s` prints",
+	return nil, refusal.New("the review of %s has no finding %s; pass a finding ID that `agent-review show %s` prints",
 		source, id, source)
 }
 
@@ -573,7 +573,7 @@ func settleFinding(rec *record.Range, source, id string, state record.State, tar
 // the record has none or cannot be read. Where the records cannot be
 // listed, it is the refusal it would be with none.
 func noReviewToSettle(s *source, path string) error {
-	none := refusal.New("there is no review of %s to settle; run `git delegate %s` first", s.given, s.given)
+	none := refusal.New("there is no review of %s to settle; run `agent-review %s` first", s.given, s.given)
 	if s.number != 0 || path == "" {
 		return none
 	}
@@ -601,7 +601,7 @@ func noReviewToSettle(s *source, path string) error {
 		}
 	}
 	return refusal.New("there is no review of %s to settle; settle a finding of a review under its base with "+
-		"`git delegate settle BASE..TIP FINDING OUTCOME`, or run `git delegate %s` first. The reviews under %s, "+
+		"`agent-review settle BASE..TIP FINDING OUTCOME`, or run `agent-review %s` first. The reviews under %s, "+
 		"by their open findings:%s", s.given, s.given, base, b.String())
 }
 

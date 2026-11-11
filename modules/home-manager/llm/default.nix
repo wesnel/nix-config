@@ -31,7 +31,7 @@ with lib; let
       {
         inherit (cfg.delegate) agents settings quotaStop;
       }
-      # The provider git delegate's Codex reviews reach their model
+      # The provider agent-review's Codex reviews reach their model
       # through, whose auth command stands in for Codex's login.
       // optionalAttrs ngrokAi {
         codex = {
@@ -199,7 +199,7 @@ in {
           default = "xiaomi/mimo-v2.6-pro";
           description = ''
             The ngrok.ai model of the second opinion, of a model family other
-            than {option}`primary`'s: git delegate's Codex review, Codex's
+            than {option}`primary`'s: agent-review's Codex review, Codex's
             `/review`, and the adversarial-reviewer sub-agent.
           '';
         };
@@ -249,7 +249,7 @@ in {
           The gateway as an OpenAI Responses provider, for Codex: its id in
           `model_providers`, its name, its base URL, and the command, with
           its arguments, that prints the key as the bearer token. Codex's
-          config.toml and git delegate's Codex runs both take it from here.
+          config.toml and agent-review's Codex runs both take it from here.
         '';
       };
     };
@@ -364,7 +364,7 @@ in {
 
       description = ''
         Go module path patterns, as GOPRIVATE's, that the upgrade review
-        (`git delegate --reviewer upgrade`) never asks the public module
+        (`agent-review --reviewer upgrade`) never asks the public module
         proxy for, beside those GOPRIVATE, GONOPROXY and GONOSUMDB name. It
         reads them from a local clone or through the gh login's GitHub API
         alone, and raises a pin it cannot read as unread. Setting GOPRIVATE
@@ -451,7 +451,7 @@ in {
 
     # The headless reviewers' definitions and settings, which the Claude Code
     # module builds from its agent files and host sandbox, written into
-    # agent-tools' config for git delegate.
+    # agent-tools' config for agent-review.
     delegate = {
       agents = mkOption {
         type = types.nullOr types.str;
@@ -473,7 +473,7 @@ in {
         internal = true;
         description = ''
           The quota stop's threshold, {option}`wgn.home.claude.quotaStop`:
-          the reviewers carry no hooks, so git delegate applies the stop
+          the reviewers carry no hooks, so agent-review applies the stop
           itself before starting a Claude reviewer.
         '';
       };
@@ -708,7 +708,7 @@ in {
           Code's and Codex's, may connect to: the nix daemon's, which this
           module adds, and whatever a machine adds. Linux's sandbox cannot
           allow one socket, so it ignores this list. Claude Code's headless
-          reviewers, which git delegate starts, get none; Codex's role
+          reviewers, which agent-review starts, get none; Codex's role
           agents run in the session's profile and get them all. Each is the
           path the socket resolves to, which the
           sandbox matches (/private/var, not /var), and a command that
@@ -721,7 +721,7 @@ in {
 
     prLoop = {
       enable = mkEnableOption ''
-        the `pr-loop` command's config and the `review-loop` skill, through
+        the `agent-pr` command's config and the `review-loop` skill, through
         which a review loop pushes, replies and requests reviews on GitHub.
         It runs outside the sandbox with the `gh` login, so its policy
         guards an agent that forgets a rule but does not stop one that runs
@@ -934,12 +934,12 @@ in {
     # can define a derivation can reach any host.
     wgn.home.llm.sandbox.allowedSockets = optional pkgs.stdenv.hostPlatform.isDarwin "/nix/var/nix/daemon-socket/socket";
 
-    # Read by `pr-loop` where it runs.
+    # Read by `agent-pr` where it runs.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
 
-    # Read by `agent-plan`, `git delegate`, pr-loop's public-text check and
+    # Read by `agent-plan`, `agent-review`, agent-pr's public-text check and
     # the guard, which keeps each plan's log append-only.
     xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
 

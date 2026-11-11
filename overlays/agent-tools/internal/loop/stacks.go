@@ -25,7 +25,7 @@ var stacksREST = func(method, path string, body, out any) error {
 // PRs already in that stack, in that order, are left as they are.
 func Link(targets []string) (any, error) {
 	if len(targets) == 0 {
-		return nil, errors.New("link takes the PRs to stack, bottom first; see pr-loop --help")
+		return nil, errors.New("link takes the PRs to stack, bottom first; see agent-pr --help")
 	}
 	repo, err := repository()
 	if err != nil {
@@ -121,7 +121,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	if target == nil {
 		if len(added) < 2 {
 			return nil, refuse("#%d is in no GitHub stack, and neither is a pull request it is based on, so it would be "+
-				"a stack of one; name the pull requests to stack bottom first, as `pr-loop link LOWER UPPER`", added[0])
+				"a stack of one; name the pull requests to stack bottom first, as `agent-pr link LOWER UPPER`", added[0])
 		}
 		var created struct{ Number int }
 		if err := stackWrite("POST", fmt.Sprintf("repos/%s/stacks", repo.Slug), body, &created); err != nil {
@@ -133,7 +133,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	// the loop may write to.
 	for _, m := range target.PRs {
 		if pr := prs[m.Branch]; m.State == "OPEN" && (pr == nil || pr.Number != m.PR) {
-			return nil, refuse("GitHub stack #%d holds #%d, which is not an open pull request by %s, so pr-loop leaves "+
+			return nil, refuse("GitHub stack #%d holds #%d, which is not an open pull request by %s, so agent-pr leaves "+
 				"the stack alone; name the stack in the report for the operator", target.Number, m.PR, repo.Viewer)
 		}
 	}
@@ -175,7 +175,7 @@ func linkTarget(repo *Repo, prs map[string]*PR, chain []*PR) (*GitHubStack, int,
 	for i := k; i < len(chain); i++ {
 		if stacks[i] != nil {
 			return nil, 0, refuse("#%d is in GitHub stack #%d, but #%d below it is in none, and a stack is a single line; "+
-				"`pr-loop stack %d` shows it, and unstacking is the operator's call", chain[i].Number, stacks[i].Number,
+				"`agent-pr stack %d` shows it, and unstacking is the operator's call", chain[i].Number, stacks[i].Number,
 				chain[k].Number, chain[i].Number)
 		}
 	}
@@ -204,7 +204,7 @@ func checkStackPrefix(target *GitHubStack, stacks []*GitHubStack, chain []*PR, k
 	at := position(target, chain[0].Number)
 	for i := 1; i < k; i++ {
 		if stacks[i].Number != target.Number || at+i >= len(target.PRs) || target.PRs[at+i].PR != chain[i].Number {
-			return refuse("#%d and #%d are not next to each other in one GitHub stack; `pr-loop stack %d` shows "+
+			return refuse("#%d and #%d are not next to each other in one GitHub stack; `agent-pr stack %d` shows "+
 				"GitHub's stacks, and unstacking is the operator's call", chain[i-1].Number, chain[i].Number, chain[i].Number)
 		}
 	}
@@ -251,7 +251,7 @@ func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
 	if base == repo.Default {
 		return nil
 	}
-	command := fmt.Sprintf("pr-loop link %s %d", base, number)
+	command := fmt.Sprintf("agent-pr link %s %d", base, number)
 	later := func(err error) map[string]any {
 		reason := err.Error()
 		if !strings.Contains(reason, command) {
@@ -267,7 +267,7 @@ func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
 	if err != nil {
 		return later(err)
 	}
-	command = fmt.Sprintf("pr-loop link %d %d", below.Number, number)
+	command = fmt.Sprintf("agent-pr link %d %d", below.Number, number)
 	opened := &PR{Number: number, HeadRefName: branch, BaseRefName: base}
 	opened.Author.Login = repo.Viewer
 	// Search may not list a PR this new.
@@ -311,7 +311,7 @@ func prBranch(repo *Repo, prs map[string]*PR, target string) (string, error) {
 				return b, nil
 			}
 		}
-		return "", refuse("#%d is not an open pull request by %s in %s; name one that is, as `pr-loop stack` lists them",
+		return "", refuse("#%d is not an open pull request by %s in %s; name one that is, as `agent-pr stack` lists them",
 			n, repo.Viewer, repo.Slug)
 	}
 	if prs[target] == nil {

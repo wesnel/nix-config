@@ -121,7 +121,7 @@ with lib; let
             + a.prompt;
         }
         // optionalAttrs (a.field "effort" != null) {model_reasoning_effort = a.field "effort";});
-    }) (llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "pr-loop"));
+    }) (llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "agent-ops"));
 
   plans = config.wgn.home.llm.plans;
   sandboxLists = config.wgn.home.llm.sandbox;
@@ -230,12 +230,12 @@ with lib; let
 
   # The excluded commands an approved run can complete in Codex, as Codex
   # rule prefixes: "agent-plan new *" is ["agent-plan" "new"]. gh-read,
-  # pr-loop and git delegate need the gh login or the reviewers'
+  # agent-pr and agent-review need the gh login or the reviewers'
   # credentials, which no command in the profile can read, approved or
-  # not, so asking before them would only ask for a failure; pr-loop's
-  # and git delegate's run as pr-loop mcp's tools instead.
+  # not, so asking before them would only ask for a failure; agent-pr's
+  # and agent-review's run as agent-ops mcp's tools instead.
   excludedPrefixes = map (c: splitString " " (removeSuffix " *" c)) (
-    filter (c: !(any (p: hasPrefix p c) ["gh-read " "git delegate " "git-delegate " "pr-loop "]))
+    filter (c: !(any (p: hasPrefix p c) ["gh-read " "agent-review " "agent-pr "]))
     config.wgn.home.llm.guard.excludedCommands
   );
   promptRules =
@@ -385,13 +385,13 @@ in {
 
           # Holds every session to the baseline guard. Codex skips a hook
           # until it is trusted with /hooks, and trust follows the hook's
-          # hash, so the command names `pr-loop` on PATH rather than a store
+          # hash, so the command names `agent-ops` on PATH rather than a store
           # path that changes with every rebuild. Codex adds these to any
           # other layer's hooks.
           ".codex/hooks.json".text = builtins.toJSON {
             # Records commits, pushes, worktrees, branches and PRs in the
             # plan and asks which step a commit completes; after a push to
-            # GitHub, names the `pr-loop wait ci` to start; hands over the
+            # GitHub, names the `agent-pr wait ci` to start; hands over the
             # pull-requests skill when a PR is opened or edited, and the
             # commit rules on the session's first commit. Codex names every
             # shell call Bash.
@@ -401,7 +401,7 @@ in {
                 hooks = [
                   {
                     type = "command";
-                    command = "pr-loop guard --post";
+                    command = "agent-ops guard --post";
                   }
                 ];
               }
@@ -458,7 +458,7 @@ in {
                   hooks = [
                     {
                       type = "command";
-                      command = "pr-loop guard --baseline";
+                      command = "agent-ops guard --baseline";
                     }
                   ];
                 }
@@ -477,7 +477,7 @@ in {
     }
 
     # Pins interactive sessions' sandbox to the profile above; the guard
-    # hook holds the rest of what Codex may do. git delegate's
+    # hook holds the rest of what Codex may do. agent-review's
     # `codex exec --ignore-user-config` reads none of it. Merged into the
     # config.toml Codex writes, whose `default_permissions` wins over a
     # `sandbox_mode` in the same file but not over `--sandbox` or a
@@ -590,21 +590,21 @@ in {
       ];
     }
 
-    # pr-loop mcp, as the MCP server agent_ops, the name the guard lets its
+    # agent-ops mcp, as the MCP server agent_ops, the name the guard lets its
     # tools through under (OpsServer in agent-tools' internal/guard): the
     # GitHub, review and plan commands the profile confines. Codex
     # starts it as a process of its own, outside that sandbox, with only
     # its core environment (HOME, PATH, TMPDIR and the like) and the
-    # variables env_vars names, a review loop's, which pr-loop holds its
+    # variables env_vars names, a review loop's, which agent-pr holds its
     # writes to. Named routine plan tools are preapproved; review-loop
     # preapproves its own tools for its session. Other calls prompt. A
     # PermissionRequest hook cannot answer those prompts.
-    # tool_timeout_sec covers a git delegate run of several reviewers.
+    # tool_timeout_sec covers an agent-review run of several reviewers.
     # Merged into the config.toml Codex writes, the entry replaced whole.
     (let
       planApprovals = genAttrs config.wgn.home.llm.agentTools.routinePlanTools (_: {approval_mode = "approve";});
       opsServer = {
-        command = getExe' config.wgn.home.llm.agentTools "pr-loop";
+        command = getExe' config.wgn.home.llm.agentTools "agent-ops";
         args = ["mcp"];
         env_vars = ["PR_LOOP_SESSION" "PR_LOOP_MODE"];
         default_tools_approval_mode = "prompt";
@@ -617,7 +617,7 @@ in {
       home.activation.codexOpsServer = lib.hm.dag.entryAfter ["writeBoundary"] ''
         if [ -z "''${DRY_RUN:-}" ]; then
           ${registerMcpServers} "$HOME/.codex/config.toml" ${escapeShellArg servers} \
-            || warnEcho "pr-loop mcp was not registered with Codex."
+            || warnEcho "agent-ops mcp was not registered with Codex."
         fi
       '';
 

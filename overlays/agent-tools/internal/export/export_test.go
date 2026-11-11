@@ -124,7 +124,7 @@ func reviewDiagram() string {
 		`{"id": "E1", "from": "N1", "to": "N2", "label": "calls", "cite": ` + cite + `, "planned": null}]}`
 }
 
-// writeRecords writes git delegate's and pr-loop's records of p/q#3, a
+// writeRecords writes agent-review's and agent-pr's records of p/q#3, a
 // review request, and o/r#7, one of the operator's, every text in them a
 // sentinel's.
 func writeRecords(t *testing.T) {

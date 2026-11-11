@@ -9,7 +9,7 @@ import (
 )
 
 // TestMain runs the tests, or, started by a TestMCP case with serveMCPEnv
-// set to its fake GitHub's URL, serves as pr-loop mcp against it.
+// set to its fake GitHub's URL, serves as agent-ops mcp against it.
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
 	if api := os.Getenv(serveMCPEnv); api != "" {

@@ -81,7 +81,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case len(args) == 1 && args[0] == "--post":
 		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes --baseline, --reviewer or --post; got %q\n", args)
+		fmt.Fprintf(stderr, "agent-ops guard: takes --baseline, --reviewer or --post; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -189,7 +189,7 @@ func CheckBaseline(tool string, toolInput json.RawMessage) string {
 }
 
 // CheckReviewer is CheckBaseline for a reviewer, which only reads: it is also
-// denied git commands that change the repository and every pr-loop command
+// denied git commands that change the repository and every agent-pr command
 // but the reading ones, and is told so whichever rule a call breaks.
 func CheckReviewer(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
@@ -469,18 +469,17 @@ func program(c call, who role, files, dir, checkout string) string {
 	}
 	words := c.words
 	switch name := base(words[0]); {
+	case name == "pr-loop" || name == "git-delegate":
+		return obsoleteCommand
 	case name == "git":
 		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
 	case name == "gh":
-		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
-			return reviewerReport
-		} else if reason != "" {
-			return reason
-		}
-		return checkPublicGh(words[1:], c.expands[1:], dir)
-	case name == "pr-loop":
+		return checkGhCall(c, who, files, dir)
+	case name == "agent-pr":
 		return checkPrLoop(words[1:], who)
-	case name == "git-delegate" && who == reviewer:
+	case name == "agent-ops" && who == reviewer && (len(words) < 2 || words[1] != "setup-command"):
+		return reviewerReport
+	case name == "agent-review" && who == reviewer:
 		return nestedReview
 	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":
 		return planSync
@@ -500,6 +499,16 @@ func program(c call, who role, files, dir, checkout string) string {
 	return ""
 }
 
+func checkGhCall(c call, who role, files, dir string) string {
+	if reason := checkGh(c.words[1:], c.expands[1:], files, who); reason != "" {
+		if who == reviewer {
+			return reviewerReport
+		}
+		return reason
+	}
+	return checkPublicGh(c.words[1:], c.expands[1:], dir)
+}
+
 func checkCallEnvironment(c call, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
@@ -513,7 +522,9 @@ func checkCallEnvironment(c call, dir string) string {
 	return ""
 }
 
-const githubAPI = "Writes to GitHub's API go through gh or pr-loop, which the guard can check. Use `pr-loop` or a `gh` command, or put the call in your report for the operator."
+const githubAPI = "Writes to GitHub's API go through gh or agent-pr, which the guard can check. Use `agent-pr` or a `gh` command, or put the call in your report for the operator."
+
+const obsoleteCommand = "This command is obsolete. Use agent-review for reviews, agent-pr for pull requests, or agent-ops for harness infrastructure."
 
 // githubAPIWrite reports whether an HTTP client's arguments send something
 // to GitHub's API or upload host.
@@ -999,10 +1010,9 @@ var (
 
 const pushGuard = "Publishing unsigned commits, or private history in a public repository, is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
-// reviewerReads are the pr-loop commands a reviewer may run, besides
+// reviewerReads are the agent-pr commands a reviewer may run, besides
 // `wait ci`.
-var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
-	"setup-command": true}
+var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true}
 
 // planSync is why no agent syncs plans: the sync pushes with a deploy key,
 // which is the watcher's, outside every session.
@@ -1028,15 +1038,15 @@ const reviewerGit = "A reviewer only reads. It runs git's reading commands (`log
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
-// postByOperator is why no agent runs `pr-loop post`, which posts the
+// postByOperator is why no agent runs `agent-pr post`, which posts the
 // answers drafted to people's threads.
 const postByOperator = "Posting the answers to people's threads is the operator's, each confirmed on their terminal. " +
-	"Leave the drafts in the review record, and say in the report that they wait for `pr-loop post PR`."
+	"Leave the drafts in the review record, and say in the report that they wait for `agent-pr post PR`."
 
-// mergeByOperator is why no agent runs `pr-loop merge`, which merges a
+// mergeByOperator is why no agent runs `agent-pr merge`, which merges a
 // pull request and every open one below it in its GitHub stack.
 const mergeByOperator = "Merging is the operator's, confirmed on their terminal, and cannot be undone. " +
-	"Say in the report which pull request tops the stack to merge, for the operator to run `pr-loop merge PR`."
+	"Say in the report which pull request tops the stack to merge, for the operator to run `agent-pr merge PR`."
 
 // checkPrLoop keeps the decisions that are the operator's: posting to
 // people's threads, merging, and accepting a CI failure as not the PR's.
@@ -1044,7 +1054,7 @@ func checkPrLoop(args []string, who role) string {
 	if len(args) == 0 {
 		return ""
 	}
-	// The rule allowing `Bash(pr-loop *)` in a loop session matches post and
+	// The rule allowing `Bash(agent-pr *)` in a loop session matches post and
 	// merge as well, so this is what keeps them the operator's.
 	switch args[0] {
 	case "post":
@@ -1058,7 +1068,7 @@ func checkPrLoop(args []string, who role) string {
 	}
 	for _, a := range args[1:] {
 		if args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")) {
-			return "Whether a CI failure is not this PR's doing is the operator's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for the operator to run if they agree."
+			return "Whether a CI failure is not this PR's doing is the operator's call. Put the evidence in the report, with `agent-pr request --accept-failure CHECK PR` for the operator to run if they agree."
 		}
 	}
 	return ""
@@ -1185,8 +1195,8 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		return ""
 	}
 	sub, rest := words[i], words[i+1:]
-	if who == reviewer && sub == "delegate" {
-		return nestedReview
+	if sub == "delegate" {
+		return obsoleteCommand
 	}
 	if who == reviewer && !gitRead(sub, rest) {
 		repo, ok := scratchRepo(sub, rest, expands[min(i+1, len(expands)):], physical, checkout, env)
@@ -1251,7 +1261,7 @@ func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fe
 	case sub == "sign-pass":
 		return keyTouch
 	case sub == "push":
-		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
+		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `agent-pr open`, or end your report with `git sign-pass --push` for the operator to run."
 	case overSSH(sub, rest, g):
 		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
@@ -1681,11 +1691,11 @@ var ghReads = map[string]map[string]bool{
 
 const (
 	ghOperatorsCall = "Merging, closing, reopening or marking a PR ready is the operator's call. Say in your report that the PR is ready for it."
-	ghComments      = "Reviews, top-level comments and issues are the operator's to write. Reply inside a review thread with `pr-loop reply`, and put anything else in your report for the operator."
-	ghDraft         = "A PR opens as a draft; marking it ready is the operator's call. Open it with `pr-loop open`, or with `gh pr create --draft`."
+	ghComments      = "Reviews, top-level comments and issues are the operator's to write. Reply inside a review thread with `agent-pr reply`, and put anything else in your report for the operator."
+	ghDraft         = "A PR opens as a draft; marking it ready is the operator's call. Open it with `agent-pr open`, or with `gh pr create --draft`."
 	ghEdit          = "Only a PR's base, title and body may change here. Use `gh pr edit` with `--base`, `--title`, `--body` or `--body-file`, and leave labels, reviewers and the rest to the operator."
-	ghAuth          = "GitHub credentials stay with gh and pr-loop. Use `gh` or `pr-loop` commands, which hold the login, and leave gh's login to the operator."
-	ghAPIWrite      = "Only read-only `gh api` calls are allowed. Reply in a review thread with `pr-loop reply` or `resolve`, and put any other write in your report for the operator."
+	ghAuth          = "GitHub credentials stay with gh and agent-pr. Use `gh` or `agent-pr` commands, which hold the login, and leave gh's login to the operator."
+	ghAPIWrite      = "Only read-only `gh api` calls are allowed. Reply in a review thread with `agent-pr reply` or `resolve`, and put any other write in your report for the operator."
 )
 
 // ghEditFlags are the `gh pr edit` flags every session may use, with
@@ -1792,12 +1802,12 @@ func checkGhEdit(args []string) string {
 	return ""
 }
 
-const graphQLMutation = "GraphQL mutations go through pr-loop. Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; " +
+const graphQLMutation = "GraphQL mutations go through agent-pr. Use `agent-pr push`, `reply`, `resolve`, `request` or `link`; " +
 	"any other write goes in the report for the operator."
 
 const unreadableQuery = "The guard cannot read this GraphQL query, so it cannot tell a read from a mutation. " +
 	"Pass the query inline with `gh api graphql -f query='...'`, or name a file in the workspace with `-F query=@FILE` in a command of its own; " +
-	"a write goes through `pr-loop push`, `reply`, `resolve` or `request`."
+	"a write goes through `agent-pr push`, `reply`, `resolve` or `request`."
 
 // checkGraphQL denies a mutation, and a query or request body the guard
 // cannot read: one from stdin, one the shell expands, or a file that

@@ -21,7 +21,7 @@ import (
 )
 
 // refreshThreads reads a pull request's threads and writes them to its
-// record, pr-loop threads' writer; tests replace it.
+// record, agent-pr threads' writer; tests replace it.
 var refreshThreads = loop.RefreshThreads
 
 // source is what a review reviews: a range of the current repository, or a
@@ -201,7 +201,7 @@ func latest(ctx context.Context, slug string, number int, home string) (*PR, err
 		pr.Clone, pr.Refs, pr.Home = home, fmt.Sprintf("refs/pr-review/%d", number), true
 	}
 	if pr.Head, err = gitRun(ctx, pr.Clone, "rev-parse", "--verify", pr.Refs+"/head^{commit}"); err != nil {
-		return nil, refusal.New("%s#%d has not been fetched; run `git delegate %s#%d` first", slug, number, slug, number)
+		return nil, refusal.New("%s#%d has not been fetched; run `agent-review %s#%d` first", slug, number, slug, number)
 	}
 	if pr.Base, err = gitRun(ctx, pr.Clone, "merge-base", pr.Refs+"/base", pr.Head); err != nil {
 		return nil, err

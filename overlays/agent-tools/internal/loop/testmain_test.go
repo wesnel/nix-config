@@ -10,7 +10,7 @@ import (
 
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
-	// pr-loop logs its actions in the plan of the session running it: the
+	// agent-pr logs its actions in the plan of the session running it: the
 	// tests' plans are in a directory of their own, and no harness's
 	// session is theirs.
 	dir, err := os.MkdirTemp("", "loop-plans")

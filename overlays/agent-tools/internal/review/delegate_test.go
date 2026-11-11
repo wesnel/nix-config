@@ -16,7 +16,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/redcheck"
 )
 
-// delegateCmd runs `git delegate` with args and returns its exit status,
+// delegateCmd runs `agent-review` with args and returns its exit status,
 // stdout and stderr.
 func delegateCmd(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
@@ -257,7 +257,7 @@ func TestShow(t *testing.T) {
 		t.Errorf("diagrams without a renderer: %v", found)
 	}
 
-	if code, _, stderr := delegateCmd(t, "show", "owner/repo#13"); code != 2 || !strings.Contains(stderr, "git delegate owner/repo#13") {
+	if code, _, stderr := delegateCmd(t, "show", "owner/repo#13"); code != 2 || !strings.Contains(stderr, "agent-review owner/repo#13") {
 		t.Errorf("no review: exit %d\n%s", code, stderr)
 	}
 }
@@ -355,7 +355,7 @@ func TestSettleNoRecord(t *testing.T) {
 		writeRange(t, strings.Repeat("3", 40), strings.Repeat("4", 40), nil)
 		code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
 		refused(t, "no record", code, stderr)
-		want := "there is no review of " + f.base + "..HEAD to settle; run `git delegate " + f.base + "..HEAD` first\n"
+		want := "there is no review of " + f.base + "..HEAD to settle; run `agent-review " + f.base + "..HEAD` first\n"
 		if !strings.HasSuffix(stderr, want) {
 			t.Errorf("refusal %q, want it to end %q", stderr, want)
 		}
@@ -367,7 +367,7 @@ func TestSettleNoRecord(t *testing.T) {
 		t.Cleanup(func() { os.Chmod(dir, 0o700) })
 		code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
 		refused(t, "an unlistable directory", code, stderr)
-		want := "there is no review of " + f.base + "..HEAD to settle; run `git delegate " + f.base + "..HEAD` first\n"
+		want := "there is no review of " + f.base + "..HEAD to settle; run `agent-review " + f.base + "..HEAD` first\n"
 		if !strings.HasSuffix(stderr, want) {
 			t.Errorf("refusal %q, want it to end %q", stderr, want)
 		}

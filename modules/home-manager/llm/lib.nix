@@ -53,7 +53,7 @@
 
   # The role agents, from the plain agent files in ../claude/agents, which
   # both harnesses start as sub-agents: Claude Code as agent files, Codex as
-  # roles. In each file, guard (pr-loop) replaces @guard@. A file is YAML
+  # roles. In each file, guard (agent-ops) replaces @guard@. A file is YAML
   # frontmatter between `---` lines, then its prompt; a description is plain
   # YAML, with no colon followed by a space. Each role agent is:
   # - field KEY: the frontmatter's `KEY: VALUE` line's value, or null;
@@ -76,7 +76,7 @@
         then null
         else lib.removePrefix "${key}: " (lib.head lines);
       # Read from the file as written: a name taken from `text` carries
-      # pr-loop's store path, which an attribute name cannot.
+      # agent-ops's store path, which an attribute name cannot.
       skills = let
         lines = lib.splitString "\n" (lib.head (lib.splitString "\n---\n" (lib.removePrefix "---\n" raw)));
         start = lib.lists.findFirstIndex (line: line == "skills:") null lines;

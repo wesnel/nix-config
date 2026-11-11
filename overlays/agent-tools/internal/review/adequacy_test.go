@@ -132,7 +132,7 @@ func mechanical(t *testing.T, code int, out output, stderr string) map[string]an
 // before Codex started.
 func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 	t.Helper()
-	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
+	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "agent-review: refused: ")
 	if code != 2 || len(out.Findings) != 0 || !refusal.SaysInstead(reason) {
 		t.Errorf("exit %d, %+v, %q", code, out, stderr)
 	}
@@ -204,7 +204,7 @@ func TestTestAdequacy(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
-		for _, want := range []string{"git delegate never sees, so nothing raises them for you",
+		for _, want := range []string{"agent-review never sees, so nothing raises them for you",
 			"report each finding below yourself, as a finding of kind `untested` with the `id`, `path` and `line` given",
 			"- `" + id + "`: path `code_test.txt`, line 2; claim: " + f["claim"].(string) + " Evidence: " +
 				f["evidence"].(string)} {

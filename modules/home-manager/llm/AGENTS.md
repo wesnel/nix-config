@@ -110,11 +110,11 @@ A secret that reaches the session anyway, in a log, a captured request or a
 fixture, is written nowhere: put `<REDACTED>` in its place.
 
 In Codex, no command reaches the gh login or the reviewers' logins, so
-`pr-loop`'s GitHub commands and `git delegate` run as the tools of the
-`agent_ops` MCP server instead, one named for each: `pr-loop X` is
-`pr_loop_X` and `git delegate X` is `git_delegate_X`, dashes as
-underscores (`git delegate` itself is `git_delegate`, `pr-loop reply
---from` is `pr_loop_reply`). Each flag is the argument of its name,
+`agent-pr`'s GitHub commands and `agent-review` run as the tools of the
+`agent_ops` MCP server instead, one named for each: `agent-pr X` is
+`agent_pr_X` and `agent-review X` is `agent_review_X`, dashes as
+underscores (`agent-review` itself is `agent_review`, `agent-pr reply
+--from` is `agent_pr_reply`). Each flag is the argument of its name,
 `worktree` is the worktree's absolute path, and a file is a path in it.
 Read GitHub PR descriptions and discussion with `github_pr_view`, complete
 diffs with `github_pr_diff`, and repository text at a commit with
