@@ -474,12 +474,7 @@ func program(c call, who role, files, dir, checkout string) string {
 	case name == "git":
 		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
 	case name == "gh":
-		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
-			return reviewerReport
-		} else if reason != "" {
-			return reason
-		}
-		return checkPublicGh(words[1:], c.expands[1:], dir)
+		return checkGhCall(c, who, files, dir)
 	case name == "agent-pr":
 		return checkPrLoop(words[1:], who)
 	case name == "agent-ops" && who == reviewer && (len(words) < 2 || words[1] != "setup-command"):
@@ -502,6 +497,16 @@ func program(c call, who role, files, dir, checkout string) string {
 		}
 	}
 	return ""
+}
+
+func checkGhCall(c call, who role, files, dir string) string {
+	if reason := checkGh(c.words[1:], c.expands[1:], files, who); reason != "" {
+		if who == reviewer {
+			return reviewerReport
+		}
+		return reason
+	}
+	return checkPublicGh(c.words[1:], c.expands[1:], dir)
 }
 
 func checkCallEnvironment(c call, dir string) string {

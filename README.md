@@ -868,7 +868,9 @@ Code's `--settings` or a Codex `-c` override or `-p` profile, or running
 - Codex: `~/.codex/hooks.json`, for every tool but `write_stdin`, which
   runs no hook; so the guard refuses to start a command that only reads
   the terminal, which `write_stdin` could then drive. Codex skips a hook
-  until it is trusted, so trust it with `/hooks` once after the first switch.
+  until it is trusted. Trust it with `/hooks` after the first switch and
+  whenever a switch or rollback changes its command: trust follows the
+  command's hash.
 
 It denies what is yours to do: pushing (hand over `git sign-pass --push`,
 or open a draft with `agent-pr open`), anything else that waits for a key

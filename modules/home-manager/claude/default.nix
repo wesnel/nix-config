@@ -520,25 +520,8 @@ with lib; let
   # agent-ops setup, setup-command and guard work in the sandbox.
   # post is the operator's: the guard
   # refuses it to agents, and it asks on /dev/tty.
-  prLoopGitHub = [
-    "open"
-    "next"
-    "stack"
-    "link"
-    "push"
-    "threads"
-    "reply"
-    "resolve"
-    "draft"
-    "post"
-    "request"
-    "status"
-    "ci"
-    "logs"
-    "wait"
-    "sign-check"
-    "end"
-  ];
+  prLoopGitHub = ["open" "next" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
+    "sign-check" "end"];
 
   # The read-only ones, which run without a prompt in an ordinary session;
   # threads writes only its PR's review record. The writes are left to the
@@ -752,21 +735,9 @@ in {
           # baseline row, refused even where the hook cannot run. Rules are
           # not a boundary: the guard reads every other spelling, and the
           # sandbox holds the credentials these need.
-          ++ map (c: "Bash(${c} *)") [
-            "gh pr merge"
-            "gh pr close"
-            "gh pr reopen"
-            "gh pr review"
-            "gh pr comment"
-            "gh release"
-            "gh repo delete"
-            "git push"
-            "sudo"
-            "darwin-rebuild switch"
-            "nix profile install"
-            "npm publish"
-            "cargo publish"
-          ];
+          ++ map (c: "Bash(${c} *)") ["gh pr merge" "gh pr close" "gh pr reopen" "gh pr review" "gh pr comment"
+            "gh release" "gh repo delete" "git push" "sudo" "darwin-rebuild switch" "nix profile install" "npm publish"
+            "cargo publish"];
 
         # The guard refuses marking a pull request ready; its --undo, back
         # to draft, asks.
