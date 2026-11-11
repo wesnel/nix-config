@@ -9,7 +9,7 @@ import (
 
 func TestPRInventoryTool(t *testing.T) {
 	c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("state") != "open" {
+		if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("state") != "all" {
 			t.Errorf("unexpected inventory request: %s", r.URL)
 			w.WriteHeader(http.StatusBadRequest)
 			return

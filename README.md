@@ -818,7 +818,10 @@ bot's or yours.
 ### inspecting and merging pull requests
 
 `agent-pr list --repo OWNER/NAME` lists every open PR, including drafts and
-fork branches, without a checkout. From a checkout of that repository,
+fork branches, without a checkout. It scans PR history in creation order so
+closures do not shift page offsets, returning the rows observed open. This
+bounded history scan can cost more requests than listing only open PRs and
+is not a snapshot of concurrent changes. From a checkout of that repository,
 `agent-pr threads PR` reads its discussion without changing review records.
 `agent-pr merge-preview PR` shows the PR and its open downstack PRs, heads,
 destination, draft, CI and review state. Missing states remain `UNKNOWN`.

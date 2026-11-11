@@ -16,7 +16,7 @@ func TestInventoryCommand(t *testing.T) {
 	t.Setenv("GH_TOKEN", "test-token")
 	// GitHub is represented by a local server; this command must not need a checkout.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/owner/repo/pulls" || r.URL.Query().Get("state") != "open" {
+		if r.URL.Path != "/repos/owner/repo/pulls" || r.URL.Query().Get("state") != "all" {
 			t.Errorf("unexpected inventory request: %s", r.URL)
 			w.WriteHeader(http.StatusBadRequest)
 			return
