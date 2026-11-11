@@ -265,7 +265,7 @@ names what it found:
   fetches pull requests with your login and writes the review records the
   sandbox denies. Every one of its subcommands is one an agent may run.
 - `agent-pr`'s GitHub commands (`list`, `publication-status`, `merge-preview`,
-  `ready`, `merge`, `open`, `stack`, `link`, `push`, `threads`,
+  `open`, `stack`, `link`, `push`, `threads`,
   `reply`, `resolve`, `draft`, `post`, `request`, `status`, `ci`, `logs`,
   `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,

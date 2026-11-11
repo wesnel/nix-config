@@ -518,15 +518,13 @@ with lib; let
   # agent-pr's subcommands that need the operator's GitHub login, or write
   # the review records the sandbox denies (draft and post).
   # agent-ops setup, setup-command and guard work in the sandbox.
-  # post, ready and merge are the operator's: the guard refuses them to
-  # agents, and they ask on /dev/tty.
+  # post is the operator's: the guard refuses it to agents, and it asks on
+  # /dev/tty. ready and merge stay inside the sandbox.
   prLoopGitHub = [
     "open"
     "list"
     "publication-status"
     "merge-preview"
-    "ready"
-    "merge"
     "stack"
     "link"
     "push"
