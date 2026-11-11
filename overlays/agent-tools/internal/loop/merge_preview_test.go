@@ -10,12 +10,59 @@ import (
 )
 
 func TestMergePreview(t *testing.T) {
+	t.Run("readiness belongs to selected head", func(t *testing.T) {
+		for _, change := range []string{"head changed", "head missing", "commit changed", "commit missing", "no commit", "no rollup"} {
+			t.Run(change, func(t *testing.T) {
+				f, _ := mergeRepo(t, "")
+				original := graphQL
+				queried := false
+				graphQL = func(query string, vars map[string]any, out any) error {
+					if !strings.Contains(query, "mergeable mergeStateStatus reviewDecision") {
+						return original(query, vars, out)
+					}
+					queried = true
+					head, commit := strings.Repeat("0", 39)+"5", strings.Repeat("0", 39)+"5"
+					switch change {
+					case "head changed":
+						head, commit = strings.Repeat("a", 40), strings.Repeat("a", 40)
+					case "head missing":
+						head = ""
+					case "commit changed":
+						commit = strings.Repeat("b", 40)
+					case "commit missing":
+						commit = ""
+					}
+					nodes := []any{map[string]any{"commit": map[string]any{"oid": commit, "statusCheckRollup": nil}}}
+					if change == "no commit" {
+						nodes = []any{}
+					}
+					data := map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"headRefOid": head, "mergeable": "MERGEABLE", "commits": map[string]any{"nodes": nodes}}}}
+					b, err := json.Marshal(data)
+					if err != nil {
+						return err
+					}
+					return json.Unmarshal(b, out)
+				}
+				plan, err := MergePreview("5")
+				if !queried || len(f.writes) != 0 {
+					t.Fatalf("queried %v, writes %v", queried, f.writes)
+				}
+				if change == "no rollup" {
+					if err != nil || plan == nil || plan.PRs[0].CIState != "UNKNOWN" {
+						t.Fatalf("plan %+v, error %v", plan, err)
+					}
+				} else if !refusedWell(err) || plan != nil {
+					t.Fatalf("mixed or missing readiness identity accepted: plan %+v, error %v", plan, err)
+				}
+			})
+		}
+	})
 	t.Run("GitHub states", func(t *testing.T) {
 		mergeRepo(t, "")
 		original := graphQL
 		graphQL = func(query string, vars map[string]any, out any) error {
 			if strings.Contains(query, "mergeable mergeStateStatus reviewDecision") {
-				return json.Unmarshal([]byte(`{"repository":{"pullRequest":{"mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","reviewDecision":"REVIEW_REQUIRED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}}}`), out)
+				return json.Unmarshal([]byte(`{"repository":{"pullRequest":{"headRefOid":"0000000000000000000000000000000000000005","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","reviewDecision":"REVIEW_REQUIRED","commits":{"nodes":[{"commit":{"oid":"0000000000000000000000000000000000000005","statusCheckRollup":{"state":"FAILURE"}}}]}}}}`), out)
 			}
 			return original(query, vars, out)
 		}

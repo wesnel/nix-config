@@ -126,7 +126,12 @@ func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
 		f.prs[number].draft = false
 		data = map[string]any{"markPullRequestReadyForReview": map[string]any{"pullRequest": map[string]any{"id": vars["id"], "isDraft": false}}}
 	case strings.Contains(query, "mergeable mergeStateStatus reviewDecision"):
-		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"mergeable": "UNKNOWN"}}}
+		number := vars["number"].(int)
+		oid := f.prs[number].oid
+		if oid == "" {
+			oid = fmt.Sprintf("%040d", number)
+		}
+		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"headRefOid": oid, "mergeable": "UNKNOWN", "commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"oid": oid}}}}}}}
 	case strings.Contains(query, "stack {"):
 		number := vars["number"].(int)
 		if f.prs[number] == nil {

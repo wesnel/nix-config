@@ -74,10 +74,14 @@ func mergeReadiness(slug string, member *PR) (MergePlanPR, error) {
 	var data struct {
 		Repository struct {
 			PullRequest struct {
+				HeadRefOid                                  string
 				Mergeable, MergeStateStatus, ReviewDecision string
 				Commits                                     struct {
 					Nodes []struct {
-						Commit struct{ StatusCheckRollup *struct{ State string } }
+						Commit struct {
+							Oid               string
+							StatusCheckRollup *struct{ State string }
+						}
 					}
 				}
 			}
@@ -85,14 +89,17 @@ func mergeReadiness(slug string, member *PR) (MergePlanPR, error) {
 	}
 	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-			mergeable mergeStateStatus reviewDecision
-			commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+			headRefOid mergeable mergeStateStatus reviewDecision
+			commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
 		} }
 	}`, map[string]any{"owner": owner, "name": name, "number": member.Number}, &data)
 	if err != nil {
 		return MergePlanPR{}, err
 	}
 	status := data.Repository.PullRequest
+	if status.HeadRefOid == "" || status.HeadRefOid != member.HeadRefOid || len(status.Commits.Nodes) != 1 || status.Commits.Nodes[0].Commit.Oid != status.HeadRefOid {
+		return MergePlanPR{}, refuse("readiness for #%d has a missing or changed head commit; run `agent-pr merge-preview %d` again", member.Number, member.Number)
+	}
 	pr := MergePlanPR{PR: *member, Mergeable: status.Mergeable, MergeStateStatus: status.MergeStateStatus, ReviewDecision: status.ReviewDecision, CIState: "UNKNOWN"}
 	if pr.Mergeable == "" {
 		pr.Mergeable = "UNKNOWN"
@@ -103,10 +110,8 @@ func mergeReadiness(slug string, member *PR) (MergePlanPR, error) {
 	if pr.ReviewDecision == "" {
 		pr.ReviewDecision = "UNKNOWN"
 	}
-	if len(status.Commits.Nodes) == 1 {
-		if rollup := status.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil && rollup.State != "" {
-			pr.CIState = rollup.State
-		}
+	if rollup := status.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil && rollup.State != "" {
+		pr.CIState = rollup.State
 	}
 	return pr, nil
 }
