@@ -97,7 +97,7 @@ func checkNamedOwners(paths []string, owners map[string]string) string {
 		}
 		if owner := owners[top]; top != "" && owner != "" && owner != plans.MainAgent {
 			return fmt.Sprintf("The worktree %s belongs to agent %s, which alone edits files there (OWNERS in its plan). "+
-				"Send the change to that agent, or have whoever coordinates hand the worktree over with `agent-plan own PLAN --worktree %s --agent ID`.",
+				"Send the change to that agent. If it has stopped, the coordinator can hand the worktree back to the main thread with `agent-plan own PLAN --worktree %s --agent main`.",
 				top, owner, top)
 		}
 	}
