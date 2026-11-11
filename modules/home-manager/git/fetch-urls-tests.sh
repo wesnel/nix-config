@@ -26,23 +26,29 @@ for repo in nix-config emacs-config; do
     exit 1
   }
   [[ -z "$actual" ]] || { echo "$repo GitHub credential helper reset is not empty" >&2; exit 1; }
-  if [[ "$repo" == nix-config ]]; then
-    [[ "$(git -C "$dir" config --get signpass.mirror.github)" == wesnel/nix-config ]]
-    [[ "$(git -C "$dir" config --get signpass.mirror.destination)" == git@git.sr.ht:~wgn/nix-config ]]
-    [[ "$(git -C "$dir" config --get signpass.mirror.commonDir)" == "$operatorHome/git/github.com/wesnel/nix-config/.git" ]]
-  else
-    if git --no-pager -C "$dir" config --get-regexp '^signpass\.mirror\.'; then
-      echo 'emacs-config unexpectedly authorizes upstream mirror history' >&2
-      exit 1
-    else
-      status=$?
-      [[ "$status" == 1 ]] || exit "$status"
+  for checkout in "$dir" "$test_root/$repo-worktree"; do
+    if [[ "$checkout" != "$dir" ]]; then
+      git -C "$dir" -c commit.gpgsign=false -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m initial
+      git -C "$dir" worktree add -q --detach "$checkout"
     fi
-  fi
+    [[ "$(git -C "$checkout" config --file "$GIT_CONFIG_GLOBAL" --includes --get-all signpass.mirror.github)" == "wesnel/$repo" ]] || {
+      echo "$repo mirror mapping missing or incorrect in $checkout" >&2
+      exit 1
+    }
+    [[ "$(git -C "$checkout" config --file "$GIT_CONFIG_GLOBAL" --includes --get-all signpass.mirror.destination)" == "git@git.sr.ht:~wgn/$repo" ]]
+    [[ "$(git -C "$checkout" config --file "$GIT_CONFIG_GLOBAL" --includes --get-all signpass.mirror.commonDir)" == "$operatorHome/git/github.com/wesnel/$repo/.git" ]]
+  done
 done
 dir="$HOME/git/github.com/wesnel/unrelated"
 git init -q "$dir"
 git -C "$dir" config remote.origin.url git@github.com:wesnel/unrelated.git
+if git --no-pager -C "$dir" config --get-regexp '^signpass\.mirror\.'; then
+  echo 'unrelated repository unexpectedly authorizes upstream mirror history' >&2
+  exit 1
+else
+  status=$?
+  [[ "$status" == 1 ]] || exit "$status"
+fi
 [[ "$(git -C "$dir" remote get-url origin)" == git@github.com:wesnel/unrelated.git ]] || {
   echo 'unrelated repository fetch URL was rewritten' >&2
   exit 1
