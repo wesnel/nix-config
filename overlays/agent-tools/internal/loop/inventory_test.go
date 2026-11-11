@@ -30,6 +30,48 @@ func inventoryServer(t *testing.T, handler http.HandlerFunc) {
 }
 
 func TestInventory(t *testing.T) {
+	t.Run("closure on an earlier page does not skip an open PR", func(t *testing.T) {
+		closed := false
+		inventoryServer(t, func(w http.ResponseWriter, r *http.Request) {
+			rows := []any{}
+			for n := 1; n <= 102; n++ {
+				row := inventoryPull(n)
+				if n == 1 && closed {
+					row["state"] = "closed"
+					if r.URL.Query().Get("state") == "open" {
+						continue
+					}
+				}
+				rows = append(rows, row)
+			}
+			if r.URL.Query().Get("page") == "1" {
+				rows = rows[:100]
+				closed = true
+			} else {
+				rows = rows[100:]
+			}
+			json.NewEncoder(w).Encode(rows)
+		})
+		got, err := Inventory("o/r")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pr := range got.PullRequests {
+			if pr.Number == 101 {
+				return
+			}
+		}
+		t.Fatal("continuously-open PR 101 was skipped when PR 1 closed")
+	})
+	t.Run("closed history needs only identity and state", func(t *testing.T) {
+		inventoryServer(t, func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]any{map[string]any{"number": 1, "state": "closed"}, inventoryPull(2)})
+		})
+		got, err := Inventory("o/r")
+		if err != nil || len(got.PullRequests) != 1 || got.PullRequests[0].Number != 2 {
+			t.Fatalf("open inventory %+v, error %v", got, err)
+		}
+	})
 	t.Run("invalid repository never requests GitHub", func(t *testing.T) {
 		inventoryServer(t, func(w http.ResponseWriter, r *http.Request) {
 			t.Errorf("invalid repository reached GitHub: %s", r.URL)
@@ -68,7 +110,7 @@ func TestInventory(t *testing.T) {
 		}
 	})
 	t.Run("later error discards earlier pages", func(t *testing.T) {
-		for _, failure := range []string{"http error", "malformed JSON", "null page", "object page", "duplicate number", "oversized page", "incomplete PR", "closed PR", "missing draft", "missing author", "missing base", "wrong base", "invalid SHA", "invalid repository"} {
+		for _, failure := range []string{"http error", "malformed JSON", "null page", "object page", "duplicate number", "oversized page", "incomplete PR", "invalid state", "missing draft", "missing author", "missing base", "wrong base", "invalid SHA", "invalid repository"} {
 			t.Run(failure, func(t *testing.T) {
 				requests := 0
 				inventoryServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -106,8 +148,8 @@ func TestInventory(t *testing.T) {
 						return
 					case "incomplete PR":
 						delete(row, "number")
-					case "closed PR":
-						row["state"] = "closed"
+					case "invalid state":
+						row["state"] = "unknown"
 					case "missing draft":
 						delete(row, "draft")
 					case "missing author":
@@ -147,7 +189,7 @@ func TestInventory(t *testing.T) {
 	})
 	t.Run("all authors drafts and fork branches across pages", func(t *testing.T) {
 		inventoryServer(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("state") != "open" || r.URL.Query().Get("per_page") != "100" {
+			if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("state") != "all" || r.URL.Query().Get("per_page") != "100" {
 				t.Errorf("unexpected request: %s", r.URL)
 			}
 			rows := []any{}

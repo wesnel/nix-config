@@ -61,8 +61,9 @@ type inventoryWirePR struct {
 }
 
 // Inventory reads all open pull requests, including drafts and forks, without
-// a checkout or loop mode. An error returns no inventory. Pagination is bounded
-// at 1000 pages; concurrent changes on GitHub are not a snapshot.
+// a checkout or loop mode. It scans history in creation order so closures cannot
+// shift page offsets, returning rows observed open. An error returns no inventory.
+// Pagination is bounded at 1000 pages; concurrent changes are not a snapshot.
 func Inventory(repo string) (*PRInventory, error) {
 	if !inventorySlug.MatchString(repo) {
 		return nil, fmt.Errorf("repository must be OWNER/REPO")
@@ -70,7 +71,7 @@ func Inventory(repo string) (*PRInventory, error) {
 	result := &PRInventory{Repository: repo, PullRequests: []InventoryPR{}}
 	seen := map[int]bool{}
 	for page := 1; page <= 1000; page++ {
-		path := fmt.Sprintf("repos/%s/pulls?state=open&sort=created&direction=asc&per_page=100&page=%d", repo, page)
+		path := fmt.Sprintf("repos/%s/pulls?state=all&sort=created&direction=asc&per_page=100&page=%d", repo, page)
 		data, err := gh.Read(path, "application/vnd.github+json")
 		if err != nil {
 			return nil, err
@@ -82,22 +83,35 @@ func Inventory(repo string) (*PRInventory, error) {
 		if rows == nil || len(rows) > 100 {
 			return nil, fmt.Errorf("invalid pull request inventory page %d", page)
 		}
-		for _, row := range rows {
-			pr, err := row.pullRequest(repo)
-			if err != nil {
-				return nil, err
-			}
-			if seen[pr.Number] {
-				return nil, fmt.Errorf("duplicate pull request #%d across inventory pages; retry inventory", pr.Number)
-			}
-			seen[pr.Number] = true
-			result.PullRequests = append(result.PullRequests, pr)
+		if err := appendInventoryPage(result, seen, rows); err != nil {
+			return nil, err
 		}
 		if len(rows) < 100 {
 			return result, nil
 		}
 	}
 	return nil, fmt.Errorf("pull request inventory exceeded 1000 pages; no partial inventory returned")
+}
+
+func appendInventoryPage(result *PRInventory, seen map[int]bool, rows []inventoryWirePR) error {
+	for _, row := range rows {
+		if row.Number <= 0 || row.State != "open" && row.State != "closed" {
+			return fmt.Errorf("invalid pull request identity or state in inventory")
+		}
+		if seen[row.Number] {
+			return fmt.Errorf("duplicate pull request #%d across inventory pages; retry inventory", row.Number)
+		}
+		seen[row.Number] = true
+		if row.State == "closed" {
+			continue
+		}
+		pr, err := row.pullRequest(result.Repository)
+		if err != nil {
+			return err
+		}
+		result.PullRequests = append(result.PullRequests, pr)
+	}
+	return nil
 }
 
 func (row inventoryWirePR) pullRequest(repo string) (InventoryPR, error) {
