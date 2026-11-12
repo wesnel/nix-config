@@ -726,6 +726,61 @@ in {
           sessionUrl = false;
         };
 
+        # The claude.ai connectors kept out of Claude Code; claude.ai itself
+        # keeps them. A name must match the connector's display name exactly,
+        # as `claude mcp list` prints it, so a connector added on claude.ai
+        # loads until it is listed here. Names, not URLs: a URL entry would
+        # also block a local server pointed at the same address.
+        deniedMcpServers = map (name: {serverName = "claude.ai ${name}";}) [
+          "[Dev] OpenMetadata"
+          "[Prod] OpenMetadata"
+          "Ahrefs"
+          "Apollo.io"
+          "Arcade Inbox Manager"
+          "Asana"
+          "Atlassian"
+          "Box"
+          "Canva"
+          "Clay"
+          "clickhouse-mcp-dev"
+          "clickhouse-mcp-prod"
+          "Datadog"
+          "Figma"
+          "Github"
+          "Gmail"
+          "Google Calendar"
+          "Google Docs"
+          "Google Drive"
+          "Google Sheets"
+          "Google Slides"
+          "Granola"
+          "Greenhouse"
+          "Hex"
+          "HubSpot"
+          "Intercom"
+          "Linear"
+          "Lucid"
+          "mcp.buildkite.com"
+          "Mermaid Chart"
+          "Mobbin"
+          "monday.com"
+          "n8n"
+          "ngrok"
+          "Notion"
+          "Orb (Read Only)"
+          "PostHog"
+          "Profound"
+          "Ramp"
+          "RunReveal"
+          "Salesforce"
+          "Sentry"
+          "Slack"
+          "Stripe"
+          "Sybill"
+          "Whyuser Beta"
+          "Zapier"
+        ];
+
         # Credentials stay out of every session. The guard denies shell
         # commands and file tools naming them, and Read is denied them here.
         permissions.deny =

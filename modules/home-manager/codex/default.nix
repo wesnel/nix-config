@@ -381,7 +381,12 @@ in {
             + "\n";
 
           # Codex skips this when an AGENTS.override.md beside it is non-empty.
-          ".codex/AGENTS.md".source = config.wgn.home.llm.instructions;
+          # Claude Code's own system prompt gives what AGENTS.codex.md says,
+          # so only Codex reads it.
+          ".codex/AGENTS.md".text =
+            builtins.readFile config.wgn.home.llm.instructions
+            + "\n"
+            + builtins.readFile ../llm/AGENTS.codex.md;
 
           # Holds every session to the baseline guard. Codex skips a hook
           # until it is trusted with /hooks, and trust follows the hook's
