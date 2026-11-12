@@ -39,6 +39,8 @@
         # path.
         llm.sandbox.allowedSockets = ["/private/var/folders/n0/jv6nh0qs1hv95x8x39rjpxz80000gn/T/ngrok/agent.sock"];
 
+        llm.agentPlans.enable = true;
+
         man.enable = true;
 
         mcp-proxy = {

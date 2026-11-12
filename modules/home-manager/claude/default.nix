@@ -590,7 +590,8 @@ with lib; let
     excludedCommands =
       ["gh-read *" "git delegate *" "git-delegate *" "trash-scratch *"]
       ++ map (sub "pr-loop") prLoopGitHub
-      ++ map (sub "agent-plan") agentPlanWrites;
+      ++ map (sub "agent-plan") agentPlanWrites
+      ++ map (sub "plan-dash") llm.planMirrorCommands;
 
     credentials.envVars =
       map (name: {
@@ -653,33 +654,6 @@ with lib; let
 in {
   options.wgn.home.claude = {
     enable = mkEnableOption "Enables my Claude Code skills and context for home-manager";
-
-    agentPlans = {
-      enable = mkOption {
-        type = types.bool;
-        default = false;
-
-        description = ''
-          Linux only. Runs the Agent plans page's session as
-          `agent-plans.service`: `claude remote-control` in
-          `agent-plans/session` under {option}`xdg.stateHome`, published
-          from the devbox, held by the baseline guard, with its own Claude
-          Code config in `agent-plans/claude`, whose settings it cannot
-          change. The page is {option}`wgn.home.llm.agentPlans.claudePage`;
-          started without it, the session publishes the page and gives its
-          URL to set there. Before the first start, log that
-          config in and trust the session's folder
-          once: in `agent-plans/session`, run
-          `CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`,
-          `/login`, accept the folder, and quit. The session folder is
-          writable by any process running as the operator; only managed
-          settings, which need root, would be a wall. The kill switch is
-          its own: create `agent-plans/off` under {option}`xdg.stateHome`,
-          then `systemctl --user stop agent-plans.service`. Needs Claude
-          Code signed in.
-        '';
-      };
-    };
 
     quotaStop = mkOption {
       type = types.nullOr (types.ints.between 1 100);
@@ -825,6 +799,7 @@ in {
           # allows it.
           ++ ["Bash(git delegate *)" "Bash(git-delegate *)" "Bash(trash-scratch *)"]
           ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
+          ++ map (s: "Bash(${sub "plan-dash" s})") llm.planMirrorCommands
           ++ mcpRules.allow;
 
         # The auto-mode classifier judges intent, so it also stops a rule
@@ -845,6 +820,15 @@ in {
         sandbox = hostSandbox;
 
         hooks.PostToolUse = [
+          {
+            matcher = "^(Artifact|mcp__.*chatgpt_space.*(create_page|create_page_visualization))$";
+            hooks = [
+              {
+                type = "command";
+                command = "${getExe' config.wgn.home.llm.agentTools "plan-dash"} record";
+              }
+            ];
+          }
           # Records commits, pushes, worktrees, branches and PRs in the plan
           # and asks which step a commit completes; after a push to GitHub,
           # names the `pr-loop wait ci` to start; hands over the
@@ -884,6 +868,10 @@ in {
                 type = "command";
                 command = "${agentPlan} remind";
               }
+              {
+                type = "command";
+                command = "${getExe' config.wgn.home.llm.agentTools "plan-dash"} remind";
+              }
             ];
           }
         ];
@@ -908,6 +896,14 @@ in {
         # 10,000 characters Claude Code passes whole.
         hooks.SessionStart =
           [
+            {
+              hooks = [
+                {
+                  type = "command";
+                  command = "${getExe' config.wgn.home.llm.agentTools "plan-dash"} remind";
+                }
+              ];
+            }
             {
               matcher = "clear|compact|resume";
               hooks = [
@@ -983,7 +979,7 @@ in {
             # the rest are refused; every tool on a server it does not list
             # asks. A hook that cannot run, or input it cannot read, denies.
             {
-              matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+              matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|Artifact|mcp__.*";
               hooks = [
                 {
                   type = "command";
@@ -1082,130 +1078,6 @@ in {
     (mkIf (elem "trash-scratch *" (cfg.settings.sandbox.excludedCommands or [])) {
       home.packages = [trashScratch];
     })
-
-    (mkIf cfg.agentPlans.enable (let
-      state = "${config.xdg.stateHome}/agent-plans";
-      session = "${state}/session";
-      out = "${state}/out";
-      # The session's own Claude Code config: its login, its trust of the
-      # session folder and its settings. /config from the phone writes the
-      # user settings, which here are a read-only link into the store, so
-      # it changes nothing, and never the operator's ~/.claude.
-      claudeDir = "${state}/claude";
-      home = config.home.homeDirectory;
-      relative = removePrefix "${home}/";
-      agentTools = config.wgn.home.llm.agentTools;
-      # The session's Bash runs plan-dash by name, and plan-dash runs git
-      # and gh; Claude Code installs itself under ~/.local/bin.
-      path = concatStringsSep ":" [
-        (makeBinPath [agentTools pkgs.git pkgs.openssh pkgs.gh pkgs.coreutils])
-        "${config.home.profileDirectory}/bin"
-        "${home}/.local/bin"
-        "/usr/local/bin:/usr/bin:/bin"
-      ];
-    in {
-      assertions = [
-        {
-          assertion = pkgs.stdenv.hostPlatform.isLinux;
-          message = "wgn.home.claude.agentPlans needs Linux.";
-        }
-        {
-          assertion = config.wgn.home.llm.gateway == "none";
-          message = "wgn.home.claude.agentPlans runs claude remote-control, which Claude Code disables while it reaches its models through a gateway (wgn.home.llm.gateway).";
-        }
-      ];
-
-      # The session's working directory; its settings live in claudeDir.
-      home.activation.agentPlansSession = lib.hm.dag.entryAfter ["writeBoundary"] ''
-        run mkdir -p ${escapeShellArg session}
-      '';
-
-      home.file = {
-        # The session's user settings, read-only. dontAsk denies whatever
-        # they do not allow. The allow list names the skill's tools, and the
-        # baseline hook holds their commands; the quota stop holds it as it
-        # does every session; with onFailure block a hook that cannot run
-        # denies. Its SessionStart output becomes the
-        # session's context after a start, /clear or /compact.
-        "${relative claudeDir}/settings.json".text = builtins.toJSON {
-          permissions = {
-            allow = [
-              "Bash(plan-dash export)"
-              "Bash(plan-dash page)"
-              "Bash(plan-dash page published)"
-              "Bash(plan-dash space)"
-              "Artifact"
-              "ToolSearch"
-              "Monitor"
-              "ArtifactData"
-              "Agent"
-              "Skill"
-              "PushNotification"
-            ];
-            deny =
-              concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
-              ++ ["Read(${rulePath plans.repository.key})"];
-          };
-          syncClaudeAiSkills = false;
-          syncClaudeAiPlugins = false;
-          hooks = {
-            PreToolUse =
-              [
-                {
-                  matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
-                  hooks = [
-                    {
-                      type = "command";
-                      command = "${getExe' agentTools "pr-loop"} guard --baseline";
-                      onFailure = "block";
-                    }
-                  ];
-                }
-              ]
-              ++ quotaStopHooks;
-            SessionStart = [
-              {
-                matcher = "startup|clear|compact";
-                hooks = [
-                  {
-                    type = "command";
-                    command = "${getExe' agentTools "plan-dash"} prime";
-                  }
-                ];
-              }
-            ];
-          };
-        };
-
-        # In the session's own config alone, so no other session loads it.
-        "${relative claudeDir}/skills/agent-plans/SKILL.md".text =
-          replaceStrings ["@out@"] [out] (builtins.readFile ./agent-plans/SKILL.md);
-      };
-
-      systemd.user.services.agent-plans = {
-        Unit = {
-          Description = "The Agent plans page's Remote Control session";
-          ConditionPathExists = "!${state}/off";
-        };
-        Service = {
-          # --spawn session ends when its session does, with status 0, so
-          # only Restart=always brings it back. Without a terminal it
-          # redraws its status line every second, which would fill the
-          # journal.
-          ExecStart = concatStringsSep " " [
-            "${home}/.local/bin/claude remote-control --spawn session"
-            "--permission-mode dontAsk"
-            "--remote-control-session-name-prefix agent-plans"
-          ];
-          WorkingDirectory = session;
-          Environment = ["CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"];
-          Restart = "always";
-          RestartSec = "30s";
-          StandardOutput = "null";
-        };
-        Install.WantedBy = ["default.target"];
-      };
-    }))
 
     # User-scoped servers live in ~/.claude.json, which Claude Code rewrites
     # constantly, so these entries are merged in on every switch rather than

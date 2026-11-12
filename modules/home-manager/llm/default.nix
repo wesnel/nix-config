@@ -46,7 +46,7 @@ with lib; let
       inherit (cfg.review) privateModules;
     };
     agentPlans = {
-      inherit (cfg.agentPlans) claudePage spacePage;
+      inherit (cfg.agentPlans) enable claudePage spacePage;
     };
     # Server names match mcp.json; local servers need startup diagnostics
     # instead of OAuth authorization when disconnected.
@@ -270,16 +270,17 @@ in {
     # Read by plan-dash from agentPlans in agent-tools/config.json, which is
     # read-only and guarded, so no session can point publication elsewhere.
     agentPlans = {
+      enable = mkEnableOption "refreshing the configured Space plan mirror on macOS";
+
       claudePage = mkOption {
         type = types.nullOr (types.strMatching "https://claude\\.ai/(code/)?artifact/[A-Za-z0-9-]{1,100}");
         default = null;
 
         description = ''
-          The Agent plans page's claude.ai URL,
-          `https://claude.ai/artifact/ID`, which the dashboard session
-          ({option}`wgn.home.claude.agentPlans.enable`) keeps current.
-          Unset, the session publishes a new page and gives its URL to set
-          here.
+          The aggregate Agent plans artifact URL. A working Claude session
+          publishes it through the plan-mirrors skill after taking a claim.
+          The operator creates the artifact, configures its URL and activates
+          before a session publishes aggregate updates.
         '';
       };
 
@@ -288,15 +289,11 @@ in {
         default = null;
 
         description = ''
-          The ID of the ChatGPT Space page, such as `page_0123abcd`, that
-          the dashboard session mirrors the Agent plans page to with
-          `plan-dash space` after each update; unset, it mirrors nothing.
-          The first run makes a Codex thread and a block at the page's end,
-          and records both in `agent-plans/space.json` under
-          {option}`xdg.stateHome`; later runs replace that block only. Set
-          to another page, it makes a block there and leaves the old one.
-          Needs Codex signed in to ChatGPT on the session's host, with the
-          ChatGPT Space plugin connected.
+          The aggregate Agent plans Space page ID. The macOS refresh worker
+          updates its visualization block without starting a model turn.
+          The operator creates the page, configures its ID and activates.
+          Unset, refresh publishes nothing. Requires Codex signed in with
+          the Space plugin connected on the host running refresh.
         '';
       };
     };
@@ -852,6 +849,7 @@ in {
           restack-branches = ./skills/restack-branches/SKILL.md;
           review-change = ./skills/review-change/SKILL.md;
           plan-work = ./skills/plan-work/SKILL.md;
+          plan-mirrors = ./skills/plan-mirrors/SKILL.md;
           questions = ./skills/questions/SKILL.md;
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
           diagnose-failure = ./skills/diagnose-failure/SKILL.md;
@@ -997,6 +995,19 @@ in {
         EnvironmentVariables.PATH = syncPath;
         StandardOutPath = "/tmp/agent-plan-sync.log";
         StandardErrorPath = "/tmp/agent-plan-sync.log";
+      };
+    };
+
+    launchd.agents.plan-mirrors = mkIf (pkgs.stdenv.hostPlatform.isDarwin && cfg.agentPlans.enable) {
+      enable = true;
+      config = {
+        ProgramArguments = [(getExe' cfg.agentTools "plan-dash") "refresh"];
+        WatchPaths = [cfg.plans.dir];
+        StartInterval = 300;
+        ProcessType = "Background";
+        EnvironmentVariables.PATH = "${config.home.homeDirectory}/.local/bin:${config.home.profileDirectory}/bin:${syncPath}";
+        StandardOutPath = "/tmp/plan-mirrors.log";
+        StandardErrorPath = "/tmp/plan-mirrors.log";
       };
     };
 

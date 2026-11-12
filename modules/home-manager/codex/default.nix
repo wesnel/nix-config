@@ -234,15 +234,20 @@ with lib; let
   # credentials, which no command in the profile can read, approved or
   # not, so asking before them would only ask for a failure; pr-loop's
   # and git delegate's run as pr-loop mcp's tools instead.
-  excludedPrefixes = map (c: splitString " " (removeSuffix " *" c)) (
+  mirrorPrefixes = map (command: ["plan-dash" command]) llm.planMirrorCommands;
+  excludedPrefixes = filter (p: !(elem p mirrorPrefixes)) (map (c: splitString " " (removeSuffix " *" c)) (
     filter (c: !(any (p: hasPrefix p c) ["gh-read " "git delegate " "git-delegate " "pr-loop "]))
     config.wgn.home.llm.guard.excludedCommands
-  );
+  ));
   promptRules =
     concatMapStrings (p: ''
       prefix_rule(pattern=${builtins.toJSON p}, decision="prompt")
     '')
-    excludedPrefixes;
+    excludedPrefixes
+    + concatMapStrings (p: ''
+      prefix_rule(pattern=${builtins.toJSON p}, decision="allow")
+    '')
+    mirrorPrefixes;
   promptRulesFile = pkgs.writeText "codex-nix.rules" promptRules;
 
   # Commands' temporary directory on macOS, in place of the per-user one,
@@ -402,6 +407,15 @@ in {
             # shell call Bash.
             hooks.PostToolUse = [
               {
+                matcher = "^(Artifact|.*chatgpt_space.*(create_page|create_page_visualization))$";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "plan-dash record";
+                  }
+                ];
+              }
+              {
                 matcher = "Bash";
                 hooks = [
                   {
@@ -439,6 +453,10 @@ in {
                     type = "command";
                     command = "agent-plan find --hook --harness codex";
                   }
+                  {
+                    type = "command";
+                    command = "plan-dash remind";
+                  }
                 ];
               }
             ];
@@ -449,6 +467,10 @@ in {
             hooks.UserPromptSubmit = [
               {
                 hooks = [
+                  {
+                    type = "command";
+                    command = "plan-dash remind";
+                  }
                   {
                     type = "command";
                     command = "agent-plan remind";

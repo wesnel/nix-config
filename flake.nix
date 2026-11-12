@@ -769,14 +769,12 @@
             ./README.md
             ./modules/home-manager/llm
             ./modules/home-manager/claude/agents
-            ./modules/home-manager/claude/agent-plans
           ];
         };
       in
         pkgs.runCommand "skill-names" {
           nativeBuildInputs = [pkgs.perl];
-          # claude/default.nix writes agent-plans itself.
-          defined = toString (builtins.attrNames skills ++ ["agent-plans"]);
+          defined = toString (builtins.attrNames skills);
           principles = toString (builtins.attrNames (import ./modules/home-manager/llm/principles.nix));
         } ''
           cd ${src}
@@ -879,6 +877,73 @@
           python3 ${./modules/home-manager/codex/otel-tests.py} "$otelActivationPath" "$otelUrl"
           touch $out
         '';
+
+      checks.${darwinOnly "plan-mirrors"} = let
+        ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+        devbox = self.homeConfigurations.devbox.config;
+        valid = import ./modules/home-manager/llm/plan-mirrors-check.nix {inherit (pkgs) lib;};
+        actual = {
+          enabled = ngrok.wgn.home.llm.agentPlans.enable;
+          watcher = ngrok.launchd.agents.plan-mirrors or null;
+          plansDir = ngrok.wgn.home.llm.plans.dir;
+          devboxEnabled = devbox.wgn.home.llm.agentPlans.enable;
+          devboxService = devbox.systemd.user.services ? agent-plans;
+          claudeHooks = ngrok.wgn.home.claude.settings.hooks;
+          codexHooks = (builtins.fromJSON ngrok.home.file.".codex/hooks.json".text).hooks;
+          sharedSkill = ngrok.home.file ? ".claude/skills/plan-mirrors" && ngrok.home.file ? ".codex/skills/plan-mirrors";
+          claudeExclusions = ngrok.wgn.home.claude.settings.sandbox.excludedCommands;
+          claudeAllow = ngrok.wgn.home.claude.settings.permissions.allow;
+          claudeWrites = ngrok.wgn.home.claude.settings.sandbox.filesystem.allowWrite;
+          codexFilesystem = ngrok.wgn.home.codex.sandbox.permissions.wgn.filesystem;
+          home = ngrok.home.homeDirectory;
+          mirrorState = "${ngrok.xdg.stateHome}/agent-plans/mirrors";
+        };
+        broken = field: value:
+          actual
+          // {
+            watcher =
+              actual.watcher
+              // {
+                config = actual.watcher.config // {${field} = value;};
+              };
+          };
+        brokenHook = harness: event: suffix: matcher:
+          actual
+          // {
+            ${harness} =
+              actual.${harness}
+              // {
+                ${event} =
+                  map
+                  (group:
+                    if builtins.any (hook: pkgs.lib.hasSuffix suffix (hook.command or "")) (group.hooks or [])
+                    then group // {inherit matcher;}
+                    else group)
+                  actual.${harness}.${event};
+              };
+          };
+      in
+        assert pkgs.lib.assertMsg (valid actual) "Plan mirrors need the Mac refresh watcher, both harness hooks and skills, and no devbox dashboard service";
+        assert pkgs.lib.assertMsg (builtins.all
+          (harness:
+            !(valid (brokenHook harness "PreToolUse" "pr-loop guard --baseline" "Bash|mcp__.*"))
+            && !(valid (brokenHook harness "PostToolUse" "plan-dash record" "Artifact"))
+            && !(valid (brokenHook harness "PostToolUse" "plan-dash record" "mcp__.*"))
+            && !(valid (brokenHook harness "PostToolUse" "plan-dash record" ".*")))
+          ["claudeHooks" "codexHooks"])
+        "Native publications need baseline guard coverage and narrowly matched receipt hooks";
+        assert pkgs.lib.assertMsg (!(valid (broken "WatchPaths" []))) "Plan mirror check must reject a missing path trigger";
+        assert pkgs.lib.assertMsg (!(valid (broken "StartInterval" 0))) "Plan mirror check must reject a missing timer";
+        assert pkgs.lib.assertMsg (!(valid (broken "EnvironmentVariables" {PATH = "/usr/bin:/bin";}))) "Plan mirror check must reject a PATH that cannot find the installed Codex";
+        assert pkgs.lib.assertMsg (!(valid (actual // {claudeExclusions = [];}))) "Plan mirror commands need narrow sandbox exclusions";
+        assert pkgs.lib.assertMsg (!(valid (actual // {claudeExclusions = actual.claudeExclusions ++ ["plan-dash *"];}))) "Plan mirror exclusions must not cover every subcommand";
+        assert pkgs.lib.assertMsg (!(valid (actual // {claudeAllow = [];}))) "Plan mirror commands need narrow native allow rules";
+        assert pkgs.lib.assertMsg (!(valid (actual // {claudeAllow = actual.claudeAllow ++ ["Bash(plan-dash *)"];}))) "Plan mirror native rules must not cover every subcommand";
+        assert pkgs.lib.assertMsg (!(valid (actual // {claudeWrites = actual.claudeWrites ++ [actual.mirrorState];}))) "Claude must keep mirror state outside writable roots";
+        assert pkgs.lib.assertMsg (!(valid (actual // {codexFilesystem = actual.codexFilesystem // {${actual.mirrorState} = "write";};}))) "Codex must keep mirror state outside writable roots";
+          pkgs.runCommand "plan-mirrors" {} ''
+            touch $out
+          '';
 
       checks.${darwinOnly "agent-plan-sync"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};

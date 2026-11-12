@@ -544,176 +544,37 @@ sops set secrets/wgn.yaml '["notes-deploy-key"]' "$(jq -Rs . < "$d/key")"
 trash "$d"
 ```
 
-## status: what waits on you
+## plan mirrors
 
-``` sh
-plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
-plan-dash watch                          # prints a line when the session has work
-plan-dash page                           # writes the page for the session to publish
-```
+Working Claude Code and Codex sessions use the shared `plan-mirrors`
+skill at plan creation, meaningful progress, settled decisions and hand-back.
+`plan-dash snapshot [PLAN]` returns a bounded plan view and its content hash,
+title and session binding. The session publishes that view with its native
+Artifact or Pages tools; the post-tool hook records the native creation
+receipt. Later checkpoints update the same destination. References in the Org plan
+remain navigation links; the session binding determines where updates go.
 
-`plan-dash export` writes the documents the "Agent plans" page keeps in
-its claude.ai database, laid out as an `ArtifactData` read's `out_dir`
-lays them: `plans/<plan>.json` for every host's plans that are not halted,
-`github/status.json` (your open pull requests, with draft, CI, review
-decision and unresolved threads, and the reviews asked of you or your
-teams, with since when, the head and its CI and whether `git delegate`
-holds a review record of it, all with titles, and which listed pull request each
-is stacked on: the one whose head branch, in the same repository, is its
-base; branch names themselves are never kept), `meta/sync.json` (when
-this host's plans last reached the notes remote, whether they changed
-since, when the repository last fetched, how many plans could not be
-read) and `today/digest.json` (the page's Today: the demo digest of the
-newest day of the last week that has one, read whole from
-`digests/YYYY/MM-DD-demo.org` in the notes repository, never through a
-link; where it cannot be read, the last document written stays). A digest
-whose level-1 headings carry `PR` or `PLAN` properties is also parsed, as
-`internal/export/digest.go` describes its format, into each change's
-title, pull request, steps (an `sh` block and the `example` block of its
-result), captioned diagrams whose Mermaid is in the one grammar the page
-draws, and https links; what does not fit, such as a block never closed,
-is dropped with its line and why. `gh` is
-asked at most once a minute; the answer is cached as
-`$XDG_STATE_HOME/plan-dash/github.json`, which holds pull request titles,
-and when a fetch fails the last good answer is written, marked stale.
-These leave the machine. Each is a fixed struct in `internal/export` whose
-JSON tags are the allowlist, and its sentinel test fails on any other key.
-Plan text comes only from the plans directory: the title, the Goal
-section, the step headings under Steps, the open and decided questions
-with their `RECOMMENDATION`, `ANSWER` or `LOGBOOK` note and list items,
-and `STATUS`; of the log, only event kinds and times. Text
-is stripped of control and formatting characters, has known secret shapes
-redacted and is capped in length, and a plan's lists are capped, so a
-document stays under 600 KiB. Redaction knows shapes, not data, so
-customer data stays out of plans. A plan that cannot be read is named and
-its document kept, and the command exits 1; only a plan gone from the
-directory, or halted, loses its document. Every document on the page
-carries `schema`, the version in `internal/agentplans`: fields are only
-ever added, each addition raising it, so a reader uses a field only where
-it is present.
+The aggregate view is configured separately under
+`wgn.home.llm.agentPlans`. The operator creates the destination, sets
+`claudePage` to its artifact URL or `spacePage` to its page ID, then
+activates the configuration. An unset target publishes nothing.
 
-`plan-dash watch` is what wakes the dashboard session, through Monitor.
-Every 30 seconds it exports the plans and their sync state in memory and
-prints `plans changed` when that export's hash differs from the one it
-last printed for, at most once every 90 seconds. The hash leaves out what
-changes on every logged event or sync (a plan's `updated`, the times of
-the last push and fetch), so an agent logging its work does not cost the
-session a turn. It also prints `plan sync stalled` once per stall (this
-host's plans unsynced, its last push over 6 hours old), and `demo digest
-ready` for a new demo digest under `digests/YYYY/` in the notes
-repository. Every 2 minutes it takes the other hosts' plans
-with the fast-forward-only pull, never the rebasing one. Every 5 minutes it
-reads GitHub through the export's cache, which fetches at most once a
-minute, and prints `reviews changed` where the pull requests the page lists
-changed, and every 30 seconds it looks at their review records, printing
-`review record changed` where one appeared or changed. It runs one at a
-time (`already watching` otherwise) and keeps what it printed in
-`watch.json`, so the watch the session starts after Monitor's 30 minutes
-prints only what changed since.
+On ngrok, `wgn.home.llm.agentPlans.enable` enables a launchd watcher on the
+plans directory with a five-minute timer. It runs `plan-dash refresh`, a
+bounded command that serializes updates to the configured Space page.
+It starts no model turn and fetches no GitHub data. It needs Codex signed in
+and the Space plugin connected; the hosted page belongs to that service,
+while launchd only refreshes its content.
 
-## the Agent plans session
+A working Claude session updates the configured aggregate artifact through
+`plan-dash claim`, `plan-dash snapshot --open`, a native Artifact publish,
+and `plan-dash release` after confirmed success. Claims have no automatic
+expiry. If publication fails or its result is uncertain, preserve the claim
+and reconcile the hosted artifact before retrying or releasing it.
 
-`wgn.home.claude.agentPlans.enable` (the devbox) runs the session as
-`agent-plans.service`, `claude remote-control --spawn session
---permission-mode dontAsk` in `$XDG_STATE_HOME/agent-plans/session`, with
-its own Claude Code config, `CLAUDE_CONFIG_DIR` at
-`$XDG_STATE_HOME/agent-plans/claude`. Before the first start the operator
-logs that config in and trusts the folder once: in the folder,
-`CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`, `/login`,
-accept the folder, quit. The unit restarts it whenever it ends, and
-sends its output, a status line redrawn every second, to null.
-
-The phone reaches the session outside tool calls too: it can run
-`/config key=value`, which writes the user settings, and @-mention a
-file, which Claude Code reads into the conversation without a hook. So
-the session's user settings are a read-only link into the store, where
-`/config` fails, and never the operator's `~/.claude`; and they deny
-reads of credentials and the notes deploy key, which Read rules hold
-@-mentions to. They hold the baseline guard's hook with `onFailure:
-block` (Claude Code 2.1.295 or later), so a hook that cannot run denies,
-and allow the skill's tools: Bash `plan-dash export`, `plan-dash page`,
-`plan-dash page published` and `plan-dash space`, Artifact, Monitor, ArtifactData, Agent,
-Skill, PushNotification and ToolSearch; and a SessionStart hook,
-`plan-dash prime`, that names the page and the `agent-plans` skill after
-every start, `/clear` and `/compact`. The
-session folder is writable by any process running as the operator, and a
-settings file there could switch the hook off; only managed settings,
-which need root, would be a wall. Any Remote Control session, not only
-this one, takes `/config` and @-mentions from the phone with the
-operator's account. The skill, in the same config, arms Monitor on
-`plan-dash watch`, again on every expiry, and runs each update in a
-foreground sub-agent: export, then write what it wrote to the page,
-version-pinned, reading the page only into files so no document's text
-enters the conversation. A stall or a demo digest becomes a
-PushNotification with fixed text, and a digest also an update, which puts
-it in the page's Today. The kill switch is its own: create
-`$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
-agent-plans.service`.
-
-Its page is `wgn.home.llm.agentPlans.claudePage` in the machine's config,
-`https://claude.ai/artifact/ID`, which the llm module writes as
-`agentPlans.claudePage` in the read-only `agent-tools/config.json`, so no
-session can point the page elsewhere. Started without it, the session
-publishes the page, pinned, and gives the operator its URL to set there
-and switch to before restarting the service.
-
-The page is `overlays/agent-tools/internal/agentplans/page.html`, built
-into agent-tools. `plan-dash page` writes it to
-`$XDG_STATE_HOME/agent-plans/page/agent-plans.html` and says whether it
-differs from the one last published, which `plan-dash page published`
-records; the session republishes it when it starts after a switch that
-changed it.
-Every publish declares the capabilities `plan-dash page` prints, from
-`internal/agentplans`: the page's database, read and written by its owner
-alone, which the session writes. The page reads the documents `export`
-writes and writes nothing: each open question shows its recommendation
-and options as text, to answer with `/questions` in a Claude session, and
-each review request its CI and whether `git delegate` holds a review
-record of it. It shows how fresh its data is (live; partial, where GitHub could not
-be read or a plan couldn't be exported), when the devbox last pushed and
-fetched the plans, the review requests by state (ready, CI failing,
-draft or reviewed), oldest first with three days or more marked, stacked
-pull requests under the one they build on, the latest demo digest, and each
-plan at `#<plan ID>`. A pull request the devbox's `git delegate` has
-reviewed shows its review record's counts (findings by outcome, threads,
-drafts to post) and up to five of its diagrams, never its titles or other
-model text; a diagram's labels are redacted, and Mermaid, loaded by its
-hash, draws it in a sandboxed frame with no access to the page, which shows
-the drawing only as an image. A parsed demo digest shows each change with
-its pull request linked, its steps and their results as code, its
-diagrams drawn the same way under their captions, its https links, and
-what the parse dropped; one with no changes shows its text. The digest is
-drawn from its own document alone, so it carries no plan text or pull
-request status from the rest of the page. Every status mark has a word as well as a colour,
-and all text from the documents is set as text, never parsed as markup,
-and looked up in the page's tables by own key only, so a STATUS such as
-`constructor` falls back to its own label; its page test holds it to
-that, to the capabilities, to the collections it reads, to making no
-write and to the fields of each document. It uses Mantle's colours in
-the system face and loads no file.
-
-### the Space mirror
-
-Codex's counterpart of the page is a block on a ChatGPT Space page,
-`wgn.home.llm.agentPlans.spacePage` in the machine's config, which the
-llm module writes as `agentPlans.spacePage` in `agent-tools/config.json`.
-After each update the session runs `plan-dash space`, which embeds the
-documents `export` last wrote in the page (`export.Snapshot`; it then
-reads no database, loads nothing and shows diagrams as source, within
-the 256 KiB a Space visualization holds) and publishes it through
-`codex app-server` and the ChatGPT Space plugin, `internal/space`. It
-calls the plugin's `read_page` and `create_page_visualization` tools
-itself, in a Codex thread of its own, and starts no model turn. Its first
-run makes the thread, writes it to disk with a note injected into it (a
-thread with no item is not kept for the next app-server), appends a
-block to the page and records both in
-`$XDG_STATE_HOME/agent-plans/space.json`, which the guard keeps sessions
-from writing; later runs read that block's hash and replace that block
-only, and start nothing while the snapshot is unchanged. Where the block
-is gone, the thread cannot be resumed, or codex asks for an approval or a
-login, it stops, and the operator settles it, by removing the state file
-to start again where that is the fix. Codex on the session's host must
-be signed in to ChatGPT with the plugin connected.
+Session-start and user-turn hooks run `plan-dash remind`. They provide a
+bounded reminder when a session has a plan; publication happens at the
+skill’s checkpoints.
 
 ## pushing: private history stays private
 
