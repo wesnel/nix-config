@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/guard"
+	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/review"
 )
 
@@ -94,6 +95,20 @@ func prLoopTool(ctx context.Context, argv []string, stdout, stderr io.Writer) in
 	return run(argv[0], argv[1:], strings.NewReader(""), stdout, stderr)
 }
 
+// replyTool is prLoopTool for pr_loop_reply, which runs only in a
+// bots-mode loop: outside one, reply posts once someone answers on a
+// terminal, and the server's terminal, if it has one, is not the agent's
+// to answer.
+func replyTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
+	if os.Getenv(loop.ModeEnv) != "bots" {
+		fmt.Fprintln(stderr, "pr-loop: refused: pr_loop_reply runs only in a bots-mode review loop; outside one, posting replies "+
+			"to bot threads is the operator's. Put the reply file in the worktree, and say in the report that it waits for "+
+			"`pr-loop reply --from FILE --round N` there.")
+		return 2
+	}
+	return prLoopTool(ctx, argv, stdout, stderr)
+}
+
 func delegateTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	return review.Main(ctx, argv, strings.NewReader(""), stdout, stderr)
 }
@@ -152,10 +167,15 @@ var mcpTools = []mcpTool{
 		argv: func(a mcpArgs) []string {
 			return append(a.opt([]string{"threads"}, "--all", "all"), strconv.Itoa(a["pr"].(int)))
 		}, run: prLoopTool},
-	{name: "pr_loop_reply", desc: "pr-loop reply --from: post the replies in a reply file, resolving the threads it marks.",
+	{name: "pr_loop_reply", desc: "pr-loop reply --from: post the replies in a reply file, resolving the threads it marks, " +
+		"each logged as a finding settled with its outcome.",
 		params: []mcpParam{{name: "replies_file", kind: file, required: true,
-			desc: "the reply file in the worktree: per thread a line `=== thread THREAD` or `=== thread THREAD resolve`, then the reply"}},
-		argv: func(a mcpArgs) []string { return []string{"reply", "--from", a.str("replies_file")} }, run: prLoopTool},
+			desc: "the reply file in the worktree: per thread a line `=== thread THREAD OUTCOME` or " +
+				"`=== thread THREAD OUTCOME resolve`, OUTCOME a Triage outcome, then the reply"},
+			{name: "round", kind: number, required: true, desc: "the review round the replies answer, from 1"}},
+		argv: func(a mcpArgs) []string {
+			return []string{"reply", "--from", a.str("replies_file"), "--round", strconv.Itoa(a["round"].(int))}
+		}, run: replyTool},
 	{name: "pr_loop_draft", desc: "pr-loop draft: write the answer to a thread into the PR's review record, for the operator to post.",
 		params: []mcpParam{{name: "thread", kind: text, required: true, desc: "the thread's ID"},
 			{name: "body_file", kind: file, required: true, desc: "the answer, a Markdown file in the worktree"},

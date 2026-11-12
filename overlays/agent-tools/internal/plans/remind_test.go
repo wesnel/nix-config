@@ -87,4 +87,74 @@ func TestRemind(t *testing.T) {
 			}
 		})
 	}
+	t.Run("names the gaps status shows", testRemindGaps)
+}
+
+// On each prompt of the main thread, the operator's or a task
+// notification, a plan whose status shows commits no done names or a step
+// gone quiet gets a line naming them, so the agent logs them without being
+// asked; a plan with neither gets nothing (the cases above).
+func testRemindGaps(t *testing.T) {
+	t.Parallel()
+	event := func(fields map[string]any) []byte {
+		data, _ := json.Marshal(fields)
+		return data
+	}
+	subAgent := "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n" +
+		"<summary>Agent \"Add the flag\" finished</summary>\n</task-notification>"
+	command := "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n" +
+		"<summary>Background command \"go test\" completed (exit code 0)</summary>\n</task-notification>"
+	for _, c2 := range []struct {
+		name  string
+		event []byte
+		want  []string
+	}{
+		{"the operator's prompt", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
+			"prompt": "Carry on"}), nil},
+		{"a background command's notification", event(map[string]any{"session_id": "abc",
+			"hook_event_name": "UserPromptSubmit", "prompt": command}), nil},
+		{"a sub-agent's notification", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
+			"prompt": subAgent}), []string{"Check every report"}},
+	} {
+		t.Run(c2.name, func(t *testing.T) {
+			c := testConfig(t)
+			p := newPlan(t, c, "x")
+			addItems(t, p.file(""), "** Steps", "S1", "S2")
+			for _, e := range []Event{{Kind: "started", Item: "S1"}, {Kind: "started", Item: "S2"},
+				{Kind: "done", Item: "S2", Commit: "Add the run loop"},
+				{Kind: "committed", Commit: "fixup! Add the run loop"}, {Kind: "committed", Commit: "Rename the flag"}} {
+				if _, err := p.Record(e.Item, e, day); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var got struct {
+				Specific struct {
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			out := c.Remind(c2.event)
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("output %q: %v", out, err)
+			}
+			for _, w := range append(c2.want, p.File(), "Commits no step records: Rename the flag\n",
+				"Stale, started with nothing logged for a day: S1\n") {
+				if !strings.Contains(got.Specific.Context, w) {
+					t.Errorf("%q lacks %q", got.Specific.Context, w)
+				}
+			}
+			if strings.Contains(got.Specific.Context, "fixup!") {
+				t.Errorf("%q names a fixup of a recorded commit", got.Specific.Context)
+			}
+		})
+	}
+	// A Codex sub-agent's turn is not the main thread's.
+	c := testConfig(t)
+	p := newPlan(t, c, "x")
+	if _, err := p.Record("", Event{Kind: "committed", Commit: "Rename the flag"}, day); err != nil {
+		t.Fatal(err)
+	}
+	if out := c.Remind(event(map[string]any{"session_id": "abc", "agent_id": "a", "hook_event_name": "UserPromptSubmit",
+		"prompt": "Carry on"})); len(out) != 0 {
+		t.Errorf("a sub-agent's prompt: %s", out)
+	}
 }

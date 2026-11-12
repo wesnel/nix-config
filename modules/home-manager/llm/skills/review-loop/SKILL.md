@@ -134,8 +134,9 @@ next one starts at step 1.
    head on GitHub, so name that head: `--lease BRANCH=SHA`, the `remoteOid`
    `pr-loop stack` shows. If GitHub moved underneath it, stop.
 9. **Reply and resolve**, after the push so replies can cite pushed
-   commits: `pr-loop reply --from <file>` for each PR's drafted replies,
-   which answer and resolve threads as their outcomes say.
+   commits: `pr-loop reply --from <file> --round N` for each PR's drafted
+   replies, N this round's number, which answer and resolve threads as
+   their outcomes say and log each as `finding-settled`.
 
 Then start the next round.
 
