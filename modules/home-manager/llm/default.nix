@@ -5,6 +5,7 @@
   emacs-skills,
   lib,
   mattpocock-skills,
+  modern-web-guidance,
   pkgs,
   ...
 }:
@@ -872,6 +873,21 @@ in {
             cp ${mattpocock-skills}/LICENSE $out/LICENSE
           '';
 
+          modern-web-guidance.source = pkgs.runCommandLocal "modern-web-guidance-skill" {} ''
+            cp -R ${modern-web-guidance}/skills/modern-web-guidance $out
+            chmod u+w $out $out/SKILL.md
+            cp ${modern-web-guidance}/LICENSE $out/LICENSE
+            substituteInPlace $out/SKILL.md \
+              --replace-fail ${escapeShellArg "- **Runner & Permissions**: Prefer `pnpx` over `npx` if `pnpm` is available (`pnpx` does not use `-y`); on Windows, use `npx.cmd`. When requesting tool permissions, allowlist `npx -y modern-web-guidance@latest *` (or `pnpx modern-web-guidance@latest *`) specifically, never bare `npx *` or `pnpx *`."} \
+                ${escapeShellArg "- **Runner**: Use the npx commands above, including their environment assignments: they keep the cache in the session's writable temporary directory and avoid reading user npm credentials. Do not substitute pnpx."} \
+              --replace-fail ${escapeShellArg "- **Sandboxes & Network**: Fetching `modern-web-guidance` requires outbound network access. In sandboxed or approval-gated environments (e.g., Codex, Claude Code), **proactively request approval/allowlisting with network access BEFORE the first execution** to avoid timeouts, and set `NPM_CONFIG_CACHE=/tmp/npm-cache` if `~/.npm` is read-only."} \
+                ${escapeShellArg "- **Sandboxes & Network**: Fetching modern-web-guidance requires outbound network access. Use the existing sandbox permissions; if a command is blocked, follow the harness's approval process."} \
+              --replace-fail 'npx -y modern-web-guidance@latest' 'mwg_cache="$(mktemp -d "''${TMPDIR:-/tmp}/modern-web-guidance.XXXXXXXX")" && env DISABLE_TELEMETRY=1 NPM_CONFIG_USERCONFIG=/dev/null NPM_CONFIG_CACHE="$mwg_cache" npx -y modern-web-guidance@latest' \
+              --replace-fail ${escapeShellArg "- **Offline**: If the command hangs due to being offline, retry with `npx --offline …`."} \
+                ${escapeShellArg "- **Offline**: Each command uses a fresh private cache and needs network access. If offline, report that guidance retrieval is unavailable."}
+            printf '\nNix integration: npm commands disable telemetry, use a fresh private temporary cache and no user npm configuration; permission instructions follow the host sandbox.\n' >> $out/SKILL.md
+          '';
+
           # Offline: its script gets TLC and Java from Nix rather than
           # installing them with mise, and its charts render with the
           # overlay's Pele rather than one installed from npm; its SKILL.md
@@ -1032,6 +1048,8 @@ in {
         # matplotlib through uv when it runs.
         d2Png
         uv
+        # modern-web-guidance retrieves current guides with npx.
+        nodejs
       ]
       # Every agent is told to leave signing to `git sign-pass`, which this
       # installs. These run the git and gh on PATH, so the user's signing and
