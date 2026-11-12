@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,6 +94,16 @@ func toplevel(dir string) string {
 		top = real
 	}
 	return top
+}
+
+// inScratchRepo reports whether dir is in a repository whose common git
+// directory lies under one of scratchRoots, such as a probe made in the
+// session's scratch directory. A worktree of a repository outside them is
+// not, even where the worktree itself lies under one. Where git cannot
+// say, it reports false.
+func inScratchRepo(dir string) bool {
+	common, ok := gitState{dir: dir}.run("rev-parse", "--path-format=absolute", "--git-common-dir")
+	return ok && slices.ContainsFunc(scratchRoots(), func(root string) bool { return within(common, root) })
 }
 
 // summaryLine is the line git commit prints for the commit it made.
@@ -211,7 +222,9 @@ func newWorktree(g gitCall) string {
 // is the agent's judgement. A commit no plan takes makes a plan for it
 // (plans.Config.RecordCommit). A commit, branch or pull request recorded
 // links the plan to the plans that hard evidence relates it to
-// (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
+// (plans.Config.LinkEvidence). A worktree or branch made in a repository
+// inScratchRepo is filed in no plan. Every failure leaves the plan as it
+// was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
 	c, err := plans.Load()
 	if err != nil {
@@ -278,9 +291,12 @@ func recordCommitFact(c plans.Config, session string, g gitCall, m []string, now
 }
 
 func recordBranchFact(c plans.Config, session string, g gitCall, now time.Time) {
+	name, start, switched := newBranch(g)
+	if (newWorktree(g) == "" && name == "") || inScratchRepo(g.dir) {
+		return
+	}
 	state := gitState{dir: g.dir}
 	recordWorktreeFact(c, session, g, now)
-	name, start, switched := newBranch(g)
 	if name == "" {
 		return
 	}
