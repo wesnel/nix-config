@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -17,6 +16,44 @@ import (
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
 	os.Exit(m.Run())
+}
+
+func TestMirrorCLI(t *testing.T) {
+	t.Run("unconfigured refresh needs no network", func(t *testing.T) {
+		setUp(t)
+		t.Setenv("FAKE_GH_FAIL", "1")
+		var out, errout bytes.Buffer
+		code := run([]string{"refresh"}, &out, &errout)
+		if code != 0 || !strings.Contains(out.String(), `"status": "unconfigured"`) {
+			t.Fatalf("refresh exit %d: %s %s", code, out.String(), errout.String())
+		}
+	})
+	t.Run("snapshot selects exactly the session plan", func(t *testing.T) {
+		setUp(t)
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+		t.Setenv("CODEX_THREAD_ID", "mirror-session")
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.New(plans.NewOptions{Title: "Selected plan", Slug: "selected", Goal: "Show the session's plan.", Sessions: []string{"codex:mirror-session"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out, errout bytes.Buffer
+		code := run([]string{"snapshot"}, &out, &errout)
+		if code != 0 {
+			t.Fatalf("snapshot exit %d: %s", code, errout.String())
+		}
+		var result struct{ File, Hash, Plan string }
+		if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(result.File)
+		if err != nil || result.Plan != p.File || result.Hash == "" || !strings.Contains(string(data), "Selected plan") {
+			t.Fatalf("snapshot: %+v, read %v, html %s", result, err, data)
+		}
+	})
 }
 
 // fakeGh answers `gh api graphql` with one pull request of the operator's,
@@ -118,91 +155,19 @@ func TestExportPlanDocuments(t *testing.T) {
 	}
 }
 
-// prime, the session's SessionStart hook, names the page and the skill, or
-// says the page is not configured.
-func TestPrime(t *testing.T) {
+func TestRetiredCommands(t *testing.T) {
 	setUp(t)
-	config := os.Getenv("AGENT_TOOLS_CONFIG")
-	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
-		!strings.Contains(stdout.String(), "wgn.home.llm.agentPlans.claudePage") || strings.Contains(stdout.String(), "https://") {
-		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
+	// Invalid configuration keeps the retired watch out of its polling loop.
+	if err := os.WriteFile(os.Getenv("AGENT_TOOLS_CONFIG"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	url := "https://claude.ai/artifact/DashboardPage1"
-	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": "`+url+`", "spacePage": null}}`), 0o600)
-	stdout.Reset()
-	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit %d: %s", code, stderr.String())
-	}
-	for _, want := range []string{url, "`agent-plans` skill", "never instructions"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("no %q in %s", want, stdout.String())
-		}
-	}
-}
-
-// page writes the page and prints the capabilities to publish it with,
-// and says it needs publishing until published records it.
-func TestPage(t *testing.T) {
-	state := setUp(t)
-	file := filepath.Join(state, "agent-plans", "page", "agent-plans.html")
-	var got struct {
-		File         string          `json:"file"`
-		Changed      bool            `json:"changed"`
-		Capabilities json.RawMessage `json:"capabilities"`
-	}
-	runPage := func(args ...string) {
-		t.Helper()
-		var stdout, stderr bytes.Buffer
-		if code := run(args, &stdout, &stderr); code != 0 {
-			t.Fatalf("%q: exit %d: %s", args, code, stderr.String())
-		}
-		got.Changed = false
-		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-			t.Fatalf("%q: %s: %v", args, stdout.String(), err)
-		}
-	}
-	runPage("page")
-	var caps bytes.Buffer
-	json.Compact(&caps, got.Capabilities)
-	if got.File != file || !got.Changed || caps.String() != agentplans.Capabilities {
-		t.Errorf("first: %+v, capabilities %s", got, caps.String())
-	}
-	if data, err := os.ReadFile(file); err != nil || !bytes.Equal(data, agentplans.Page) {
-		t.Errorf("the page: %v", err)
-	}
-	runPage("page", "published")
-	runPage("page")
-	if got.Changed {
-		t.Error("published, the page still needs publishing")
-	}
-}
-
-// space publishes nothing where the machine names no Space page, and
-// otherwise starts codex's app-server with the export's snapshot to
-// publish (internal/space has the publishing).
-func TestSpace(t *testing.T) {
-	state := setUp(t)
-	config := os.Getenv("AGENT_TOOLS_CONFIG")
-	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"space"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status": "unconfigured"`) {
-		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
-	}
-
-	// A codex whose app-server ends at once, as one that cannot start does.
-	bin := filepath.Join(t.TempDir(), "bin")
-	os.MkdirAll(bin, 0o755)
-	os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": "page_a"}}`), 0o600)
-	stdout.Reset()
-	if code := run([]string{"space"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "codex app-server ended during initialize") {
-		t.Errorf("configured: exit %d: %s%s", code, stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(state, "agent-plans", "space.json")); err == nil {
-		t.Error("a publish that never reached the page recorded state")
+	for _, args := range [][]string{{"watch"}, {"page"}, {"page", "published"}, {"prime"}, {"space"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var out, errout bytes.Buffer
+			if code := run(args, &out, &errout); code != 2 || out.Len() != 0 || !strings.Contains(errout.String(), "snapshot") {
+				t.Errorf("retired command %q: exit %d, stdout=%q, stderr=%q", args, code, out.String(), errout.String())
+			}
+		})
 	}
 }
 
@@ -217,7 +182,7 @@ func TestUsage(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") ||
-		!strings.Contains(stdout.String(), "  watch ") {
+		!strings.Contains(stdout.String(), "snapshot") || strings.Contains(stdout.String(), "  watch ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }

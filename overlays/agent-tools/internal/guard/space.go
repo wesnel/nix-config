@@ -8,9 +8,9 @@ import (
 )
 
 // spaceState is why a write to the Space publisher's state is refused: it
-// names the block plan-dash space replaces, and a session that rewrote it
+// names the block plan-dash refresh replaces, and a session that rewrote it
 // could aim the publish at another block.
-const spaceState = "The Space publisher's state names the block it replaces, so only plan-dash space and the operator write it. " +
+const spaceState = "The publisher's state binds pages, blocks and session ownership, so only plan-dash publication commands, native receipt hooks and the operator write it. " +
 	"Put what should change in your report for the operator."
 
 // spaceStateFile reports whether path is the Space publisher's state, as

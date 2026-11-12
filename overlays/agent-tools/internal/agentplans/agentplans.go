@@ -1,6 +1,5 @@
-// Package agentplans names what the "Agent plans" dashboard session is
-// given: the pages it works on, from the operator's config, and the
-// directories it works in, from the host's XDG state directory.
+// Package agentplans manages plan mirror destinations and session ownership
+// under the host's XDG state directory.
 package agentplans
 
 import (
@@ -26,8 +25,7 @@ const Schema = 6
 // Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
 func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
 
-// Out is where plan-dash export writes the page's documents and the session
-// reads the page's database into.
+// Out is where plan-dash export writes status documents.
 func Out() string { return filepath.Join(Dir(), "out") }
 
 // Page is the "Agent plans" page: one HTML file, its CSS and script
@@ -51,8 +49,7 @@ func PageHash(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// PageFile is the page's HTML as plan-dash page writes it, the one file the
-// session publishes.
+// PageFile is the dashboard HTML file in local state.
 func PageFile() string { return filepath.Join(Dir(), "page", "agent-plans.html") }
 
 // PublishedFile holds PageHash of the page last published.
@@ -64,7 +61,7 @@ func PublishedFile() string { return filepath.Join(Dir(), "page", "published") }
 // rule here changes who can read the plans.
 const Capabilities = `{"db":{"rules":[{"path":"","read":"owner","write":"owner"}]}}`
 
-// SpaceStateFile is where plan-dash space records the thread and the block
+// SpaceStateFile is where plan-dash refresh records the thread and the block
 // it publishes the Space page in, which the guard keeps sessions from
 // writing.
 func SpaceStateFile() string { return filepath.Join(Dir(), "space.json") }
@@ -79,7 +76,7 @@ func Session() string { return filepath.Join(Dir(), "session") }
 type Targets struct {
 	// ClaudePage is the Agent plans artifact's claude.ai URL.
 	ClaudePage string `json:"claudePage"`
-	// SpacePage is the ID of the ChatGPT Space page plan-dash space
+	// SpacePage is the ID of the ChatGPT Space page plan-dash refresh
 	// publishes to.
 	SpacePage string `json:"spacePage"`
 }
