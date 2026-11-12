@@ -9,6 +9,115 @@ import (
 
 // A workstream is an org-roam node file beside the plans, holding only a
 // title and the summary a person writes.
+func TestSetWorkstream(t *testing.T) {
+	c := testConfig(t)
+	p := newPlan(t, c, "x")
+	w, err := c.NewWorkstream("Agent tooling", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetProperty("", "WORKSTREAM", []string{w.Slug}, day); err != nil {
+		t.Fatalf("assign existing plan: %v", err)
+	}
+	got, err := p.Workstream()
+	if err != nil || got.ID != w.ID || got.Title != "Agent tooling" {
+		t.Fatalf("workstream %+v: %v", got, err)
+	}
+	before := fileText(t, p.log())
+	if err := p.SetProperty("", "WORKSTREAM", []string{w.File}, day); err != nil {
+		t.Fatal(err)
+	}
+	if got := fileText(t, p.log()); got != before {
+		t.Fatal("retry appended a duplicate event")
+	}
+	w2, err := c.NewWorkstream("Other work", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetProperty("", "WORKSTREAM", []string{w2.Name}, day); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := p.Workstream(); got.ID != w2.ID {
+		t.Fatalf("reassigned %+v", got)
+	}
+	if err := p.SetProperty("", "WORKSTREAM", nil, day); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := p.Workstream(); got.ID != "" {
+		t.Fatalf("cleared %+v", got)
+	}
+	expectList(t, "drift", drift(t, p))
+	for _, tc := range []struct {
+		part   string
+		values []string
+	}{
+		{"P1", []string{w.Slug}}, {"", []string{w.Slug, w2.Slug}}, {"", []string{"missing"}},
+	} {
+		isRefusal(t, "invalid workstream assignment", p.SetProperty(tc.part, "WORKSTREAM", tc.values, day))
+	}
+	isRefusal(t, "foreign plan", otherHosts(t, p).SetProperty("", "WORKSTREAM", []string{w.Slug}, day))
+	t.Run("legacy tracking and label", func(t *testing.T) {
+		old := newPlan(t, c, "old")
+		data := fileText(t, old.File())
+		data = strings.Replace(data, "\n* Plan\n:PROPERTIES:\n", "\n* Plan\n:PROPERTIES:\n:WORKSTREAM: [[id:"+w.ID+"][Original label]]\n", 1)
+		if err := os.WriteFile(old.File(), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		expectList(t, "untracked legacy workstream", drift(t, old))
+		if err := old.SetProperty("", "WORKSTREAM", []string{w.Name}, day); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := old.Workstream(); got.Title != "Original label" {
+			t.Fatalf("changed existing label: %+v", got)
+		}
+		first := fileText(t, old.log())
+		if !strings.Contains(first, ":PROPERTY: WORKSTREAM\n") {
+			t.Fatal("did not establish workstream tracking")
+		}
+		if err := old.SetProperty("", "WORKSTREAM", []string{w.Slug}, day); err != nil {
+			t.Fatal(err)
+		}
+		if second := fileText(t, old.log()); second != first {
+			t.Fatal("repeated tracking event")
+		}
+		setProp(t, old.File(), "WORKSTREAM", "")
+		if ds := drift(t, old); len(ds) != 1 || !strings.Contains(ds[0], "WORKSTREAM") {
+			t.Fatalf("tracked drift missing: %v", ds)
+		}
+	})
+	t.Run("legacy unrelated properties stay untracked", func(t *testing.T) {
+		made, err := c.New(NewOptions{Title: "Untracked", Slug: "untracked"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := c.Open(made.Plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setProp(t, old.File(), "WORKTREES", "/legacy/worktree")
+		expectList(t, "before assignment", drift(t, old))
+		if err := old.SetProperty("", "WORKSTREAM", []string{w.Name}, day); err != nil {
+			t.Fatal(err)
+		}
+		expectList(t, "after assignment", drift(t, old))
+	})
+	t.Run("ambiguous slug", func(t *testing.T) {
+		data := fileText(t, w.File)
+		file := filepath.Join(c.Dir, "workstream-agent-tooling.other.org")
+		if err := os.WriteFile(file, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before := fileText(t, p.log())
+		isRefusal(t, "ambiguous workstream", p.SetProperty("", "WORKSTREAM", []string{w.Slug}, day))
+		if got := fileText(t, p.log()); got != before {
+			t.Fatal("ambiguity changed log")
+		}
+		if err := p.SetProperty("", "WORKSTREAM", []string{w.Name}, day); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestNewWorkstream(t *testing.T) {
 	t.Run("written", func(t *testing.T) {
 		c := testConfig(t)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // This catalog also supplies Codex's routine plan-tool approvals.
@@ -103,11 +104,11 @@ func planTools() []mcpTool {
 		makeTool("new", nil, title, flag("slug"), list("repo"), list("branch"),
 			p("target_worktrees", texts, false, "plan worktrees; defaults to the execution worktree"), list("session"),
 			flag("harness"), flag("template"), flag("workstream"), flag("parent"), part),
-		makeTool("log", []string{"plan"}, plan, item, p("kind", text, true, "event kind; tool-owned kinds are refused"),
+		makeTool("log", []string{"plan"}, plan, item, enum("kind", true, plans.Kinds...),
 			prose("summary"), role, flag("agent"), flag("branch"), prose("commit"), flag("revision"), prose("evidence"),
 			flag("review"), flag("outcome"), p("command", literal, false, "hand-back command stored as text, never executed"), flag("dir")),
 		makeTool("set", []string{"plan", "property", "values"}, plan,
-			enum("property", true, "WORKTREES", "BRANCHES", "PULL_REQUESTS", "STATUS", "SKILLS", "REPOSITORIES", "SESSIONS", "HARNESS"),
+			enum("property", true, "WORKTREES", "BRANCHES", "PULL_REQUESTS", "STATUS", "SKILLS", "REPOSITORIES", "SESSIONS", "HARNESS", "WORKSTREAM"),
 			p("values", texts, true, "the property's values, or an empty array to clear it"), part),
 		makeTool("unfile", []string{"plan", "property", "value"}, plan,
 			enum("property", true, "WORKTREES", "BRANCHES", "PULL_REQUESTS"), p("value", text, true, "the value to remove"),
@@ -133,6 +134,10 @@ func planTools() []mcpTool {
 		makeTool("workstream list", nil, boolFlag("json", "return JSON")),
 		makeTool("find", nil, flag("session"), flag("branch"), p("target_worktree", text, false, "match this worktree")),
 		makeTool("status", []string{"plan"}, plan, enum("format", false, "org", "json")),
+		makeTool("waiting", []string{"plan"}, plan, boolFlag("json", "return JSON")),
+		makeTool("acknowledge", []string{"plan", "event"}, plan, p("event", text, true, "the pending command's handoff event ID"),
+			p("evidence", literal, true, "observed result; records evidence without executing the command")),
+		makeTool("audit", nil, boolFlag("json", "return typed diagnostics as JSON; reads all local plans without syncing")),
 	}
 }
 

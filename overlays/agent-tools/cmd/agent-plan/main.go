@@ -61,6 +61,8 @@ have (see status) is refused and writes nothing.
       [--command CMD [--dir DIR]]
                      append an event about item ID to the plan's log, and
                      write a step's or part's heading keyword from its log.
+                     observed requires summary or evidence and preserves
+                     keywords, pending commands, checkpoints and stale state.
                      A handed-back event's --command is what the operator
                      runs next, in the absolute --dir if given. --revision
                      records an exact commit and its GitHub origin owner/name
@@ -75,11 +77,20 @@ have (see status) is refused and writes nothing.
                      JSON repository, original_revision and resolved revision,
                      even without an association. No alias leaves it unchanged
   waiting PLAN [--json]
-                     the items whose newest event, but planned, property,
-                     resealed, referenced and postponed events, is a
-                     hand-back with a command, each with its command and
-                     directory: what waits on the operator, which Emacs and
-                     the dashboard show them
+                     pending hand-back commands, with their event ID and
+                     directory. Observations and changes to plan text or
+                     schedule leave them pending; progress settles them
+  acknowledge PLAN EVENT --evidence TEXT
+                     record the observed result of a pending command handoff,
+                     deriving its item from EVENT. Executes nothing and
+                     leaves step keywords unchanged. A retry returns the
+                     existing acknowledgement; an obsolete handoff is refused
+  audit [--json]     read all hosts' local plans without syncing or writing.
+                     Typed diagnostics distinguish informational legacy form,
+                     invalid historical references, drift and unreadable plans.
+                     Exit 0 means the scan completed, including any findings;
+                     an enumeration failure exits nonzero. Inspect drift with
+                     status PLAN; preserve historical events as recorded
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, and the worktree and branch if a linked
@@ -131,6 +142,11 @@ have (see status) is refused and writes nothing.
                      (planning, reviewing-plan, working, reviewing,
                      handed-back or halted), SKILLS, REPOSITORIES, SESSIONS
                      and HARNESS are set the same way, with no log event
+                     WORKSTREAM takes one slug, name or file from workstream
+                     list, or no value to clear it; the plan alone owns it,
+                     so --part is refused. Its first property event starts
+                     tracking; repeated assignments of the same identity
+                     preserve its label and add no further event
   unfile PLAN NAME VALUE --reason TEXT [--part P1]
                      remove VALUE, which a hook or an agent filed in the
                      wrong plan, from WORKTREES, BRANCHES or PULL_REQUESTS
@@ -597,6 +613,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runResolveCommit(*revision, repos, c, positional, report)
 	case "waiting":
 		return runWaiting(*asJSON, stdout, report, wantPlan)
+	case "audit":
+		return runAudit(*asJSON, c, positional, stdout, stderr, report)
+	case "acknowledge":
+		return runAcknowledge(*evidence, c, positional, stderr, report)
 	case "find":
 		return runFind(*harness, *hook, plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}, c, stdin, stdout, stderr, report)
 	case "worktrees":
@@ -789,6 +809,34 @@ func runResolveCommit(revision string, repos multi, c plans.Config, positional [
 		return report(nil, fmt.Errorf("resolve-commit takes --repo and --revision, without PLAN"))
 	}
 	return report(c.ResolveCommit(lastValue(repos), revision))
+}
+
+func runAudit(asJSON bool, c plans.Config, positional []string, stdout, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprintln(stderr, "agent-plan audit: scans all plans; takes only --json")
+		return 2
+	}
+	result, err := c.Audit()
+	if err != nil || asJSON {
+		return report(result, err)
+	}
+	for _, d := range result.Diagnostics {
+		fmt.Fprintf(stdout, "%s %s %s: %s\n", d.Severity, d.Kind, d.Plan, d.Message)
+	}
+	return 0
+}
+
+func runAcknowledge(evidence string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 2 {
+		fmt.Fprintln(stderr, "agent-plan acknowledge: takes PLAN EVENT --evidence TEXT")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	result, err := p.Acknowledge(positional[1], evidence, time.Now())
+	return report(result, err)
 }
 
 func runWaiting(asJSON bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
@@ -1239,6 +1287,9 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 	}
 	given := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if allowed := map[string]string{"audit": "json", "acknowledge": "evidence"}[command]; allowed != "" {
+		return given, onlyFlag(command, allowed, given, stderr)
+	}
 	if given["plan"] {
 		if command != "sign-id" {
 			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
@@ -1266,6 +1317,16 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 		return nil, false
 	}
 	return given, true
+}
+
+func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) bool {
+	for name := range given {
+		if name != allowed {
+			fmt.Fprintf(stderr, "agent-plan %s: only --%s is accepted, not --%s\n", command, allowed, name)
+			return false
+		}
+	}
+	return true
 }
 
 func commandText(command, textFile string, text, context *string, given map[string]bool, stdout, stderr io.Writer) int {

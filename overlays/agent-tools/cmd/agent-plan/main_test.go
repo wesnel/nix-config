@@ -19,6 +19,255 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+func TestAudit(t *testing.T) {
+	c := setup(t)
+	makePlan := func(slug string) string {
+		t.Helper()
+		made, err := c.New(plans.NewOptions{Title: slug, Slug: slug, Goal: "Audit fixture"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return made.Plan
+	}
+	healthy := makePlan("healthy")
+	drifting := newPlan(t)
+	driftData, err := os.ReadFile(drifting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftText := strings.Replace(string(driftData), "*** TODO Add the loop", "*** DONE Add the loop", 1)
+	driftText = strings.Replace(driftText, "** Related\n", "** Related\n[[id:unknown-plan][Missing]]\n", 1) + "\n* Unexpected\n"
+	if err := os.WriteFile(drifting, []byte(driftText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := makePlan("legacy")
+	data, _ := os.ReadFile(legacy)
+	if err := os.WriteFile(legacy, []byte(strings.Replace(string(data), ":CUSTOM_ID:", ":ID:", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	broken := makePlan("broken-reference")
+	p, _ := c.Open(broken)
+	if _, err := p.Reference("https://example.test/valid", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(broken)
+	text := strings.Replace(string(data), "*** https://example.test/valid\n:PROPERTIES:\n:URL: https://example.test/valid\n:END:\n", "", 1)
+	if err := os.WriteFile(broken, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := strings.TrimSuffix(broken, ".org") + ".log.org"
+	data, _ = os.ReadFile(log)
+	data = append(data, []byte("* Historical note — prose rather than a URL\n:PROPERTIES:\n:EVENT: invalid-reference\n:KIND: referenced\n:ITEM: "+p.Name+"\n:END:\n[2026-11-12 Thu 12:00]\n")...)
+	if err := os.WriteFile(log, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := makePlan("unreadable")
+	if err := os.Rename(strings.TrimSuffix(unreadable, ".org")+".log.org", filepath.Join(c.Dir, "saved-log")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() map[string]string {
+		t.Helper()
+		entries, err := os.ReadDir(c.Dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, e := range entries {
+			if e.Type().IsRegular() {
+				b, err := os.ReadFile(filepath.Join(c.Dir, e.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				out[e.Name()] = string(b)
+			}
+		}
+		return out
+	}
+	before := snapshot()
+	code, out, errs := agentPlan(t, "", "audit", "--json")
+	if code != 0 {
+		t.Fatalf("read-only audit: exit %d: %.160s", code, errs)
+	}
+	var got struct {
+		Diagnostics []struct{ Kind, Severity, Plan, Event, Property, Message string }
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	missingReference := false
+	for _, d := range got.Diagnostics {
+		seen[d.Kind] = true
+		if d.Plan == healthy {
+			t.Errorf("healthy plan diagnosed: %+v", d)
+		}
+		if d.Kind == "legacy-form" && (d.Plan != legacy || d.Severity != "info") {
+			t.Errorf("legacy %+v", d)
+		}
+		if d.Kind == "invalid-reference" && d.Event != "invalid-reference" {
+			t.Errorf("reference %+v", d)
+		}
+		if d.Kind == "unreadable-plan" && (d.Plan != unreadable || d.Message == "") {
+			t.Errorf("unreadable %+v", d)
+		}
+		if d.Kind == "property-drift" && d.Plan == broken && (d.Property != "References" || strings.Contains(d.Message, "prose rather")) {
+			t.Errorf("real drift polluted by invalid history: %+v", d)
+		}
+		if d.Kind == "property-drift" && d.Plan == broken && d.Property == "References" && strings.Contains(d.Message, "https://example.test/valid") {
+			missingReference = true
+		}
+	}
+	if !missingReference {
+		t.Errorf("missing valid-reference drift for broken plan in %s", out)
+	}
+	for _, kind := range []string{"legacy-form", "invalid-reference", "property-drift", "keyword-drift", "structure-drift", "dangling-link", "unreadable-plan"} {
+		if !seen[kind] {
+			t.Errorf("missing %s in %s", kind, out)
+		}
+	}
+	code, second, errs := agentPlan(t, "", "audit", "--json")
+	if code != 0 || second != out {
+		t.Fatalf("audit not deterministic: %d %s %s", code, second, errs)
+	}
+	after := snapshot()
+	if len(before) != len(after) {
+		t.Fatal("audit created files")
+	}
+	for name, value := range before {
+		if after[name] != value {
+			t.Errorf("audit changed %s", name)
+		}
+	}
+	t.Run("enumeration failure", func(t *testing.T) {
+		config := setup(t)
+		if err := os.WriteFile(config.Dir, []byte("not a directory"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errs := agentPlan(t, "", "audit", "--json"); code == 0 || !strings.Contains(errs, "not a directory") {
+			t.Fatalf("enumeration: %d %s", code, errs)
+		}
+	})
+}
+
+func TestAcknowledge(t *testing.T) {
+	c := setup(t)
+	file := newPlan(t)
+	p, err := c.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "never-run")
+	back, err := p.Log(plans.Event{Kind: "handed-back", Item: "S1", Command: "touch " + marker}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(file)
+	code, out, errs := agentPlan(t, "", "acknowledge", file, back.ID, "--evidence", "Operator reports success")
+	if code != 0 {
+		t.Fatalf("acknowledge handoff: exit %d: %s", code, errs)
+	}
+	var ack map[string]any
+	if err := json.Unmarshal([]byte(out), &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack["kind"] != "acknowledged" || ack["item"] != "S1" || ack["acknowledges"] != back.ID || ack["evidence"] != "Operator reports success" {
+		t.Fatalf("acknowledgement %s", out)
+	}
+	if got, err := p.Waiting(); err != nil || len(got) != 0 {
+		t.Fatalf("waiting %+v %v", got, err)
+	}
+	after, _ := os.ReadFile(file)
+	if !bytes.Equal(before, after) {
+		t.Fatal("acknowledgement changed plan keywords")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("command ran: %v", err)
+	}
+	next, err := p.Log(plans.Event{Kind: "handed-back", Item: "S1", Command: "echo next"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, retried, errs := agentPlan(t, "", "acknowledge", file, back.ID, "--evidence", "Operator reports success")
+	if code != 0 || retried != out {
+		t.Fatalf("retry: %d %s %s", code, retried, errs)
+	}
+	if got, err := p.Waiting(); err != nil || len(got) != 1 || got[0].Event != next.ID {
+		t.Fatalf("retry cleared newer handoff: %+v %v", got, err)
+	}
+	obsolete := next
+	next, err = p.Log(plans.Event{Kind: "handed-back", Item: "S1", Command: "echo newest"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := strings.TrimSuffix(file, ".org") + ".log.org"
+	logBefore, _ := os.ReadFile(log)
+	for _, args := range [][]string{
+		{file, obsolete.ID, "--evidence", "Late result"}, {file, "missing", "--evidence", "Unknown"}, {file, next.ID},
+		{file, next.ID, "--evidence", "two\nlines"}, {file, next.ID, "--evidence", "yes", "--item", "S2"},
+	} {
+		if code, _, _ := agentPlan(t, "", append([]string{"acknowledge"}, args...)...); code == 0 {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	logAfter, _ := os.ReadFile(log)
+	if !bytes.Equal(logBefore, logAfter) {
+		t.Fatal("refused acknowledgement changed log")
+	}
+	if code, _, _ := agentPlan(t, "", "log", file, "--item", "S1", "--kind", "acknowledged", "--evidence", "yes"); code == 0 {
+		t.Fatal("agent forged acknowledgement")
+	}
+	t.Run("concurrent retries", func(t *testing.T) {
+		type reply struct {
+			code      int
+			out, errs string
+		}
+		start := make(chan struct{})
+		results := make(chan reply, 2)
+		for range 2 {
+			go func() {
+				<-start
+				var stdout, stderr bytes.Buffer
+				code := Main([]string{"acknowledge", file, next.ID, "--evidence", "Completed"}, strings.NewReader(""), &stdout, &stderr)
+				results <- reply{code, stdout.String(), stderr.String()}
+			}()
+		}
+		close(start)
+		a, b := <-results, <-results
+		if a.code != 0 || b.code != 0 || a.out != b.out {
+			t.Fatalf("concurrent retries differ: %+v %+v", a, b)
+		}
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, e := range events {
+			if e.Kind == "acknowledged" && e.Evidence == "Completed" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("concurrent acknowledgement appended %d events", count)
+		}
+	})
+	t.Run("foreign host and noncommand", func(t *testing.T) {
+		foreign, err := (plans.Config{Dir: c.Dir, Host: "other"}).New(plans.NewOptions{Title: "Foreign", Slug: "foreign"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errs := agentPlan(t, "", "acknowledge", foreign.Plan, "event", "--evidence", "yes"); code == 0 || !strings.Contains(errs, "only agent-plan on other") {
+			t.Fatalf("foreign host: %d %s", code, errs)
+		}
+		e, err := p.Log(plans.Event{Kind: "handed-back", Item: "S2"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errs := agentPlan(t, "", "acknowledge", file, e.ID, "--evidence", "yes"); code == 0 || !strings.Contains(errs, "not a command-bearing handoff") {
+			t.Fatalf("noncommand: %d %s", code, errs)
+		}
+	})
+}
+
 // With AGENT_PLAN_TEST_MAIN set, the test binary is agent-plan itself, for
 // tests that run it as separate processes.
 func TestMain(m *testing.M) {

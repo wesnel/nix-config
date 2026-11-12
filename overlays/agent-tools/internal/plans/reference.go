@@ -20,8 +20,7 @@ func (p Plan) Reference(address, note string, now time.Time) (Event, error) {
 		return Event{}, err
 	}
 	note = strings.TrimSpace(note)
-	if u, err := url.Parse(address); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-		strings.ContainsAny(address, " \t\n\r") {
+	if !validReference(address) {
 		return Event{}, refusal.New("%q is not an http or https URL. Pass the address as the operator gave it, as `agent-plan reference PLAN https://...`", address)
 	}
 	noteLines, err := textLines(note)
@@ -44,6 +43,11 @@ func (p Plan) Reference(address, note string, now time.Time) (Event, error) {
 		return err
 	})
 	return e, err
+}
+
+func validReference(address string) bool {
+	u, err := url.Parse(address)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && !strings.ContainsAny(address, " \t\n\r")
 }
 
 // setReference is lines with address's entry in References, its note set

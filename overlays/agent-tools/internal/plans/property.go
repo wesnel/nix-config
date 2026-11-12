@@ -8,15 +8,16 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// trackedProperties are the list properties of a plan file's `* Plan`
+// trackedProperties are the properties of a plan file's `* Plan`
 // heading that are a projection of the log: each change through agent-plan
 // or a hook is logged as a property event holding the whole new value, and
 // status reports a file whose value is not the one its last event gives.
-// An item's properties are compared from its first property event on.
-var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS"}
+// An item's properties are compared from its first property event on;
+// WORKSTREAM starts at its own first event.
+var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS", "WORKSTREAM"}
 
-// settableProperties are the tracked properties SetProperty sets; OWNERS is
-// SetOwner's.
+// settableProperties are the tracked list properties SetProperty sets.
+// OWNERS and the WORKSTREAM link have their own setters.
 var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS"}
 
 // plainProperties are the `* Plan` properties SetProperty sets without a
@@ -48,15 +49,18 @@ func checkValues(name string, values []string) error {
 // property and Value holds its values, separated by spaces.
 const propertyKind = "property"
 
-// SetProperty sets the tracked list property name of the `* Plan` heading
-// in the plan's file, or the part's, to values, and logs it.
+// SetProperty sets a property of the plan or part. WORKSTREAM resolves
+// one name to a link and belongs to the whole plan; no value clears it.
 func (p Plan) SetProperty(part, name string, values []string, now time.Time) error {
 	if err := p.checkOwn(); err != nil {
 		return err
 	}
+	if name == "WORKSTREAM" {
+		return p.setWorkstream(part, values, now)
+	}
 	if !slices.Contains(settableProperties, name) && !slices.Contains(plainProperties, name) {
 		return refusal.New("%s is not a property set this way. Set one of `%s`; record an owner with `agent-plan own`, an item's AFTER with `agent-plan after`",
-			name, strings.Join(slices.Concat(settableProperties, plainProperties), "`, `"))
+			name, strings.Join(slices.Concat(settableProperties, plainProperties, []string{"WORKSTREAM"}), "`, `"))
 	}
 	if part != "" && !partPattern.MatchString(part) {
 		return refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
@@ -211,7 +215,11 @@ func loggedProperty(events []Event, item, name string) (string, bool) {
 		if e.Kind != propertyKind || e.Item != item {
 			continue
 		}
-		any = true
+		// WORKSTREAM and the older list properties start tracking separately,
+		// so assigning a workstream does not reinterpret legacy list values.
+		if (name == "WORKSTREAM") == (e.Property == "WORKSTREAM") {
+			any = true
+		}
 		if e.Property == name {
 			value = e.Value
 		}
