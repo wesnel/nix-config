@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -263,6 +264,31 @@ func (p Plan) Workstream() (WorkstreamRef, error) {
 		return WorkstreamRef{}, err
 	}
 	return refOf(props["WORKSTREAM"]), nil
+}
+
+func (p Plan) setWorkstream(part string, values []string, now time.Time) error {
+	if part != "" || len(values) > 1 {
+		return refusal.New("WORKSTREAM belongs to the plan. Use `agent-plan set PLAN WORKSTREAM NAME`, or omit NAME to clear it; omit --part")
+	}
+	var ref WorkstreamRef
+	if len(values) == 1 {
+		w, err := (Config{Dir: p.Dir, Host: p.Host}).workstreamNamed(values[0])
+		if err != nil {
+			return err
+		}
+		ref = w.ref()
+	}
+	return p.withLock(func(l *lockedPlan) error {
+		return l.setPlanProperty("", "WORKSTREAM", func(before []string) []string {
+			if ref.ID == "" {
+				return nil
+			}
+			if refOf(strings.Join(before, " ")).ID == ref.ID {
+				return before
+			}
+			return []string{ref.link()}
+		}, "", now)
+	})
 }
 
 // workstreamFor is the workstream a new plan made with o is in: the one

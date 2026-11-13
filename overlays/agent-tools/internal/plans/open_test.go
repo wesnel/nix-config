@@ -227,10 +227,10 @@ func TestOpenItems(t *testing.T) {
 			t.Errorf("listed\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 		org := OpenItemsOrg(items)
-		// The plans have no events, so their steps no time.
-		wantOrg := "* Agent tools\n** Plan d (" + d.Name + ")\n- step S1  :: Step S1\n" +
-			"** Plan a (" + a.Name + ")\n- step S1  :: Step S1\n- step P1.S1  :: Step P1.S1\n" +
-			"* Codex parity\n** Plan c (" + cp.Name + ")\n- step S1  :: Step S1\n" +
+		// A workstream assignment supplies the plan's first event time.
+		wantOrg := "* Agent tools\n** Plan d (" + d.Name + ")\n- step S1 [2026-10-14 Wed 13:05] :: Step S1\n" +
+			"** Plan a (" + a.Name + ")\n- step S1 [2026-10-14 Wed 13:05] :: Step S1\n- step P1.S1 [2026-10-14 Wed 13:05] :: Step P1.S1\n" +
+			"* Codex parity\n** Plan c (" + cp.Name + ")\n- step S1 [2026-10-14 Wed 13:05] :: Step S1\n" +
 			"* none\n** Plan b (" + b.Name + ")\n- step S1  :: Step S1\n"
 		if org != wantOrg {
 			t.Errorf("org:\n%s\nwant:\n%s", org, wantOrg)

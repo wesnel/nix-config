@@ -3,7 +3,63 @@ package plans
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestObserved(t *testing.T) {
+	t.Run("bare heading", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "bare")
+		insertUnder(t, p.File(), "** Steps", "*** Bare step\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n")
+		before := fileText(t, p.File())
+		if _, err := p.Log(Event{Kind: "observed", Item: "S1", Evidence: "Read only"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if after := fileText(t, p.File()); after != before {
+			t.Fatal("observation projected a bare heading")
+		}
+	})
+	for _, state := range []string{"", "started", "done", "verified"} {
+		t.Run("preserves "+state, func(t *testing.T) {
+			c := testConfig(t)
+			p := newPlan(t, c, "x")
+			addItems(t, p.File(), "** Steps", "S1")
+			if state != "" {
+				if _, err := p.Log(Event{Kind: state, Item: "S1"}, day); err != nil {
+					t.Fatal(err)
+				}
+			}
+			back, err := p.Log(Event{Kind: "handed-back", Item: "S1", Command: "echo done"}, day)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := fileText(t, p.File())
+			if _, err := p.Log(Event{Kind: "observed", Item: "S1", Summary: "Read the result", Evidence: "Result is available"}, day.Add(48*time.Hour)); err != nil {
+				t.Fatalf("record observation: %v", err)
+			}
+			if got := fileText(t, p.File()); got != before {
+				t.Fatal("observation rewrote execution state")
+			}
+			waiting, err := p.Waiting()
+			if err != nil || len(waiting) != 1 || waiting[0].Event != back.ID {
+				t.Fatalf("waiting %+v: %v", waiting, err)
+			}
+			if cp, ok := c.Checkpoint("abc", ""); !ok || cp.Key != back.ID {
+				t.Fatalf("checkpoint %+v %v", cp, ok)
+			}
+			if state == "started" {
+				s, err := p.StatusAt(day.Add(48 * time.Hour))
+				if err != nil || len(s.Stale) != 1 || s.Stale[0] != "S1" {
+					t.Fatalf("observation refreshed progress: %+v %v", s.Stale, err)
+				}
+			}
+		})
+	}
+	t.Run("requires content", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		_, err := p.Log(Event{Kind: "observed", Item: p.Name}, day)
+		isRefusal(t, "empty observation", err)
+	})
+}
 
 // A hand-back can name the command the operator runs, and the item waits
 // on them until an event that settles it is logged.

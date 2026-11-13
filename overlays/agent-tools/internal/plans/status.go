@@ -196,6 +196,9 @@ const staleAfter = 24 * time.Hour
 func stale(list []item, events []Event, now time.Time) []string {
 	newest := map[string]time.Time{}
 	for _, e := range events {
+		if e.Kind == "observed" {
+			continue
+		}
 		if at, ok := eventTime(e, now.Location()); ok && at.After(newest[e.Item]) {
 			newest[e.Item] = at
 		}

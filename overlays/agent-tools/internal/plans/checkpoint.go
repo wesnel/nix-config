@@ -13,7 +13,7 @@ type Checkpoint struct {
 
 // passiveKinds are events the hooks log without the work moving on, which
 // leave a checkpoint standing.
-var passiveKinds = []string{signDelivered, "referenced"}
+var passiveKinds = []string{signDelivered, "referenced", "observed"}
 
 // Checkpoint is the stopping point the plan session answers for, as it
 // stops in cwd, stands at: its newest event, past the passive ones, is a

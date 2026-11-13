@@ -53,8 +53,9 @@ type Event struct {
 	Value    string `json:"value,omitempty"`
 	// Command is a handed-back event's command for the operator to run,
 	// and Dir the directory to run it in; Waiting reads them.
-	Command string `json:"command,omitempty"`
-	Dir     string `json:"dir,omitempty"`
+	Command      string `json:"command,omitempty"`
+	Dir          string `json:"dir,omitempty"`
+	Acknowledges string `json:"acknowledges,omitempty"`
 	// Base is a sign-requested event's base for git sign-pass --base, ""
 	// for main.
 	Base string `json:"base,omitempty"`
@@ -67,7 +68,7 @@ var (
 	// Kinds are what an event an agent logs records about its item;
 	// toolKinds are beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "observed"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes; needs-operator
@@ -82,10 +83,11 @@ var (
 	// refusal Log gives an agent that logs one.
 	toolKinds = func() map[string]string {
 		kinds := map[string]string{
+			"acknowledged":     "agent-plan acknowledge records evidence against a pending command. Use `agent-plan acknowledge PLAN EVENT --evidence TEXT`",
 			"commit-rewritten": "git sign-pass records exact rewrite aliases; log an association with --revision REF",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--revision REF` in its worktree for the step a commit completes",
-			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
+			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS, WORKSTREAM and OWNERS that it makes. " +
 				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
 				"Confirm the branch with `git branch --show-current` before the edit",
@@ -121,7 +123,7 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"worktree": e.Worktree, "tip": e.Tip, "property": e.Property, "value": e.Value} {
+		"worktree": e.Worktree, "tip": e.Tip, "property": e.Property, "value": e.Value, "acknowledges": e.Acknowledges} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -138,6 +140,10 @@ func (p Plan) check(e Event) error {
 		return err
 	}
 	switch {
+	case (e.Kind == "acknowledged") != (e.Acknowledges != ""):
+		return refusal.New("only an acknowledgement names its handoff. Use `agent-plan acknowledge PLAN EVENT --evidence TEXT`")
+	case e.Kind == "observed" && strings.TrimSpace(e.Summary+e.Evidence) == "":
+		return refusal.New("an observation needs content. Use `agent-plan log PLAN --kind observed --item ID --summary TEXT` or --evidence TEXT")
 	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
@@ -208,6 +214,9 @@ func (p Plan) record(e Event, now time.Time) (Event, error) {
 		var err error
 		if e, err = l.log(e, now); err != nil {
 			return err
+		}
+		if e.Kind == "observed" || e.Kind == "acknowledged" {
+			return nil
 		}
 		if err := l.project(e.Item, now); err != nil {
 			e.Note = fmt.Sprintf("the event is logged, but not %s's heading keyword: %v", e.Item, err)
@@ -295,7 +304,7 @@ func eventText(e Event) string {
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
 		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
-		{"COMMAND", e.Command}, {"DIR", e.Dir}, {"BASE", e.Base}} {
+		{"COMMAND", e.Command}, {"DIR", e.Dir}, {"BASE", e.Base}, {"ACKNOWLEDGES", e.Acknowledges}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -618,6 +627,7 @@ func (p Plan) Events() ([]Event, error) {
 			e.Summary = summary
 		}
 		e.Command, e.Dir, e.Base = h.Props["COMMAND"], h.Props["DIR"], h.Props["BASE"]
+		e.Acknowledges = h.Props["ACKNOWLEDGES"]
 		for _, line := range h.Body {
 			if strings.HasPrefix(line, "[") {
 				e.Time = strings.TrimSpace(line)

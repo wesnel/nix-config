@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,31 @@ func TestMCPPlan(t *testing.T) {
 	}
 	t.Cleanup(func() { in.Close(); cmd.Wait() })
 	c := &mcpClient{in: in, out: bufio.NewReader(out)}
+	t.Run("discover observation kind", func(t *testing.T) {
+		r := c.call(t, "tools/list", map[string]any{})
+		var listed struct {
+			Tools []struct {
+				Name        string
+				InputSchema struct {
+					Properties map[string]struct{ Enum []string }
+				}
+			}
+		}
+		if err := json.Unmarshal(r.Result, &listed); err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range listed.Tools {
+			if tool.Name != "agent_plan_log" {
+				continue
+			}
+			kinds := tool.InputSchema.Properties["kind"].Enum
+			if !slices.Contains(kinds, "observed") || slices.Contains(kinds, "acknowledged") {
+				t.Fatalf("discoverable agent event kinds: %v", kinds)
+			}
+			return
+		}
+		t.Fatal("agent_plan_log missing")
+	})
 	call := func(t *testing.T, name string, args map[string]any) map[string]any {
 		t.Helper()
 		args["worktree"], args["plan"] = f.repo, f.plan
@@ -128,6 +154,50 @@ func TestMCPPlan(t *testing.T) {
 		call(t, "unfile", map[string]any{"property": "PULL_REQUESTS", "value": "https://github.com/o/r/pull/1", "reason": "Belongs to another plan."})
 		call(t, "part", map[string]any{"title": "A part", "target_worktree": f.repo})
 	})
+	t.Run("workstream observations and acknowledgement", func(t *testing.T) {
+		r := c.tool(t, "agent_plan_workstream_new", map[string]any{"worktree": f.repo, "title": "Plan interfaces"})
+		if r.isError {
+			t.Fatalf("new workstream: %s", r.text)
+		}
+		call(t, "set", map[string]any{"property": "WORKSTREAM", "values": []string{"plan-interfaces"}})
+		data, err := os.ReadFile(f.plan)
+		if err != nil || !strings.Contains(string(data), "][Plan interfaces]]") {
+			t.Fatalf("workstream not linked: %s %v", data, err)
+		}
+		call(t, "set", map[string]any{"property": "WORKSTREAM", "values": []string{}})
+		data, err = os.ReadFile(f.plan)
+		if err != nil || strings.Contains(string(data), "][Plan interfaces]]") {
+			t.Fatalf("workstream not cleared: %s %v", data, err)
+		}
+		step := call(t, "step", map[string]any{"title": "Await operator command"})
+		id := step["id"].(string)
+		call(t, "log", map[string]any{"item": id, "kind": "started"})
+		marker := filepath.Join(f.repo, "acknowledge-must-not-execute")
+		back := call(t, "log", map[string]any{"item": id, "kind": "handed-back", "command": "touch " + marker})
+		call(t, "log", map[string]any{"item": id, "kind": "observed", "summary": "Waiting for result"})
+		r = c.tool(t, "agent_plan_waiting", map[string]any{"worktree": f.repo, "plan": f.plan, "json": true})
+		if r.isError || !strings.Contains(r.out, back["event"].(string)) {
+			t.Fatalf("waiting: %s", r.text)
+		}
+		ack := call(t, "acknowledge", map[string]any{"event": back["event"], "evidence": "Operator reported success"})
+		if ack["item"] != id || ack["acknowledges"] != back["event"] {
+			t.Fatalf("acknowledgement %+v", ack)
+		}
+		r = c.tool(t, "agent_plan_waiting", map[string]any{"worktree": f.repo, "plan": f.plan, "json": true})
+		if r.isError || strings.Contains(r.out, back["event"].(string)) {
+			t.Fatalf("acknowledged still waiting: %s", r.text)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("command executed: %v", err)
+		}
+		if status := readPlan(t, "status", "--format=json"); !strings.Contains(status, `"keyword": "STARTED"`) {
+			t.Fatalf("execution state lost: %s", status)
+		}
+		r = c.tool(t, "agent_plan_audit", map[string]any{"worktree": f.repo, "json": true})
+		if r.isError || !strings.Contains(r.out, `"diagnostics"`) {
+			t.Fatalf("audit: %s", r.text)
+		}
+	})
 	t.Run("refusals leave plan unchanged", func(t *testing.T) {
 		before, err := os.ReadFile(f.plan)
 		if err != nil {
@@ -153,8 +223,8 @@ func TestMCPPlan(t *testing.T) {
 			{"section", map[string]any{"section": "Questions", "text": "x"}, "takes one of"},
 			{"section", map[string]any{"section": "Goal", "text": "* Injected"}, "heading"},
 			{"set", map[string]any{"property": "SESSIONS", "values": []string{"--help"}}, "starts with"},
-			{"log", map[string]any{"item": "S1", "kind": "committed"}, "a hook"},
-			{"log", map[string]any{"item": "S1", "kind": "property", "summary": "OWNERS changed"}, "agent-plan logs"},
+			{"log", map[string]any{"item": "S1", "kind": "committed"}, "takes one of"},
+			{"log", map[string]any{"item": "S1", "kind": "property", "summary": "OWNERS changed"}, "takes one of"},
 			{"find", map[string]any{"hook": true}, "hook"},
 		} {
 			t.Run(tc.name+"/"+tc.says, func(t *testing.T) {

@@ -96,12 +96,18 @@ no command makes goes in your report for the operator.
   back to `main` only after the delegated agent has stopped.
   Lists are separated by spaces.
   `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
-  `CUSTOM_ID`, `HOST`, `PIPELINE`, `WORKSTREAM` and `OWNERS`, as `agent-plan set PLAN STATUS
+  `CUSTOM_ID`, `HOST`, `PIPELINE` and `OWNERS`, as `agent-plan set PLAN STATUS
   working` or `agent-plan set PLAN SKILLS coordinate-subagents`.
   `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
   step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
   logs the whole new value; `agent-plan status` lists a value the log does
   not give, and a References entry it does not hold, as property drift.
+  `agent-plan set PLAN WORKSTREAM NAME` assigns or reassigns an existing
+  plan to a workstream by slug, name or file from `workstream list`;
+  omit NAME to clear it. It applies to the whole plan, without `--part`.
+  Its first WORKSTREAM property event starts tracking that value; older
+  assignments remain readable without one. Repeating an assignment to
+  the same workstream preserves its label and adds no further event.
   If a hook or an agent filed a worktree, branch or pull request in the
   wrong plan, take that one value out with `agent-plan unfile PLAN
   BRANCHES VALUE --reason 'It belongs to plan X.' [--part P1]`, which logs
@@ -205,6 +211,9 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 - Log `started`, `done` and `verified` for every step. `verified` names
   evidence you observed, never one you expect.
+- Use `observed` with a summary or evidence to record a finding without
+  moving execution state, clearing a pending command or checkpoint, or
+  refreshing a stale step. It leaves heading keywords unchanged.
 - `log` writes a step's or part's heading keyword from its log
   (`STARTED`, `DONE`, `VERIFIED`, `ABANDONED`, with `CLOSED` as Org
   writes it); never change those keywords by hand. When it cannot, the
@@ -251,9 +260,19 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - A hand-back that leaves the operator a command to run names it:
   `agent-plan log PLAN --item P1 --kind handed-back --command 'git sign-pass
   -C WORKTREE --push' --dir WORKTREE`. The item waits on them, shown in
-  `agent-plan waiting PLAN`, Emacs's agenda and the dashboard, until an
-  event about its work, not its plan text or schedule, is logged for it. A
-  sandbox cannot name one.
+  `agent-plan waiting PLAN`, until progress is logged for it or
+  `agent-plan acknowledge PLAN EVENT --evidence TEXT` records the observed
+  result of that exact handoff. Take EVENT from `waiting --json`.
+  Acknowledgement derives the item, executes no command and leaves its
+  execution state unchanged. A retry returns the existing acknowledgement;
+  it never settles a newer command. A sandbox cannot name a hand-back.
+- `agent-plan audit --json` reads every host's local plans without syncing
+  or writing. Its diagnostics separate supported legacy form, invalid
+  historical reference summaries, real drift and unreadable plans. Exit 0
+  means the scan completed, including findings; an enumeration failure
+  exits nonzero. Inspect drift with `agent-plan status PLAN`; a current
+  property assignment belongs through `set`. Report historical findings
+  without rewriting their events.
 - The review pipeline's events are the `review-change` skill's.
 - When you know the plan for a signing hand-back, mint its notification ID
   with `agent-plan sign-id --plan PLAN --branch BRANCH`. `--plan` chooses
