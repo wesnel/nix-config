@@ -316,6 +316,7 @@ func TestMCPLookalike(t *testing.T) {
 		authorize           bool // the proxy serves it, so the reason names mcp-proxy-authorize KEY
 	}{
 		{"codex_tui", "mcp__codex_tui_other__read_thread", "mcp.json", false},
+		{"codex_apps", "mcp__codex_apps_other__chatgpt_space__read_page", "mcp.json", false},
 		{"linear", "mcp__linear-server__get_issue", "mcp__linear__", true},
 		{"notion", "mcp__notion_direct__notion-fetch", "mcp__notion__", true},
 		{"buildkite", "mcp__my_buildkite__get_build", "mcp__buildkite__", true},

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"syscall"
 )
 
 // Title is the visualization's title, and its embed's alt text.
@@ -44,6 +45,12 @@ type State struct {
 	Block string `json:"block,omitempty"`
 	// Published is the SHA-256 of the HTML Block was last given.
 	Published string `json:"published,omitempty"`
+	BlockHash string `json:"blockHash,omitempty"`
+	Pending   bool   `json:"pending,omitempty"`
+	// PendingRequest retains the exact attempted content and destination for
+	// operator reconciliation when the remote mutation has no receipt.
+	PendingRequest json.RawMessage `json:"pendingRequest,omitempty"`
+	Revision       string          `json:"revision,omitempty"`
 }
 
 // Result is what a publish did: "created" a block, "replaced" its block,
@@ -56,6 +63,9 @@ type Result struct {
 
 // Publisher publishes through the app-server Dial starts.
 type Publisher struct {
+	// Revision identifies rendered source content apart from collection time.
+	// Empty uses the exact HTML digest.
+	Revision string
 	// Dial starts an app-server and returns its stdio; Close ends it.
 	Dial func(context.Context) (io.ReadWriteCloser, error)
 	// StateFile holds State.
@@ -105,16 +115,37 @@ func (p process) Close() error {
 // in a new block at the page's end, which it records. HTML the block
 // already holds starts nothing.
 func (p Publisher) Publish(ctx context.Context, page string, html []byte) (Result, error) {
+	if err := os.MkdirAll(filepath.Dir(p.StateFile), 0o700); err != nil {
+		return Result{}, err
+	}
+	lock, err := os.OpenFile(p.StateFile+".lock", os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return Result{Status: "busy", Page: page}, nil
+		}
+		return Result{}, err
+	}
+	return p.publishLocked(ctx, page, html)
+}
+
+func (p Publisher) publishLocked(ctx context.Context, page string, html []byte) (Result, error) {
 	s, err := p.load()
 	if err != nil {
 		return Result{}, err
+	}
+	if s.Pending {
+		return Result{}, fmt.Errorf("publication outcome is unknown: reconcile the recorded page and block before publishing again")
 	}
 	if s.Page != page {
 		s = State{Page: page, Thread: s.Thread}
 	}
 	sum := sha256.Sum256(html)
 	hash := hex.EncodeToString(sum[:])
-	if s.Block != "" && s.Published == hash {
+	if s.Block != "" && (s.Published == hash || p.Revision != "" && s.Revision == p.Revision) {
 		return Result{"unchanged", page, s.Block}, nil
 	}
 	conn, err := p.Dial(ctx)
@@ -124,7 +155,7 @@ func (p Publisher) Publish(ctx context.Context, page string, html []byte) (Resul
 	defer conn.Close()
 	c := newClient(conn)
 	if err := c.call("initialize", map[string]any{"clientInfo": map[string]string{"name": "plan-dash", "version": "1"},
-		// No browser opens for a login: there is no one at the devbox.
+		// Background publication never opens an interactive login.
 		"capabilities": map[string]bool{"explicitGatewayOauth": true}}, nil); err != nil {
 		return Result{}, err
 	}
@@ -141,28 +172,64 @@ func (p Publisher) Publish(ctx context.Context, page string, html []byte) (Resul
 	} else if err := c.resumeThread(s.Thread); err != nil {
 		return Result{}, err
 	}
-	args := map[string]any{"page_id": page, "title": Title, "html": string(html)}
-	status := "created"
-	if s.Block != "" {
-		hash, sequence, err := c.blockHash(s.Thread, page, s.Block)
-		if err != nil {
-			return Result{}, err
-		}
-		args["replace_block"] = map[string]string{"block_id": s.Block, "expected_hash": hash}
-		if sequence != nil {
-			args["base_sequence"] = *sequence
-		}
-		status = "replaced"
-	}
-	b, err := c.visualize(s.Thread, args, s.Block)
+	args, err := c.publicationArgs(s, html)
 	if err != nil {
 		return Result{}, err
 	}
-	s.Block, s.Published = b, hex.EncodeToString(sum[:])
+	return p.publishAttempt(c, s, args, hash)
+}
+
+func (p Publisher) publishAttempt(c *client, s State, args map[string]any, hash string) (Result, error) {
+	status := "created"
+	if s.Block != "" {
+		status = "replaced"
+	}
+	s.Pending = true
+	request, err := json.Marshal(args)
+	if err != nil {
+		return Result{}, err
+	}
+	s.PendingRequest = request
 	if err := p.save(s); err != nil {
 		return Result{}, err
 	}
-	return Result{status, page, b}, nil
+	b, blockHash, err := c.visualize(s.Thread, args, s.Block)
+	if err != nil {
+		var failure *spaceError
+		if errors.As(err, &failure) && failure.CommitStatus == "not_committed" {
+			s.Pending = false
+			s.PendingRequest = nil
+			err = errors.Join(err, p.save(s))
+		}
+		return Result{}, err
+	}
+	s.Block, s.Published = b, hash
+	s.BlockHash, s.Pending = blockHash, false
+	s.PendingRequest = nil
+	s.Revision = p.Revision
+	if err := p.save(s); err != nil {
+		return Result{}, err
+	}
+	return Result{status, s.Page, b}, nil
+}
+
+func (c *client) publicationArgs(s State, html []byte) (map[string]any, error) {
+	args := map[string]any{"page_id": s.Page, "title": Title, "html": string(html)}
+	if s.Block == "" {
+		return args, nil
+	}
+	hash, sequence, err := c.blockHash(s.Thread, s.Page, s.Block)
+	if err != nil {
+		return nil, err
+	}
+	if s.BlockHash == "" || hash != s.BlockHash {
+		return nil, fmt.Errorf("published block changed or has no ownership hash: reconcile it before publishing again")
+	}
+	args["replace_block"] = map[string]string{"block_id": s.Block, "expected_hash": hash}
+	if sequence != nil {
+		args["base_sequence"] = *sequence
+	}
+	return args, nil
 }
 
 // id is the shape of an ID the publisher records.
@@ -281,7 +348,7 @@ func (c *client) startThread(dir string) (string, error) {
 		return "", fmt.Errorf("codex app-server started a thread with no usable ID")
 	}
 	note := map[string]any{"type": "message", "role": "developer", "content": []any{map[string]string{"type": "input_text",
-		"text": "plan-dash space calls the ChatGPT Space tools in this thread to publish the Agent plans page. No turn runs here."}}}
+		"text": "plan-dash refresh calls the ChatGPT Space tools in this thread to publish all open plan items. No turn runs here."}}}
 	if err := c.call("thread/inject_items", map[string]any{"threadId": t.Thread.ID, "items": []any{note}}, nil); err != nil {
 		return "", err
 	}
@@ -308,6 +375,7 @@ type spaceError struct {
 }
 
 func (e *spaceError) String() string { return e.Code + ", " + e.CommitStatus }
+func (e *spaceError) Error() string  { return e.String() }
 
 // tool calls a Space tool in thread and reads its structuredContent into
 // result, or fails with the tool's error.
@@ -328,9 +396,9 @@ func (c *client) tool(thread, name string, args map[string]any, result any) erro
 	json.Unmarshal(r.StructuredContent, &failed)
 	switch {
 	case failed.Error != nil:
-		return fmt.Errorf("%s failed: %s", name, failed.Error)
+		return fmt.Errorf("%s failed: %w", name, failed.Error)
 	case failed.Edit.Error != nil:
-		return fmt.Errorf("%s failed: %s", name, failed.Edit.Error)
+		return fmt.Errorf("%s failed: %w", name, failed.Edit.Error)
 	case r.IsError:
 		return fmt.Errorf("%s failed", name)
 	}
@@ -370,7 +438,7 @@ func (c *client) blockHash(thread, page, block string) (string, *int64, error) {
 // visualize uploads the HTML as args say and returns the block that holds
 // it, from the edit's receipt: the one block it made, or, replacing, the
 // block replaced.
-func (c *client) visualize(thread string, args map[string]any, replacing string) (string, error) {
+func (c *client) visualize(thread string, args map[string]any, replacing string) (string, string, error) {
 	var r struct {
 		Edit struct {
 			Results []struct {
@@ -379,25 +447,28 @@ func (c *client) visualize(thread string, args map[string]any, replacing string)
 				Ignored  *string  `json:"ignored_reason"`
 				Created  []string `json:"created_block_ids"`
 				Affected []struct {
-					ID string `json:"block_id"`
+					ID   string `json:"block_id"`
+					Hash string `json:"hash"`
 				} `json:"affected_blocks"`
 			} `json:"operation_results"`
 		} `json:"edit"`
 	}
 	if err := c.tool(thread, writePage, args, &r); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(r.Edit.Results) != 1 {
-		return "", fmt.Errorf("%s gave %d receipts for one edit", writePage, len(r.Edit.Results))
+		return "", "", fmt.Errorf("%s gave %d receipts for one edit", writePage, len(r.Edit.Results))
 	}
 	op := r.Edit.Results[0]
 	switch {
-	case op.Status != "" && op.Status != "applied", op.Code != nil, op.Ignored != nil:
-		return "", fmt.Errorf("%s did not apply its edit", writePage)
-	case len(op.Created) == 1 && id.MatchString(op.Created[0]):
-		return op.Created[0], nil
-	case replacing != "" && len(op.Created) == 0 && len(op.Affected) == 1 && op.Affected[0].ID == replacing:
-		return replacing, nil
+	case op.Status != "applied", op.Code != nil, op.Ignored != nil, len(op.Affected) != 1:
+		return "", "", fmt.Errorf("%s did not apply its edit", writePage)
+	case op.Affected[0].Hash == "":
+		return "", "", fmt.Errorf("%s gave no hash for its edit", writePage)
+	case replacing == "" && len(op.Created) == 1 && id.MatchString(op.Created[0]) && op.Affected[0].ID == op.Created[0]:
+		return op.Created[0], op.Affected[0].Hash, nil
+	case replacing != "" && len(op.Created) == 0 && op.Affected[0].ID == replacing:
+		return replacing, op.Affected[0].Hash, nil
 	}
-	return "", fmt.Errorf("%s's receipt names no one block it made or replaced", writePage)
+	return "", "", fmt.Errorf("%s's receipt names no one block it made or replaced", writePage)
 }

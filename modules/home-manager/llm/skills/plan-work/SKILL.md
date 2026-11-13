@@ -12,6 +12,9 @@ plans directory, `<time>-<slug>.<host>.org`, a
 `YYYYMMDDHHMMSS`; plans named `YYYY-MM-DD-<slug>` are read alike. You and
 whoever picks the work up after you work from it, so keep it true.
 
+At plan creation, meaningful progress, a settled decision, and hand-back,
+load the `plan-mirrors` skill to update the session’s hosted plan view.
+
 ## Making one
 
 ```sh

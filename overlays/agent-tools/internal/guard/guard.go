@@ -54,7 +54,9 @@ type input struct {
 	TurnID    string `json:"turn_id"`
 	SessionID string `json:"session_id"`
 	// Set by Claude Code and Codex for a sub-agent's call alone.
-	AgentID string `json:"agent_id"`
+	AgentID    string `json:"agent_id"`
+	ToolUseID  string `json:"tool_use_id"`
+	ToolCallID string `json:"tool_call_id"`
 }
 
 // role is who makes a call. Each role is denied everything the one before it
@@ -131,6 +133,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func judgeInput(in input, who role) (string, string) {
+	if handled, reason := checkMirror(in, who); handled {
+		return reason, ""
+	}
 	if reason := checkSubagentStash(in); reason != "" {
 		return reason, ""
 	}
@@ -202,6 +207,16 @@ func CheckReviewer(tool string, toolInput json.RawMessage) string {
 // sends the agent looking for another way through. TestCheck and TestPolicy
 // hold every reason to this.
 func check(tool string, toolInput json.RawMessage, who role, dir string) string {
+	if tool == "Artifact" {
+		protected, err := artifactMirrorScope(toolInput, dir)
+		if err != nil {
+			return unreadable
+		}
+		if protected {
+			return mirrorDenied
+		}
+		return ""
+	}
 	if service, name, mcp := mcpTool(tool); mcp {
 		return checkMCP(service, name, who)
 	}
@@ -501,6 +516,9 @@ func program(c call, who role, files, dir, checkout string) string {
 }
 
 func checkCallEnvironment(c call, dir string) string {
+	if reason := checkMirrorEnvironment(c); reason != "" {
+		return reason
+	}
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}

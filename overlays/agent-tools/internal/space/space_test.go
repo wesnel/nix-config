@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -40,8 +42,9 @@ type fakeCodex struct {
 	request string
 	// toolError, where set, is the error code create_page_visualization
 	// fails with.
-	toolError string
-	dials     int
+	toolError   string
+	loseReceipt bool
+	dials       int
 }
 
 func newFake(pages ...string) *fakeCodex {
@@ -215,6 +218,9 @@ func (f *fakeCodex) createVisualization(args map[string]json.RawMessage) any {
 		blocks = append(blocks, b)
 	}
 	f.pages[page] = blocks
+	if f.loseReceipt {
+		return toolResult(map[string]any{"edit": map[string]any{}}, false)
+	}
 	return toolResult(map[string]any{"page_id": page, "title": title, "file_reference": file, "markdown": b.markdown,
 		"edit": map[string]any{"new_sequence": f.seq, "operation_results": []any{map[string]any{
 			"operation_index": 0, "status": "applied", "ignored_reason": nil, "error_code": nil,
@@ -292,6 +298,81 @@ func TestPublish(t *testing.T) {
 	f.operatorKept(t, "page_a")
 }
 
+func TestPublishRecovery(t *testing.T) {
+	t.Run("collection time alone does not republish", func(t *testing.T) {
+		f := newFake("page_a")
+		p := publisher(t, f)
+		p.Revision = "same-source"
+		if _, err := p.Publish(t.Context(), "page_a", []byte("collected first")); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.Publish(t.Context(), "page_a", []byte("collected later"))
+		if err != nil || got.Status != "unchanged" || f.dials != 1 {
+			t.Fatalf("result=%+v err=%v dials=%d", got, err, f.dials)
+		}
+		p.Revision = "changed-source"
+		got, err = p.Publish(t.Context(), "page_a", []byte("new data"))
+		if err != nil || got.Status != "replaced" || f.dials != 2 {
+			t.Fatalf("result=%+v err=%v dials=%d", got, err, f.dials)
+		}
+	})
+	t.Run("another publisher owns the transaction", func(t *testing.T) {
+		f := newFake("page_a")
+		p := publisher(t, f)
+		lock, err := os.OpenFile(p.StateFile+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.Publish(t.Context(), "page_a", []byte("one"))
+		if err != nil || got.Status != "busy" || f.dials != 0 {
+			t.Fatalf("concurrent publication: result=%+v err=%v dials=%d", got, err, f.dials)
+		}
+	})
+	t.Run("lost creation receipt never appends again", func(t *testing.T) {
+		f := newFake("page_a")
+		p := publisher(t, f)
+		f.loseReceipt = true
+		if _, err := p.Publish(t.Context(), "page_a", []byte("one")); err == nil {
+			t.Fatal("accepted missing receipt")
+		}
+		f.loseReceipt = false
+		_, err := p.Publish(t.Context(), "page_a", []byte("two"))
+		if err == nil || len(f.ours("page_a")) != 1 {
+			t.Fatalf("retry after uncertain creation: err=%v blocks=%d", err, len(f.ours("page_a")))
+		}
+		data, err := os.ReadFile(p.StateFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var journal struct {
+			PendingRequest map[string]any `json:"pendingRequest"`
+		}
+		if err := json.Unmarshal(data, &journal); err != nil {
+			t.Fatal(err)
+		}
+		if journal.PendingRequest["html"] != "one" || journal.PendingRequest["page_id"] != "page_a" {
+			t.Fatalf("lost original reconciliation evidence: %s", data)
+		}
+	})
+	t.Run("human edit is preserved", func(t *testing.T) {
+		f := newFake("page_a")
+		p := publisher(t, f)
+		if _, err := p.Publish(t.Context(), "page_a", []byte("one")); err != nil {
+			t.Fatal(err)
+		}
+		f.pages["page_a"][1].hash = "human-edit"
+		f.pages["page_a"][1].markdown = "Human content"
+		_, err := p.Publish(t.Context(), "page_a", []byte("two"))
+		if err == nil || f.pages["page_a"][1].markdown != "Human content" {
+			t.Fatalf("overwrote edited block: err=%v block=%+v", err, f.pages["page_a"][1])
+		}
+	})
+}
+
 // A page set to another starts a block there, in the same thread, and
 // leaves the old page as it was.
 func TestPublishNewPage(t *testing.T) {
@@ -338,7 +419,7 @@ func TestPublishRefuses(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error %v, want %q", err, c.want)
 			}
-			if after := readState(t, p.StateFile); after != before || len(f.pages["page_a"]) > blocks {
+			if after := readState(t, p.StateFile); !reflect.DeepEqual(after, before) || len(f.pages["page_a"]) > blocks {
 				t.Errorf("state %+v after %+v, %d blocks after %d", after, before, len(f.pages["page_a"]), blocks)
 			}
 		})
@@ -362,7 +443,7 @@ func TestPublishRealCodexThread(t *testing.T) {
 	}
 	first := readState(t, p.StateFile)
 	_, err := p.Publish(t.Context(), "page_a", []byte("<p>one</p>"))
-	if second := readState(t, p.StateFile); first.Thread == "" || second != first || err == nil ||
+	if second := readState(t, p.StateFile); first.Thread == "" || !reflect.DeepEqual(second, first) || err == nil ||
 		!strings.Contains(err.Error(), "mcpServer/tool/call") {
 		t.Errorf("first %+v, second %+v: %v", first, second, err)
 	}

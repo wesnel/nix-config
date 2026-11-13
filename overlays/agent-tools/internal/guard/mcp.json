@@ -1,4 +1,12 @@
 {
+  "codex_apps": {
+    "service": "ChatGPT Pages",
+    "servers": ["codex_apps"],
+    "verify": "Native Pages tool schemas; mirror mutations require the current session's prepared snapshot and matched post-tool receipt.",
+    "reads": ["chatgpt_space__find_pages", "chatgpt_space__read_page"],
+    "confirms": [],
+    "refuses": ["chatgpt_space__create_page", "chatgpt_space__create_page_visualization", "chatgpt_space__update_page_sharing", "chatgpt_space__trash_page"]
+  },
   "codex_tui": {
     "service": "Codex tasks",
     "servers": ["codex_tui"],

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Title}}</title>
+<style>body{font:16px/1.55 system-ui,sans-serif;color:#182230;background:#f4f6f8;margin:0;padding:24px}main{max-width:960px;margin:auto}h1,h2,h3{line-height:1.2}article{background:white;border:1px solid #d7dfe7;border-radius:12px;margin:24px 0;padding:24px}small,.meta{color:#506174}li{margin:12px 0;overflow-wrap:anywhere}p{white-space:pre-wrap;overflow-wrap:anywhere}.state{font-weight:600}footer{font-size:14px;color:#506174}</style></head>
+<body><main><h1>{{.Title}}</h1><p class="meta">Collected <time id="collected">{{.Collected}}</time> on {{.Host}}.
+Complete for {{.Sources}} locally available plan sources. Other hosts reflect received files, not live host state.
+Last notes fetch: {{if .Fetched}}{{.Fetched}}{{else}}unknown{{end}}.</p>
+{{range .Plans}}<article><h2>{{.Title}}</h2><p class="meta">{{.ID}} · {{.Host}} · <span class="state">{{.Status}}</span>{{if .Workstream}} · {{.Workstream}}{{end}}
+{{if .Updated}}{{.Source}}: {{.Updated}}{{else}}Source freshness unknown{{end}}</p>
+{{if .Goal}}<h3>Goal</h3><p>{{.Goal}}</p>{{end}}
+{{if .Steps}}<h3>Steps ({{len .Steps}})</h3><ul>{{range .Steps}}<li><strong>{{.ID}} — {{.Title}}</strong> · {{.Keyword}} · {{if .Ready}}ready{{else}}not ready{{end}}{{template "timing" .}}</li>{{end}}</ul>{{end}}
+{{if .Parts}}<h3>Distribution ({{len .Parts}})</h3><ul>{{range .Parts}}<li><strong>{{.ID}} — {{.Title}}</strong> · {{.Keyword}} · {{if .Ready}}ready to start{{else}}not ready to start{{end}}{{template "timing" .}}</li>{{end}}</ul>{{end}}
+{{if .Questions}}<h3>Open questions ({{len .Questions}})</h3><ul>{{range .Questions}}<li><strong>{{.ID}} — {{.Text}}</strong>{{if .Priority}} · priority {{.Priority}}{{end}} · {{if .Ready}}ready to answer{{else}}not ready to answer{{end}}{{template "timing" .}}{{if .Context}}<p>{{.Context}}</p>{{end}}{{if .Options}}<ul>{{range .Options}}<li>{{.Label}}{{if .Recommended}} (recommended){{end}}{{if .Why}} — {{.Why}}{{end}}</li>{{end}}</ul>{{end}}</li>{{end}}</ul>{{end}}
+{{if .Decisions}}<h3>Decisions ({{len .Decisions}})</h3><ul>{{range .Decisions}}<li><strong>{{.ID}} — {{.Question}}</strong><p>{{.Answer}}</p></li>{{end}}</ul>{{end}}
+{{if .Followups}}<h3>Open follow-ups ({{len .Followups}})</h3><ul>{{range .Followups}}<li>{{.ID}} — {{.Title}}</li>{{end}}</ul>{{end}}
+{{if .Waiting}}<h3>Waiting on the operator ({{len .Waiting}})</h3><ul>{{range .Waiting}}<li>{{.ID}} — {{.Title}}</li>{{end}}</ul>{{end}}
+</article>{{else}}<p>No open items.</p>{{end}}
+<footer>Read-only snapshot. Item lists are complete; known secret shapes are redacted. Publication does not establish source freshness.</footer></main></body></html>
+{{define "timing"}}{{if .After}}<br><small>After: {{.After}}</small>{{end}}{{if .Scheduled}}<br><small>Scheduled: {{.Scheduled}} (source host local time)</small>{{end}}{{end}}

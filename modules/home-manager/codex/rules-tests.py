@@ -49,6 +49,14 @@ def check(activation, codex=None):
                     "Codex skips symlinked rule files; activation must install a regular nix.rules"
                 )
                 assert 'pattern=["agent-plan","log"], decision="prompt"' in target.read_text()
+                mirror_rules = [
+                    line for line in target.read_text().splitlines()
+                    if 'pattern=["plan-dash"' in line
+                ]
+                assert sorted(mirror_rules) == sorted([
+                    f'prefix_rule(pattern=["plan-dash","{command}"], decision="allow")'
+                    for command in ["snapshot", "claim", "release"]
+                ]), "Only snapshot, claim and release may bypass the command sandbox"
                 assert target.stat().st_mode & 0o777 == 0o600
                 assert saved.read_bytes() == saved_contents, "Activation changed saved approvals"
                 assert generated.read_text().startswith('prefix_rule(pattern=["old-command"]')
@@ -60,6 +68,25 @@ def check(activation, codex=None):
                 env=environment, capture_output=True, text=True, check=True,
             )
             assert json.loads(result.stdout)["decision"] == "prompt"
+            for arguments, expected in [
+                (["snapshot"], "allow"),
+                (["snapshot", "--open"], "allow"),
+                (["snapshot", "/fixture/plan.org"], "allow"),
+                (["claim"], "allow"),
+                (["release"], "allow"),
+                (["record"], None),
+                (["refresh"], None),
+                (["remind"], None),
+                (["snapshot-other"], None),
+                ([], None),
+            ]:
+                result = subprocess.run(
+                    [codex, "execpolicy", "check", "--rules", str(saved),
+                     "--rules", str(target), "--", "plan-dash", *arguments],
+                    env=environment, capture_output=True, text=True, check=True,
+                )
+                observed = json.loads(result.stdout).get("decision")
+                assert observed == expected, (arguments, observed, expected)
             # A parse warning proves the real directory loader discovered this file.
             target.write_text("prefix_rule(")
             with tempfile.TemporaryFile(mode="w+") as errors:

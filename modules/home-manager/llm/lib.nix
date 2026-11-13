@@ -1,4 +1,6 @@
 {lib}: rec {
+  planMirrorCommands = ["snapshot" "claim" "release"];
+
   # Callers add skills of their own straight to the set, which never passes
   # through the option's type, so the shorthands are accepted here too.
   normalise = skill: let
