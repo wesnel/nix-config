@@ -51,6 +51,12 @@ interface.
 Load the `tool-selection` skill when choosing or reviewing a language,
 dependency, framework, editor or other tool, including while building.
 
+## Web development
+
+For HTML, CSS and browser-side JavaScript development, load the
+`modern-web-guidance` skill before implementation, including web platform
+code inside frameworks.
+
 ## Work in several parts
 
 When parts of a task could proceed in parallel (several pull requests, a

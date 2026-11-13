@@ -331,6 +331,22 @@
         "type": "github"
       }
     },
+    "modern-web-guidance": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794280113,
+        "narHash": "sha256-bqsUEI1yaGy1sd8DBJzG5cOv4Yv0RSYac6e9egqYFJU=",
+        "owner": "GoogleChrome",
+        "repo": "modern-web-guidance",
+        "rev": "4dd968349e54ca45a05dd5c818fb035c9054b022",
+        "type": "github"
+      },
+      "original": {
+        "owner": "GoogleChrome",
+        "repo": "modern-web-guidance",
+        "type": "github"
+      }
+    },
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
@@ -543,6 +559,7 @@
         "home-manager-x86_64-darwin": "home-manager-x86_64-darwin",
         "mac-app-util": "mac-app-util",
         "mattpocock-skills": "mattpocock-skills",
+        "modern-web-guidance": "modern-web-guidance",
         "nix-darwin": "nix-darwin",
         "nix-darwin-x86_64-darwin": "nix-darwin-x86_64-darwin",
         "nix-flatpak": "nix-flatpak",

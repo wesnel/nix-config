@@ -52,6 +52,11 @@
       flake = false;
     };
 
+    modern-web-guidance = {
+      url = "github:GoogleChrome/modern-web-guidance";
+      flake = false;
+    };
+
     nix-flatpak = {
       # A release tag: its main branch is unstable. The tag is named in
       # full, since a branch of the same name would win over it.
@@ -107,6 +112,7 @@
     home-manager,
     mac-app-util,
     mattpocock-skills,
+    modern-web-guidance,
     nix-flatpak,
     nixos-hardware,
     nixpkgs,
@@ -148,6 +154,7 @@
             cursor-plugins
             emacs-skills
             mattpocock-skills
+            modern-web-guidance
             ;
         };
       })
