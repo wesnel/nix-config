@@ -94,7 +94,7 @@ func TestMCPPlan(t *testing.T) {
 		return strings.TrimSpace(string(got))
 	}
 	t.Run("section round trip", func(t *testing.T) {
-		goal := "- Keep literal prose.\nA second line with `code` and $(literal)."
+		goal := "- Keep literal prose.\nA second line with `code` and $(literal).\nBuilds on: the section tool.\nLikely next changes: none."
 		r := c.tool(t, "agent_plan_section", map[string]any{"worktree": f.repo, "plan": f.plan, "section": "Goal", "text": goal})
 		if r.isError || !strings.Contains(r.text, "exit 0") {
 			t.Fatalf("section: %s", r.text)
@@ -104,6 +104,35 @@ func TestMCPPlan(t *testing.T) {
 		got, err := read.CombinedOutput()
 		if err != nil || strings.TrimSpace(string(got)) != goal {
 			t.Fatalf("goal = %q, err %v", got, err)
+		}
+	})
+	t.Run("visual round trip", func(t *testing.T) {
+		const url = "https://github.com/user-attachments/assets/1a2b"
+		v := call(t, "visual", map[string]any{"branch": "loop", "url": url, "caption": "The plan page"})
+		call(t, "visual", map[string]any{"entry": v["id"], "url": url + "c"})
+		data, err := os.ReadFile(f.plan)
+		if err != nil || !strings.Contains(string(data), "*** The plan page\n:PROPERTIES:\n:CUSTOM_ID: "+v["id"].(string)+
+			"\n:BRANCH: loop\n:URL: "+url+"c\n:END:\n") {
+			t.Fatalf("visual: %v\n%s", err, data)
+		}
+	})
+	t.Run("digest and brag", func(t *testing.T) {
+		notes := filepath.Dir(filepath.Dir(f.plan))
+		digest := "* Grow the code\n:PROPERTIES:\n:PLAN: id:abc-1\n:PR: o/r#7\n:END:\nRun `go test` and $(see).\n"
+		r := c.tool(t, "agent_plan_digest", map[string]any{"worktree": f.repo, "date": "2026-11-06", "text": digest})
+		if r.isError || !strings.Contains(r.text, "exit 0") {
+			t.Fatalf("digest: %s", r.text)
+		}
+		if data, err := os.ReadFile(filepath.Join(notes, "digests", "2026", "11-06-demo.org")); err != nil || string(data) != digest {
+			t.Errorf("digest: %v\n%s", err, data)
+		}
+		q := call(t, "ask", map[string]any{"question": "Grew the code", "recommendation": "A drafted summary.", "kind": "brag"})
+		call(t, "decide", map[string]any{"question": q["id"], "answer": "It grew."})
+		call(t, "brag", map[string]any{"question": q["id"], "pr": "o/r#7", "date": "2026-11-05"})
+		if data, err := os.ReadFile(filepath.Join(notes, "brag", "2026.org")); err != nil ||
+			!strings.Contains(string(data), "* Grew the code\n:PROPERTIES:\n:PR: https://github.com/o/r/pull/7\n") ||
+			!strings.HasSuffix(string(data), ":END:\nIt grew.\n") {
+			t.Errorf("brag: %v\n%s", err, data)
 		}
 	})
 	t.Run("empty section", func(t *testing.T) {

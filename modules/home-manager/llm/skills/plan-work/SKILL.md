@@ -114,11 +114,19 @@ no command makes goes in your report for the operator.
   the new value with the reason.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
-  `agent-plan goal PLAN [--part P1]` prints it. It ends with a
-  `Likely next changes:` line: one or two concrete changes expected after
-  this one, not speculation, which the design review of the plan checks
-  would each be a local edit. It holds text, no headings. Write it whole
-  with `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
+  `agent-plan goal PLAN [--part P1]` prints it. It holds text, no
+  headings, and these two lines, each starting a line with its label;
+  `agent-plan section` refuses a plan's or a part's Goal without either:
+  - `Builds on:` what already does the job, or part of it (code, a skill
+    section, a tool, an agent, another plan), and how this change extends
+    it; or that nothing was found, and where the search looked. Search by
+    what the thing does, not only by its name.
+  - `Likely next changes:` one or two concrete changes expected after
+    this one, not speculation, which the design review of the plan checks
+    would each be a local edit.
+
+  Write it whole with
+  `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
   `design` skill before writing the steps: its principles and checks are
   what the design review checks them against.
 - `** Steps`: `*** TODO <step>` headings with `:CUSTOM_ID: S1`, `S2`…; a part's
@@ -157,6 +165,23 @@ no command makes goes in your report for the operator.
 - `** Follow-ups`: work found while doing an item but outside this
   change's job, each with `:CUSTOM_ID: F1`, `F2`… and the `:FOUND_IN:` item, as
   "Follow-ups" says.
+- `** Visuals`, in a plan's own file once it has one: the one copy of each
+  change's diagrams, recordings and screenshots, which its pull request,
+  review-guide, the demo digest and the brag sheet read. Each entry has
+  `:CUSTOM_ID: V1`, `V2`…, its caption as its title and the `:BRANCH:` it
+  shows; its pull request is the one `PULL_REQUESTS` holds for that
+  branch. `agent-plan visual` writes them, adding the section with the
+  first, and running it again with the same visual changes nothing:
+  - `agent-plan visual PLAN --branch B --range BASE..TIP --diagram D1
+    [--caption C]`, run in the change's worktree, copies a diagram the
+    review kept as `holds` or `corrected`, with its range and Mermaid;
+  - `--branch B --tape FILE --caption C` keeps a VHS tape's source;
+  - `--branch B --url URL --caption C` keeps a screenshot's or
+    recording's GitHub attachment URL alone, and `agent-plan visual PLAN
+    V1 --url URL` gives entry V1 its recording's.
+
+  A GIF or PNG is never committed: it lives only as the pull request's
+  attachment.
 - `** References`: each URL the operator gave the work, one entry each with
   `:URL:`, and a note of what it was used for and which decisions (Q IDs)
   it fed. In Claude Code and Codex every URL in their prompts is added

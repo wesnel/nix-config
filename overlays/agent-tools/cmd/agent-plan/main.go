@@ -127,9 +127,9 @@ have (see status) is refused and writes nothing.
                      drift (a top-level heading but one * Plan; a section
                      not a plan's, or twice; a heading under Goal, Related or
                      Verification; a References entry without a URL; an
-                     entry of Steps, Distribution, Questions or Follow-ups
-                     without its ID; a question without a question's
-                     keyword; an ORDERED or Archive group with text or no
+                     entry of Steps, Distribution, Questions, Follow-ups or
+                     Visuals without its ID; a question without a question's
+                     keyword; a visual without its BRANCH; an ORDERED or Archive group with text or no
                      entries; a heading skipping a level; a heading line
                      inside a block; a block with no end; once per file,
                      the old form, item IDs in ID rather than CUSTOM_ID or
@@ -166,7 +166,8 @@ have (see status) is refused and writes nothing.
                      it per plan, newest plan first: what waits on
                      the operator (a hand-back's command, a sign-pass not
                      yet run), the questions they can answer now, retro
-                     proposals, ready steps and open follow-ups, its parts'
+                     proposals, brag items awaiting approval, ready steps
+                     and open follow-ups, its parts'
                      included; --kind keeps one kind, --since those asked,
                      discovered or handed back since then (a step's time is
                      its first event). A plan that cannot be read is named
@@ -188,6 +189,12 @@ have (see status) is refused and writes nothing.
   decisions PLAN [--all] [--json]
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
+  brags              as JSON, the brag items the operator approved, of every
+                     host's plans and their parts, that no brag file holds
+                     yet (an entry whose PLAN and QUESTION name it), each
+                     with its plan file, ID, title, summary and the
+                     PULL_REQUESTS of the file that holds it: those brag
+                     writes once their change has merged
   ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
       [--context TEXT | --text-file F] [--alternative TEXT]... [--after ID]...
       [--part P1] [--kind QKIND]
@@ -231,7 +238,52 @@ have (see status) is refused and writes nothing.
                      planned
                      TEXT may hold line breaks, but no line Org reads as a
                      heading, a drawer, a planning line or a #+ keyword
-                     other than a block's
+                     other than a block's. A Goal holds a line starting
+                     "Builds on:" and one starting "Likely next changes:",
+                     each followed by text, as the plan-work skill says
+  visual PLAN --branch B --range BASE..TIP --diagram ID [--caption C]
+  visual PLAN --branch B (--tape FILE | --url URL) --caption C
+  visual PLAN VID --url URL
+                     keep a visual of branch B in the plan's own Visuals,
+                     the section added with its first entry, and log it as
+                     planned: diagram ID of the review record of
+                     BASE..TIP, resolved in the worktree agent-plan runs
+                     in, with its Mermaid, verdict and range, refused
+                     unless its verdict is holds or corrected; a VHS tape's
+                     source, refused for a line Org reads as structure, as
+                     section's text is, or any #+ line; or a screenshot's
+                     or recording's https GitHub attachment URL. The caption
+                     is the entry's title, a diagram's own by default.
+                     The same visual again (a diagram by B, ID and range, a
+                     tape by B and source, a URL by B and URL) replaces its
+                     entry, keeping its caption unless one is given, and
+                     writes nothing where that changes nothing. VID --url
+                     gives entry VID its recording's URL
+  digest --date YYYY-MM-DD (--text TEXT | --text-file F)
+                     write TEXT as the demo digest named for that day, the
+                     last of the range it covers, at
+                     digests/YYYY/MM-DD-demo.org in the notes repository,
+                     replacing the one there. Refused over the 64 KiB the
+                     export reads, and for text without a level-1 heading per change whose
+                     property drawer holds PLAN, an id: link, and PR,
+                     OWNER/NAME#N or its GitHub URL. The same text again
+                     writes nothing
+  brag PLAN QID --pr OWNER/NAME#N --date YYYY-MM-DD
+                     add the merged change's entry to brag/YYYY.org in the
+                     notes repository, YYYY the year of --date, the day it
+                     merged, from brag item QID of PLAN or its parts, a
+                     question of kind brag: its title as the heading, with
+                     PR, REPOSITORY, PLAN, an id: link to PLAN, and
+                     QUESTION, QID, and its answer, the summary the
+                     operator approved. Refused unless the operator
+                     approved QID (DECIDED by decide, not ask --answer,
+                     which a brag item refuses). An entry for the same pull
+                     request again writes nothing, and is refused where it
+                     differs.
+                     Any host writes them, and its sync sends them; a
+                     digest or brag file changed on two hosts at once
+                     leaves sync behind origin, saying so, rather than
+                     send either over the other
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -535,6 +587,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		signBase = flags.String("base", "", "")
 		signPlan = flags.String("plan", "", "")
 		reason   = flags.String("reason", "", "")
+		span     = flags.String("range", "", "")
+		drawing  = flags.String("diagram", "", "")
+		caption  = flags.String("caption", "", "")
+		tape     = flags.String("tape", "", "")
+		address  = flags.String("url", "", "")
+		date     = flags.String("date", "", "")
+		pr       = flags.String("pr", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -650,6 +709,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runAfter(*unset, c, positional, stderr, report)
 	case "section":
 		return runSection(*part, *text, c, positional, given, stderr, report, reportLinking)
+	case "visual":
+		return runVisual(plans.VisualOptions{Branch: branch, Caption: *caption, URL: *address}, *span, *drawing, *tape, c, positional, stderr, report)
+	case "brags":
+		return runBrags(c, positional, stderr, report)
+	case "digest", "brag":
+		return runNotes(command, *date, *pr, *text, c, positional, given, stderr, report)
 	case "reference":
 		return runReference(*note, c, positional, stderr, report)
 	case "link":
@@ -1280,6 +1345,90 @@ func runSignResult(check bool, wait bool, timeout time.Duration, c plans.Config,
 	return 0
 }
 
+func runVisual(o plans.VisualOptions, span, drawing, tape string, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) < 1 || len(positional) > 2 || (span == "") != (drawing == "") {
+		fmt.Fprint(stderr, "agent-plan visual: takes PLAN --branch B --range BASE..TIP --diagram ID [--caption C], "+
+			"PLAN --branch B (--tape FILE | --url URL) --caption C, or PLAN VID --url URL\n")
+		return 2
+	}
+	p, err := c.Open(positional[0])
+	if err != nil {
+		return report(nil, err)
+	}
+	if len(positional) == 2 {
+		o.Entry = positional[1]
+	}
+	if tape != "" {
+		if o.Tape, err = readTextFile(tape); err != nil {
+			return report(nil, err)
+		}
+	}
+	if drawing != "" {
+		top, _ := checkout()
+		if top == "" {
+			return report(nil, refusal.New("--range is resolved in the worktree agent-plan runs in, and this is none. Run `agent-plan visual` in the worktree of the reviewed change"))
+		}
+		d, err := plans.ReadDiagram(top, span, drawing)
+		if err != nil {
+			return report(nil, err)
+		}
+		o.Diagram = &d
+	}
+	return report(p.Visual(o, time.Now()))
+}
+
+func visualFlags(command string, given map[string]bool, stderr io.Writer) bool {
+	for _, f := range []string{"range", "diagram", "caption", "tape", "url"} {
+		if given[f] && command != "visual" {
+			fmt.Fprintf(stderr, "agent-plan %s: --%s is visual's\n", command, f)
+			return false
+		}
+	}
+	return true
+}
+
+func runBrags(c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 0 {
+		fmt.Fprint(stderr, "agent-plan brags: takes no PLAN\n")
+		return 2
+	}
+	items, err := c.PendingBrags()
+	if items == nil {
+		return report(nil, err)
+	}
+	report(items, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runNotes(command, date, pr, text string, c plans.Config, positional []string, given map[string]bool, stderr io.Writer, report func(any, error) int) int {
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	switch {
+	case command == "digest" && (len(positional) != 0 || !given["text"] || err != nil):
+		fmt.Fprint(stderr, "agent-plan digest: takes --date YYYY-MM-DD (--text TEXT | --text-file F)\n")
+		return 2
+	case command == "brag" && (len(positional) != 2 || given["title"] || err != nil):
+		fmt.Fprint(stderr, "agent-plan brag: takes PLAN QID --pr OWNER/NAME#N --date YYYY-MM-DD\n")
+		return 2
+	case command == "digest":
+		return report(c.WriteDigest(day, text))
+	}
+	return report(c.WriteBragItem(plans.BragItemOptions{Day: day, PR: pr, Plan: positional[0], Question: positional[1]}))
+}
+
+func notesFlags(command string, given map[string]bool, stderr io.Writer) bool {
+	for _, f := range []string{"date", "pr"} {
+		if given[f] && command != "digest" && command != "brag" {
+			fmt.Fprintf(stderr, "agent-plan %s: --%s is digest's and brag's\n", command, f)
+			return false
+		}
+	}
+	return true
+}
+
 func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan string, stderr io.Writer) (map[string]bool, bool) {
 	if unset && command != "postpone" && command != "after" {
 		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
@@ -1312,11 +1461,12 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
 		return nil, false
 	}
-	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
-		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+	textual := map[string]bool{"step": true, "part": true, "edit": true, "section": true, "digest": true}
+	if given["text"] && !textual[command] {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's, section's and digest's\n", command)
 		return nil, false
 	}
-	return given, true
+	return given, visualFlags(command, given, stderr) && notesFlags(command, given, stderr)
 }
 
 func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) bool {
@@ -1330,12 +1480,12 @@ func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) 
 }
 
 func commandText(command, textFile string, text, context *string, given map[string]bool, stdout, stderr io.Writer) int {
-	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
+	fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "digest": "text", "ask": "context",
 		"followup": "context"}[command]
 	into := map[string]*string{"text": text, "context": context}[fills]
 	switch {
 	case !ok:
-		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
+		fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's, section's and digest's, and ask's and followup's for the context\n", command)
 		return 2
 	case given["text"] || given["context"]:
 		fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)

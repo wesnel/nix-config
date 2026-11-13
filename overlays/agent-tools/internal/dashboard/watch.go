@@ -12,7 +12,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -319,10 +318,6 @@ func (w Watch) hash(now time.Time) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// digestFile is a digest's file under digests/ in the notes repository:
-// YYYY/MM-DD-demo.org.
-var digestFile = regexp.MustCompile(`^[0-9]{2}-[0-9]{2}-demo\.org$`)
-
 type digest struct{ name, line string }
 
 // digests are the digests in the notes repository of now's year and the
@@ -337,7 +332,7 @@ func (w Watch) digests(now time.Time) []digest {
 		dir := filepath.Join(repo, "digests", fmt.Sprint(year))
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
-			if !digestFile.MatchString(e.Name()) || !e.Type().IsRegular() {
+			if _, ok := plans.DigestDay(year, e.Name(), time.UTC); !ok || !e.Type().IsRegular() {
 				continue
 			}
 			out = append(out, digest{fmt.Sprintf("%d/%s", year, e.Name()), LineDemo})

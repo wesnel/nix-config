@@ -83,6 +83,7 @@ func TestSync(t *testing.T) {
 	asOperator(t)
 	t.Run("two hosts", testSyncTwoHosts)
 	t.Run("sends this host's workstreams", testSyncWorkstreams)
+	t.Run("sends digests and brag files from every host", testSyncNotesFiles)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
 	t.Run("authors as the operator", testSyncAuthor)
 	t.Run("leaves the operator's commits", testSyncLeavesOperatorCommits)
@@ -204,9 +205,35 @@ func testSyncCatchUp(t *testing.T) {
 		merged bool
 		// kill is the git command, with sync in a process of its own, at
 		// which sync is sent SIGTERM.
-		kill     string
+		kill string
+		// local are the notes files in mac's working tree, and committer
+		// the host whose sync committed origin's new commit, the
+		// operator where it is "".
+		committer string
+		local     map[string]string
+		// linked is a directory of mac's working tree that is a link to
+		// one outside the repository.
+		linked   string
 		caughtUp bool
 	}{
+		// Taking box's would write through the link.
+		"another host's digest arrived under a linked directory": {committer: "box", linked: "digests",
+			arrived: map[string]string{"digests/2026/11-06-demo.org": "* Box's demo\n"}},
+		"its own digest and brag file arrived": {committer: "mac", caughtUp: true,
+			arrived: map[string]string{"digests/2026/11-06-demo.org": "* Demo\n", "brag/2026.org": "* Shipped\n"},
+			local:   map[string]string{"digests/2026/11-06-demo.org": "* Demo\n", "brag/2026.org": "* Shipped\n"}},
+		// The working tree takes box's, as a fast-forward would, since
+		// mac has no change of its own to it.
+		"another host's digest and brag file arrived": {committer: "box", caughtUp: true,
+			arrived: map[string]string{"digests/2026/11-06-demo.org": "* Box's demo\n", "brag/2026.org": "* Box's\n"}},
+		// Both hosts wrote it: neither copy is sent over the other.
+		"another host's digest arrived over an unsent one": {committer: "box",
+			arrived: map[string]string{"digests/2026/11-06-demo.org": "* Box's demo\n"},
+			local:   map[string]string{"digests/2026/11-06-demo.org": "* Mac's demo\n"}},
+		// An unsent agent-plan brag write would otherwise be sent over it.
+		"the operator's edit of its brag file arrived": {
+			arrived: map[string]string{"brag/2026.org": "* Shipped, as the operator put it\n"},
+			local:   map[string]string{"brag/2026.org": "* Shipped\n* Unsent\n"}},
 		"the operator commits as it catches up": {race: "git update-ref HEAD $(git commit-tree HEAD^{tree} -p HEAD -m 'Racing operator commit')"},
 		"only its own plan arrived":             {caughtUp: true},
 		"another host's plan arrived":           {arrived: map[string]string{"agents/2026-10-14-y.box.org": "* Plan\n"}},
@@ -236,6 +263,15 @@ func testSyncCatchUp(t *testing.T) {
 			if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("sync: %+v, %v", got, err)
 			}
+			outside := t.TempDir()
+			if tc.linked != "" {
+				if err := os.Symlink(outside, filepath.Join(repo, tc.linked)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for p, content := range tc.local {
+				putNote(t, mac, p, content)
+			}
 			// Origin gets a newer version of mac's plan, as a push of
 			// sync's does, and the working tree a newer one still, as a
 			// write after that push does.
@@ -258,10 +294,18 @@ func testSyncCatchUp(t *testing.T) {
 				arrived[p] = content
 			}
 			for p, content := range arrived {
+				os.MkdirAll(filepath.Dir(filepath.Join(other, p)), 0o755)
 				os.WriteFile(filepath.Join(other, p), []byte(content), 0o644)
 				gitIn(t, other, "add", "-f", p)
 			}
-			gitIn(t, other, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Arrived")
+			arrive := exec.Command("git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Arrived")
+			arrive.Dir, arrive.Env = other, gitenv.Without(os.Environ())
+			if tc.committer != "" {
+				arrive.Env = append(arrive.Env, "GIT_COMMITTER_NAME="+syncName, "GIT_COMMITTER_EMAIL=agent-plan@"+tc.committer+".invalid")
+			}
+			if out, err := arrive.CombinedOutput(); err != nil {
+				t.Fatalf("commit: %v\n%s", err, out)
+			}
 			if tc.merged {
 				gitIn(t, other, "-c", "commit.gpgsign=false", "merge", "-q", "-s", "ours", "-m", "Merge", "main")
 			}
@@ -320,10 +364,41 @@ func testSyncCatchUp(t *testing.T) {
 				}
 				atOrigin(t, mac)
 				untouched(t, mac)
+				for p, content := range tc.arrived {
+					if strings.HasPrefix(p, "agents/") {
+						continue
+					}
+					if data, _ := os.ReadFile(filepath.Join(repo, p)); string(data) != content {
+						t.Errorf("the working tree holds %s as\n%s\nnot as it arrived\n%s", p, data, content)
+					}
+					if on := gitIn(t, repo, "show", "origin/main:"+p); on != content {
+						t.Errorf("origin holds %s as\n%s\nnot as it arrived\n%s", p, on, content)
+					}
+				}
+				if status := gitIn(t, repo, "status", "--porcelain", "--", "digests", "brag"); status != "" {
+					t.Errorf("notes files left changed:\n%s", status)
+				}
 				return
 			}
 			if got.Pushed || got.Behind == "" {
 				t.Errorf("sync: %+v", got)
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Errorf("sync wrote through the link to %s: %v", outside, entries)
+			}
+			if tc.linked != "" && !strings.Contains(got.Behind, tc.linked) {
+				t.Errorf("sync's reason %q does not name the linked %s", got.Behind, tc.linked)
+			}
+			for p, content := range tc.arrived {
+				if on := gitIn(t, repo, "show", "origin/main:"+p); on != content {
+					t.Errorf("origin holds %s as\n%s\nnot as it arrived\n%s", p, on, content)
+				}
+				if tc.local[p] != "" && !strings.Contains(got.Behind, p) {
+					t.Errorf("sync's reason %q does not name %s, which also changed here", got.Behind, p)
+				}
+				if data, _ := os.ReadFile(filepath.Join(repo, p)); tc.local[p] != "" && string(data) != tc.local[p] {
+					t.Errorf("the working tree holds %s as\n%s\nnot this host's\n%s", p, data, tc.local[p])
+				}
 			}
 			if now := gitIn(t, repo, "rev-parse", "HEAD"); now != head {
 				t.Errorf("sync moved HEAD from %s to %s", strings.TrimSpace(head), strings.TrimSpace(now))
@@ -971,6 +1046,57 @@ func testSyncWorkstreams(t *testing.T) {
 	}
 	if files := gitIn(t, origin, "show", "--format=", "--name-only", "main"); files != "agents/workstream-agent-tooling.mac.org\n" {
 		t.Errorf("origin's last commit holds %q", files)
+	}
+}
+
+// putNote writes a file under c's notes repository, rel a slash path.
+func putNote(t *testing.T, c Config, rel, text string) {
+	t.Helper()
+	file := filepath.Join(filepath.Dir(c.Dir), filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Digests and brag files are sent by whichever host writes them, as its
+// plan files are, and reach the other host by its sync.
+func testSyncNotesFiles(t *testing.T) {
+	t.Parallel()
+	origin, hosts := notesAsIs(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	putNote(t, box, "digests/2026/11-06-demo.org", "* Demo\n")
+	putNote(t, box, "brag/2026.org", "* Shipped\n")
+	putNote(t, box, "digests/2026/notes.org", "not a digest\n")
+	putNote(t, mac, "digests/2026/10-30-demo.org", "* Mac's demo\n")
+	putNote(t, mac, "brag/2025.org", "* Mac's brag\n")
+	got, err := box.Sync(SyncOptions{})
+	if sent := strings.Join(got.Committed, " "); err != nil || !got.Pushed ||
+		sent != "digests/2026/11-06-demo.org brag/2026.org" && sent != "brag/2026.org digests/2026/11-06-demo.org" {
+		t.Fatalf("box's sync: %+v, %v", got, err)
+	}
+	atOrigin(t, box)
+	if status := gitIn(t, filepath.Dir(box.Dir), "status", "--porcelain", "-uall", "--", "digests", "brag"); status != "?? digests/2026/notes.org\n" {
+		t.Errorf("box's notes files left changed:\n%s", status)
+	}
+	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed || strings.Join(got.Committed, " ") != "digests/2026/10-30-demo.org brag/2025.org" &&
+		strings.Join(got.Committed, " ") != "brag/2025.org digests/2026/10-30-demo.org" {
+		t.Errorf("mac's sync: %+v, %v", got, err)
+	}
+	atOrigin(t, mac)
+	if data, err := os.ReadFile(filepath.Join(filepath.Dir(mac.Dir), "digests", "2026", "11-06-demo.org")); err != nil || string(data) != "* Demo\n" {
+		t.Errorf("mac did not get box's digest: %q, %v", data, err)
+	}
+	if _, err := box.Sync(SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(filepath.Dir(box.Dir), "brag", "2025.org")); err != nil || string(data) != "* Mac's brag\n" {
+		t.Errorf("box did not get mac's brag file: %q, %v", data, err)
+	}
+	if files := gitIn(t, origin, "ls-tree", "-r", "--name-only", "main", "--", "digests", "brag"); files != "brag/2025.org\nbrag/2026.org\ndigests/2026/10-30-demo.org\ndigests/2026/11-06-demo.org\n" {
+		t.Errorf("origin holds %q", files)
 	}
 }
 

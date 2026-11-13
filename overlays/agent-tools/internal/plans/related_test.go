@@ -86,7 +86,7 @@ func TestLinkEvidence(t *testing.T) {
 		a, b := planOn(t, c, "a", ""), planOn(t, c, "b", "")
 		addItems(t, a.file(""), "** Distribution", "P3")
 		addItems(t, a.file(""), "** Follow-ups", "F2")
-		if _, err := b.SetSection("", "Goal", "Finish follow-up F2 and part P3 of plan "+shortName(a)+", but not F9.", day); err != nil {
+		if _, err := b.SetSection("", "Goal", "Finish follow-up F2 and part P3 of plan "+shortName(a)+", but not F9.\nBuilds on: that plan.\nLikely next changes: none.", day); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := c.LinkEvidence(b.file(""), day); err != nil {
@@ -178,7 +178,7 @@ func TestRelated(t *testing.T) {
 	if err := a.SetProperty("", "SESSIONS", []string{"claude:s-1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.SetSection("", "Goal", "Like plan "+shortName(a)+", but for the guard.", day); err != nil {
+	if _, err := b.SetSection("", "Goal", "Like plan "+shortName(a)+", but for the guard.\nBuilds on: nothing found.\nLikely next changes: none.", day); err != nil {
 		t.Fatal(err)
 	}
 	stacked := planOn(t, c, "stacked", "", "other..flag")

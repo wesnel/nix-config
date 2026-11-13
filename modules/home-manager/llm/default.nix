@@ -855,6 +855,7 @@ in {
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
           diagnose-failure = ./skills/diagnose-failure/SKILL.md;
           retro = ./skills/retro/SKILL.md;
+          brag = ./skills/brag/SKILL.md;
           # A directory, so the agent reading it can read the templates
           # plans.templates gives agent-plan.
           playbooks = ./skills/playbooks;
@@ -862,6 +863,8 @@ in {
           # invoking it unasked, as disable-model-invocation does in Claude
           # Code.
           grill = ./skills/grill;
+          # The same: the operator runs it by name.
+          demo-digest = ./skills/demo-digest;
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.
@@ -998,9 +1001,9 @@ in {
     # Syncs plans a few seconds after one changes, outside every session,
     # and every 5 minutes besides, since a watch can miss a change. launchd
     # watches the directory's entries only, so agent-plan touches the
-    # directory after each write it makes; a plan file edited in place by
-    # anything else is sent by the next run. Sync's lock keeps runs from
-    # overlapping.
+    # directory after each write it makes, a digest's or a brag file's
+    # outside it included; a plan file edited in place by anything else is
+    # sent by the next run. Sync's lock keeps runs from overlapping.
     launchd.agents.agent-plan-sync = mkIf pkgs.stdenv.hostPlatform.isDarwin {
       enable = true;
       config = {

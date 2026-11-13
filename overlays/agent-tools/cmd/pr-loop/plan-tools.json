@@ -2,6 +2,7 @@
   "agent_plan_new", "agent_plan_log", "agent_plan_set", "agent_plan_unfile",
   "agent_plan_ask", "agent_plan_decide", "agent_plan_followup", "agent_plan_step",
   "agent_plan_part", "agent_plan_edit", "agent_plan_after", "agent_plan_section",
+  "agent_plan_visual", "agent_plan_digest", "agent_plan_brag",
   "agent_plan_reference", "agent_plan_link", "agent_plan_postpone",
   "agent_plan_sign_id", "agent_plan_workstream_new", "agent_plan_workstream_list",
   "agent_plan_find", "agent_plan_status", "agent_plan_waiting",

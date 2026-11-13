@@ -139,6 +139,33 @@ func TestAsk(t *testing.T) {
 		}
 	})
 
+	// A brag item is a question of kind brag, asked as a retro proposal is:
+	// its title the question, its drafted summary the recommendation.
+	t.Run("a brag item", func(t *testing.T) {
+		p, _ := asked(t)
+		got, err := p.Ask(AskOptions{Question: "Made the devbox work without the Mac",
+			Recommendation: "Agents on the devbox no longer stop when the Mac sleeps.", Kind: "brag"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry := linesAt(t, p.file(""), got.ID, 4); entry != "*** ASK Made the devbox work without the Mac\n:PROPERTIES:\n"+
+			":CUSTOM_ID: Q5\n:RECOMMENDATION: Agents on the devbox no longer stop when the Mac sleeps.\n:KIND: brag" {
+			t.Errorf("entry:\n%s", entry)
+		}
+	})
+
+	// Only the operator approves a brag item's summary, so an agent cannot
+	// settle one as it asks it.
+	t.Run("a brag item settled as asked", func(t *testing.T) {
+		p, _ := asked(t)
+		before, _ := os.ReadFile(p.file(""))
+		_, err := p.Ask(AskOptions{Question: "Made it", Recommendation: "A drafted summary.", Kind: "brag", Answer: "approved"}, day)
+		refusedSaying(t, err, "approv")
+		if after, _ := os.ReadFile(p.file("")); string(after) != string(before) {
+			t.Errorf("a refused brag item changed the plan:\n%s", after)
+		}
+	})
+
 	t.Run("part's question", func(t *testing.T) {
 		p, _ := asked(t)
 		part, err := p.Ask(AskOptions{Part: "P1", Question: "Split the file?", Recommendation: "yes"}, day)

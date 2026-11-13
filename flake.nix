@@ -985,6 +985,35 @@
             touch $out
           '';
 
+      # The operator runs /demo-digest on either host, in Claude Code or
+      # Codex, and only by name.
+      checks.${darwinOnly "demo-digest"} = let
+        homes = {
+          ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+          devbox = self.homeConfigurations.devbox.config;
+        };
+        # What is missing from the skill each host links into each
+        # harness's skills, "" for nothing.
+        missing = host: dir: let
+          source = homes.${host}.home.file."${dir}/demo-digest".source or null;
+          read = file:
+            if source != null && builtins.pathExists "${source}/${file}"
+            then builtins.readFile "${source}/${file}"
+            else "";
+        in
+          pkgs.lib.concatStringsSep ", " (
+            pkgs.lib.optional (!pkgs.lib.hasInfix "\nname: demo-digest\n" (read "SKILL.md")) "${dir}/demo-digest/SKILL.md named demo-digest"
+            ++ pkgs.lib.optional (!pkgs.lib.hasInfix "\ndisable-model-invocation: true\n" (read "SKILL.md")) "disable-model-invocation"
+            ++ pkgs.lib.optional (!pkgs.lib.hasInfix "allow_implicit_invocation: false" (read "agents/openai.yaml")) "Codex's allow_implicit_invocation: false"
+          );
+        problems = pkgs.lib.concatMap (host:
+          pkgs.lib.concatMap (dir: pkgs.lib.optional (missing host dir != "") "${host} lacks ${missing host dir}")
+          [".claude/skills" ".codex/skills"]) (builtins.attrNames homes);
+      in
+        assert pkgs.lib.assertMsg (problems == [])
+        "The demo-digest skill must be installed, run only by name, on both hosts: ${pkgs.lib.concatStringsSep "; " problems}";
+          pkgs.runCommand "demo-digest" {} "touch $out";
+
       checks.${darwinOnly "parallels-mcp"} = let
         hm = self.darwinConfigurations.ngrok.config.home-manager.users.wgn;
         package = self.darwinConfigurations.ngrok.pkgs.pdfm-mcp;
@@ -1469,6 +1498,8 @@
           nativeBuildInputs = [pkgs.jq];
           settings = builtins.toJSON home.wgn.home.claude.settings;
           codex = builtins.toJSON home.wgn.home.codex.sandbox;
+          notes = home.wgn.home.llm.plans.repository.path;
+          inherit (home.home) homeDirectory;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
           reviewerSettings = home.wgn.home.llm.delegate.settings;
@@ -1515,6 +1546,15 @@
             else "agent-plan link is not excluded from the sandbox" end'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
             else "agent-plan link is not allowed" end'
+          # Demo digests and brag files are agent-plan's alone to write, as
+          # plans are: the sandbox denies shell writes to their directories
+          # and a deny rule the file tools' writes, and the commands that
+          # write them run outside the sandbox.
+          check --arg notes "$notes" --arg home "$homeDirectory" '. as $s | ($notes + "/digests", $notes + "/brag")
+            | (select(. as $d | $s.sandbox.filesystem.denyWrite | index([$d]) == null) | "shell writes not denied: \(.)"),
+              ("Edit(~" + ltrimstr($home) + "/**)" | select(. as $r | $s.permissions.deny | index([$r]) == null) | "file tool writes not denied: \(.)")'
+          check '. as $s | ("agent-plan digest *", "agent-plan brag *") | select(. as $c | $s.sandbox.excludedCommands | index([$c]) == null)
+            | "not excluded from the sandbox: \(.)"'
           check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]
             | select(. as $t | $d | index([$t]) == null) | "not denied: \(.)"'
           check --slurpfile mcp "$mcpPath" '. as $s | $mcp[0][] | .servers[] as $server

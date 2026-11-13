@@ -95,7 +95,7 @@ func TestMirror(t *testing.T) {
 		if MirrorRevision(first) == MirrorRevision(append(append([]byte{}, first...), '\n')) {
 			t.Error("template change did not change revision")
 		}
-		if _, err := p.SetSection("", "Goal", "Changed source goal", day); err != nil {
+		if _, err := p.SetSection("", "Goal", "Changed source goal\nBuilds on: nothing.\nLikely next changes: none.", day); err != nil {
 			t.Fatal(err)
 		}
 		changed, err := Mirror(c, p.File(), day)
@@ -142,7 +142,7 @@ func TestMirror(t *testing.T) {
 			fmt.Fprintf(&followups, "*** TODO Followup marker %d\n:PROPERTIES:\n:CUSTOM_ID: F%d\n:END:\n", i, i)
 		}
 		under(t, p.File(), "** Follow-ups", followups.String())
-		hostile := `Text </script><img src=x onerror=alert(1)> ` + fakeToken + "\u202e"
+		hostile := `Text </script><img src=x onerror=alert(1)> ` + fakeToken + "\u202e\nBuilds on: nothing.\nLikely next changes: none."
 		if _, err := p.SetSection("", "Goal", hostile, day); err != nil {
 			t.Fatal(err)
 		}

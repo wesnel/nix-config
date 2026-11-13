@@ -14,9 +14,11 @@ import (
 
 var templateName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
-// planSections are the level-2 sections a plan's file has, which a
-// template may fill.
-var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "References", "Related", "Verification"}
+// planSections are the level-2 sections a plan's file has, in order,
+// which a template may fill. new writes each but Visuals, which visual
+// adds to a plan's own file with its first entry.
+var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "Visuals", "References", "Related",
+	"Verification"}
 
 // templateDirs are the directories a template is looked for in, first
 // found first: the plans repository's, then the built-in one.
