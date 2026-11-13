@@ -67,7 +67,7 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		fmt.Fprintf(log, "%s: test adequacy is left out: %v\n", name, err)
 		return &adequacy{configured: true}, nil
 	}
-	a := &adequacy{configured: settings.Test != "" && len(settings.TestFiles) > 0, given: file != ""}
+	a := &adequacy{configured: settings.Test != "" && (len(settings.TestFiles) > 0 || len(settings.RustTestFiles) > 0), given: file != ""}
 	switch {
 	case !a.given:
 		if a.configured {
@@ -76,7 +76,7 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		}
 		return a, nil
 	case !a.configured:
-		return nil, refusal.New("--red-check %s needs the clone's test settings, test and testFiles, which name the "+
+		return nil, refusal.New("--red-check %s needs the clone's test settings, test and testFiles or rustTestFiles, which name the "+
 			"test files its findings are placed at, and this clone has none; review without `--red-check`, or ask "+
 			"the operator to set them in the clone's agent settings, %s", file, settings.File())
 	}
@@ -87,10 +87,10 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 	}
 	// The verdicts say what this repository's tests show only where red-check
 	// ran this repository's test settings.
-	if result.Test != settings.Test || result.Build != settings.Build || !slices.Equal(result.TestFiles, settings.TestFiles) {
-		return nil, refusal.New("--red-check %s ran test %q, build %q and test files %q, not this repository's settings "+
-			"(%q, %q, %q). Run `git red-check %s..%s` without --test, --build or --test-files, and pass what it writes",
-			file, result.Test, result.Build, result.TestFiles, settings.Test, settings.Build, settings.TestFiles, r.base, r.tip)
+	if result.Test != settings.Test || result.Build != settings.Build || !slices.Equal(result.TestFiles, settings.TestFiles) || !slices.Equal(result.RustTestFiles, settings.RustTestFiles) {
+		return nil, refusal.New("--red-check %s ran test %q, build %q, test files %q and Rust test files %q, not this repository's settings "+
+			"(%q, %q, %q, %q). Run `git red-check %s..%s` without --test, --build, --test-files or --rust-test-files, and pass what it writes",
+			file, result.Test, result.Build, result.TestFiles, result.RustTestFiles, settings.Test, settings.Build, settings.TestFiles, settings.RustTestFiles, r.base, r.tip)
 	}
 	// Oldest first, and without merges, as red-check checks them.
 	out, err := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
@@ -202,8 +202,56 @@ func fenced(info, text string) string {
 
 // testDiff is the names of the test files commit changes, and their diff.
 func testDiff(r *span, settings *repos.Settings, commit string) ([]string, []byte, error) {
+	files, patch, err := fileTestDiff(r, settings.TestFiles, commit)
+	if err != nil {
+		return nil, nil, err
+	}
+	inline, _, err := fileTestDiff(r, settings.RustTestFiles, commit)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, path := range inline {
+		if slices.Contains(files, path) {
+			return nil, nil, fmt.Errorf("%s is selected as both a whole file and inline Rust tests", path)
+		}
+		change, err := rustTestChange(r.top, commit, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if change == nil {
+			continue
+		}
+		files = append(files, path)
+		patch = append(patch, change...)
+	}
+	return files, patch, nil
+}
+
+func rustTestChange(top, commit, path string) ([]byte, error) {
+	var tests []string
+	for _, revision := range []string{commit + "^", commit} {
+		source, err := git.Bytes(nil, "-C", top, "cat-file", "blob", revision+":"+path)
+		if err != nil {
+			return nil, err
+		}
+		module, err := redcheck.RustTestContent(source)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		tests = append(tests, string(module))
+	}
+	if tests[0] == tests[1] {
+		return nil, nil
+	}
+	return json.Marshal(struct{ Path, Before, After string }{path, tests[0], tests[1]})
+}
+
+func fileTestDiff(r *span, globs []string, commit string) ([]string, []byte, error) {
+	if len(globs) == 0 {
+		return nil, nil, nil
+	}
 	pathspecs := []string{}
-	for _, g := range settings.TestFiles {
+	for _, g := range globs {
 		pathspecs = append(pathspecs, ":(glob)"+g)
 	}
 	diff := func(extra ...string) ([]byte, error) {
@@ -243,7 +291,7 @@ func untested(r *span, settings *repos.Settings, commit string) (*Finding, error
 		Claim: fmt.Sprintf("The tests %s %q changes pass without the rest of that commit, so they do not test it.",
 			commit[:12], subject),
 		Evidence: fmt.Sprintf("git red-check %s..%s, from --red-check, gave commit %s the verdict passes-without-change: "+
-			"its parent with only its test files (%s) applied passed the test command. Fix the tests, or say in the "+
+			"its parent with only its selected tests (%s) applied passed the test command. Fix the tests, or say in the "+
 			"review reply why they are meant to pass without the change, as a characterisation test is.",
 			r.base, r.tip, commit, strings.Join(files, ", "))}
 	f.place(r, commit, files)
@@ -358,17 +406,16 @@ func (a *adequacy) prompt(printed bool) string {
 	return b.String()
 }
 
-// sharedPrompt is what the reviewer is told of the files r changes that
-// hold tests beside their code, whose tests red-check cannot run without
-// the rest of them: the verdict shared-file, judged by the reviewer.
+// sharedPrompt identifies co-located tests for the reviewer's adequacy check.
 func sharedPrompt(r *span) string {
 	files, err := routes.SharedFiles(r.top, r.base, r.tip)
 	if err != nil || len(files) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nThese changed files hold tests beside the code they test (verdict shared-file), which red-check cannot " +
-		"run apart from it: judge whether their tests test the change, and report an `untested` finding where they do not.\n\n")
+	b.WriteString("\nThese changed files hold tests beside the code they test (shared-file). Consult any supplied red-check " +
+		"results; Rust test modules can be selected with --rust-test-files. Judge whether their tests test the change, " +
+		"and report an `untested` finding where they do not.\n\n")
 	for _, f := range files {
 		fmt.Fprintf(&b, "- %s\n", f)
 	}

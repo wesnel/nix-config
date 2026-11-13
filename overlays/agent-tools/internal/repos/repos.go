@@ -44,6 +44,9 @@ type Settings struct {
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
+	// RustTestFiles select existing Rust files whose trailing cfg(test)
+	// module red-check transplants onto the parent's production bytes.
+	RustTestFiles []string `json:"rustTestFiles,omitempty"`
 	// Routes are rules that route this repository's changes to focused
 	// reviews beside the built-in ones, which they only add to. One that
 	// fails routes.Rule.Check makes the lookup refuse.
@@ -200,7 +203,7 @@ func Lookup() (*Settings, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(s); err != nil {
-		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, test, build, testFiles, "+
+		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, test, build, testFiles, rustTestFiles, "+
 			"routes and threatNotes (%v); ask the operator to fix them", file, err)
 	}
 	for _, r := range s.Routes {

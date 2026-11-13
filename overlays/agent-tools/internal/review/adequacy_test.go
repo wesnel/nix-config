@@ -12,6 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // adequacyFixture is a repository, as setUp makes, with test settings and a
@@ -142,6 +143,66 @@ func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 }
 
 func TestTestAdequacy(t *testing.T) {
+	t.Run("Rust key excludes production", func(t *testing.T) {
+		f := setUp(t, true)
+		old := "fn value() -> i32 { 1 }\n#[cfg(test)] mod test {}\n"
+		write(t, filepath.Join(f.repo, "session.rs"), old)
+		run(t, f.repo, "git", "add", "session.rs")
+		run(t, f.repo, "git", "commit", "-q", "-m", "Start inline tests")
+		parent := run(t, f.repo, "git", "rev-parse", "HEAD")
+		key := func(production, module string) string {
+			t.Helper()
+			write(t, filepath.Join(f.repo, "session.rs"), production+module)
+			run(t, f.repo, "git", "add", "session.rs")
+			run(t, f.repo, "git", "commit", "-q", "-m", "Change inline tests")
+			_, patch, err := testDiff(&span{top: f.repo}, &repos.Settings{RustTestFiles: []string{"*.rs"}}, "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Move only this fixture's branch back; the next commit has the same parent.
+			run(t, f.repo, "git", "update-ref", "HEAD", parent)
+			return testKey(patch)
+		}
+		module := "#[cfg(test)] mod test { #[test] fn check() { assert_eq!(super::value(), 2); } }\n"
+		first := key("fn value() -> i32 { 2 }\n", module)
+		if next := key("// moved\nfn value() -> i32 { 3 }\n", module); next != first {
+			t.Fatalf("production changed Rust test key: %s then %s", first, next)
+		}
+		if next := key("fn value() -> i32 { 2 }\n", strings.Replace(module, ", 2)", ", 4)", 1)); next == first {
+			t.Fatal("test change did not change Rust key")
+		}
+	})
+	t.Run("Rust selection", func(t *testing.T) {
+		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
+		writeSettings(t, a.fixture, `{"test":"true","rustTestFiles":["*.rs"]}`)
+		write(t, filepath.Join(a.repo, "session.rs"), "fn value() {}\n")
+		run(t, a.repo, "git", "add", "session.rs")
+		run(t, a.repo, "git", "commit", "-q", "-m", "Start Rust source")
+		write(t, filepath.Join(a.repo, "session.rs"), "fn value() {}\n#[cfg(test)] mod test {}\n")
+		run(t, a.repo, "git", "add", "session.rs")
+		run(t, a.repo, "git", "commit", "-q", "-m", "Add inline tests")
+		a.commit = run(t, a.repo, "git", "rev-parse", "HEAD")
+		a.tip = a.commit
+		file := a.redCheck(t)
+		var result redcheck.Result
+		if err := json.Unmarshal(must(os.ReadFile(file)), &result); err != nil {
+			t.Fatal(err)
+		}
+		result.TestFiles = nil
+		result.RustTestFiles = []string{"*.rs"}
+		write(t, file, string(must(json.Marshal(result))))
+		code, out, stderr := freshReview(t, "--plan", a.plan, "--red-check", file, a.base+"..HEAD")
+		finding := mechanical(t, code, out, stderr)
+		if finding["path"] != "session.rs" {
+			t.Fatalf("Rust finding path: %+v", finding)
+		}
+		result.RustTestFiles = []string{"other.rs"}
+		write(t, file, string(must(json.Marshal(result))))
+		code, out, stderr = freshReview(t, "--plan", a.plan, "--red-check", file, a.base+"..HEAD")
+		if code != 2 || !strings.Contains(stderr, "repository's settings") {
+			t.Fatalf("accepted mismatched Rust selection: exit %d, %+v, %s", code, out, stderr)
+		}
+	})
 	// A commit whose tests pass without the rest of it is untested, said so
 	// by red-check rather than the reviewer, at its test file.
 	// The JSON is redacted before it is cut to fit the prompt: a token the

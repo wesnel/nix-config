@@ -352,9 +352,9 @@ var sharedMarkers = map[string]*regexp.Regexp{
 }
 
 // SharedFiles are the files base..tip changes in the repository at top
-// that hold tests and code together at tip, in path order: red-check runs
-// a commit's test files without the rest of it, which it cannot do for
-// these, so their tests are the reviewer's to judge.
+// that hold tests and code together at tip, in path order. Rust modules
+// may be selected with red-check's rust-test-files; other shared tests
+// need the reviewer's judgement when no mechanical result covers them.
 func SharedFiles(top, base, tip string) ([]string, error) {
 	names, err := git.Bytes(nil, "-C", top, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", base, tip)
 	if err != nil {
