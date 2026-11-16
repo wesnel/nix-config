@@ -60,6 +60,21 @@ func TestPlanCommitRewrites(t *testing.T) {
 			}
 		}
 	})
+	// Plain git names the commits: a repository with no remote has its
+	// rewrites recorded as one on GitHub does.
+	t.Run("a repository without a GitHub origin", func(t *testing.T) {
+		repo, _ := flakyRepo(t)
+		c, p := commitPlan(t, repo)
+		old := recordCommitted(t, p, repo, "one").Revision
+		if _, err := Run("main", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+		want := gitIn(t, repo, "rev-parse", "one")
+		got, err := c.Commits(plans.CommitOptions{Revision: old})
+		if err != nil || len(got) != 1 || got[0].Revision != want || got[0].Revision == old {
+			t.Errorf("%s resolves to %+v, %v; want %s", old, got, err, want)
+		}
+	})
 	t.Run("fixup identities", func(t *testing.T) {
 		repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")

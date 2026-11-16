@@ -148,7 +148,10 @@ func TestCommitAssociations(t *testing.T) {
 			t.Fatalf("intermediate revision: %+v, %v", got, err)
 		}
 	})
-	t.Run("legacy and repository boundaries", func(t *testing.T) {
+	// A commit is its object ID: a rewrite applies to it whatever label
+	// either event carries, an exact revision ignores --repo, and a label
+	// only narrows a listing.
+	t.Run("labels neither identify nor scope rewrites", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "identity")
 		a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
@@ -156,6 +159,7 @@ func TestCommitAssociations(t *testing.T) {
 			{Kind: "committed", Commit: "Same subject"},
 			{Kind: "committed", Commit: "Same subject", Repository: "o/r", Revision: a},
 			{Kind: "committed", Commit: "Same subject", Repository: "other/r", Revision: a},
+			{Kind: "committed", Commit: "Same subject", Revision: a},
 			{Kind: "commit-rewritten", Repository: "o/r", OldRevision: a, Revision: b},
 		} {
 			if _, err := p.Record("", e, day); err != nil {
@@ -163,13 +167,25 @@ func TestCommitAssociations(t *testing.T) {
 			}
 		}
 		got, err := c.Commits(CommitOptions{})
-		if err != nil || len(got) != 2 {
+		if err != nil || len(got) != 3 {
 			t.Fatalf("associations: %+v, %v", got, err)
 		}
 		for _, x := range got {
-			if x.Repository == "other/r" && x.Revision != a || x.Repository == "o/r" && x.Revision != b {
-				t.Fatalf("repository crossed: %+v", x)
+			if x.Revision != b || x.OriginalRevision != a {
+				t.Errorf("%q not resolved through the rewrite: %+v", x.Repository, x)
 			}
+		}
+		got, err = c.Commits(CommitOptions{Repository: "other/r", Revision: b})
+		if err != nil || len(got) != 3 {
+			t.Errorf("an exact revision with --repo other/r: %+v, %v; want all three", got, err)
+		}
+		got, err = c.Commits(CommitOptions{Repository: "other/r"})
+		if err != nil || len(got) != 2 || got[0].Repository != "other/r" || got[1].Repository != "" {
+			t.Errorf("listing narrowed to other/r and the unlabelled: %+v, %v", got, err)
+		}
+		resolved, err := c.ResolveCommit("", a)
+		if err != nil || resolved.Revision != b {
+			t.Errorf("resolved without a label: %+v, %v", resolved, err)
 		}
 	})
 	t.Run("invalid alias maps", func(t *testing.T) {

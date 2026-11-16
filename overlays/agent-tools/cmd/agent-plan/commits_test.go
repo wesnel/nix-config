@@ -24,8 +24,13 @@ func TestResolveCommit(t *testing.T) {
 	if _, err := p.Record("", plans.Event{Kind: "commit-rewritten", Repository: "o/r", OldRevision: a, Revision: b}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ repo, from, to string }{{"o/r", a, b}, {"o/r", b, b}, {"other/r", a, a}} {
-		code, out, errs := agentPlan(t, "", "resolve-commit", "--repo", test.repo, "--revision", test.from)
+	// The rewrite is of the object ID; --repo is a label, echoed back.
+	for _, test := range []struct{ repo, from, to string }{{"o/r", a, b}, {"o/r", b, b}, {"other/r", a, b}, {"", a, b}} {
+		args := []string{"resolve-commit", "--revision", test.from}
+		if test.repo != "" {
+			args = append(args, "--repo", test.repo)
+		}
+		code, out, errs := agentPlan(t, "", args...)
 		if code != 0 {
 			t.Fatalf("resolve: %d %s %s", code, out, errs)
 		}

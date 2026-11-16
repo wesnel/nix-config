@@ -276,16 +276,19 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   have no automatic alias capture. No plan metadata enters commit messages.
 - `agent-plan commits [PLAN] [--repo OWNER/NAME] [--revision FULL-OID]
   [--item ID]` prints exact associations as JSON: owning file and item,
-  repository, original revision, resolved revision and subject. Without
-  PLAN it searches every readable host's plans; `--item` requires PLAN.
-  Rewrite aliases are repository-scoped and read from all logs even when
-  PLAN is given. An old or intermediate revision matches its resolved
-  commit, possibly several associations. Subject-only records are
-  unresolved; conflicting or cyclic aliases are refused. Only this host's
-  located plan receives rewrite events; mirrored logs stay read-only.
-- `agent-plan resolve-commit --repo OWNER/NAME --revision FULL-OID`
+  repository label, original revision, resolved revision and subject.
+  Without PLAN it searches every readable host's plans; `--item` requires
+  PLAN. Associations and rewrite aliases match by object ID, whatever
+  label they carry, so `--revision` ignores `--repo`; without
+  `--revision`, `--repo` leaves out only associations labelled with
+  another repository. Aliases are read from all logs even when PLAN is
+  given. An old or intermediate revision matches its resolved commit,
+  possibly several associations. Subject-only records are unresolved;
+  conflicting or cyclic aliases are refused. Only this host's located plan
+  receives rewrite events; mirrored logs stay read-only.
+- `agent-plan resolve-commit --revision FULL-OID [--repo OWNER/NAME]`
   resolves an old raw commit link through the same aliases even without
-  an association. Its JSON holds repository, original revision and
+  an association. Its JSON holds the `--repo` given, original revision and
   resolved revision; an unknown revision stays unchanged.
 - An event about the whole plan names the plan's ID; about a part, the
   part's.

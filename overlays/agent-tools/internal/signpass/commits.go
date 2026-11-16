@@ -27,7 +27,7 @@ func recordCommitRewrites(p *pending) error {
 	}
 	identity, err := plans.CommitIdentity(p.Dir, p.Before[p.Branch])
 	if err != nil {
-		return nil
+		return err
 	}
 	from := p.Start
 	if p.Fork != "" {
