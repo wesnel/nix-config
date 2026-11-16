@@ -42,9 +42,11 @@ hand-off, or a step whose cost did not buy useful evidence.
 
 For example:
 
-- A handed-off `!` one-liner fails: capture the command, the shell or
-  harness that ran it, and the failure. Propose a change at the source of
-  the bad command, so the next hand-off works.
+- A handed-off `!` one-liner fails: `agent-plan remind` files it in Codex,
+  and in Claude Code asks you to judge it when it wrote to stderr; capture
+  one it missed yourself, with the command, the harness that ran it and the
+  failure. Propose the change at the source of the bad command, so the
+  next hand-off works.
 - You need `--help` for a tool maintained in nix-config: consider whether
   the current use case should be more obvious in the command interface,
   diagnostics or the skill that sends agents to it. Record what was hard

@@ -883,6 +883,21 @@ in {
           }
         ];
 
+        # After the reply to a line the operator ran with !, which no hook
+        # sees and whose exit code Claude Code does not record, blocks once
+        # when the line wrote to stderr, asking the agent to file it as a
+        # papercut if it failed.
+        hooks.Stop = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
         # Its output becomes the compaction's instructions: keep what the
         # plan does not yet record. Exit 2 would block the compaction.
         hooks.PreCompact = [

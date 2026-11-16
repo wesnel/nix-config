@@ -54,7 +54,7 @@ func TestRemind(t *testing.T) {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
 			p := newPlan(t, c, "x")
-			out := string(c.Remind([]byte(c2.event)))
+			out := string(c.Remind([]byte(c2.event), "claude"))
 			if c2.want == nil {
 				if out != "" {
 					t.Errorf("%s: printed %q", c2.name, out)
@@ -132,7 +132,7 @@ func testRemindGaps(t *testing.T) {
 					Context string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
 			}
-			out := c.Remind(c2.event)
+			out := c.Remind(c2.event, "claude")
 			if err := json.Unmarshal(out, &got); err != nil {
 				t.Fatalf("output %q: %v", out, err)
 			}
@@ -154,7 +154,7 @@ func testRemindGaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out := c.Remind(event(map[string]any{"session_id": "abc", "agent_id": "a", "hook_event_name": "UserPromptSubmit",
-		"prompt": "Carry on"})); len(out) != 0 {
+		"prompt": "Carry on"}), "claude"); len(out) != 0 {
 		t.Errorf("a sub-agent's prompt: %s", out)
 	}
 }

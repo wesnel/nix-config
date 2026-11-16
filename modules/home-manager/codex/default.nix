@@ -432,7 +432,7 @@ in {
                 hooks = [
                   {
                     type = "command";
-                    command = "agent-plan remind";
+                    command = "agent-plan remind --harness codex";
                   }
                 ];
               }
@@ -447,7 +447,7 @@ in {
                 hooks = [
                   {
                     type = "command";
-                    command = "agent-plan remind";
+                    command = "agent-plan remind --harness codex";
                   }
                   {
                     type = "command";
@@ -463,7 +463,9 @@ in {
             # The operator's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
             # Carries the time and how long since the operator's previous
-            # message.
+            # message. Files each line the operator ran with ! since the
+            # agent last spoke that exited non-zero as a papercut in the
+            # plan: no hook sees such a line when it runs.
             hooks.UserPromptSubmit = [
               {
                 hooks = [
@@ -473,7 +475,7 @@ in {
                   }
                   {
                     type = "command";
-                    command = "agent-plan remind";
+                    command = "agent-plan remind --harness codex";
                   }
                 ];
               }
