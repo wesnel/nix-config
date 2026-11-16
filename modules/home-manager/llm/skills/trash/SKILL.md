@@ -1,6 +1,6 @@
 ---
 name: trash
-description: Always use trash instead of rm. This applies to all file and directory deletion operations.
+description: Delete files and directories with trash, never rm. In a sandboxed Claude Code session, plain trash fails; run `trash-scratch PATH` alone on its command line.
 ---
 
 # Use `trash` Instead of `rm`
