@@ -582,6 +582,11 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 	}
 	if ty.focus == "" {
 		in.redCheck, in.adequacy = tests.text, tests.prompt(in.printed)+sharedPrompt(in.r)
+		docs, more, err := instructionDocs(in.r.top, in.r.base, in.r.tip)
+		if err != nil {
+			return in, err
+		}
+		in.instructions = instructionSection(in.r.base, docs, more)
 		return in, nil
 	}
 	fc := focuses[ty.focus]

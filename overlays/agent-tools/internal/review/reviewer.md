@@ -6,6 +6,7 @@ The task gives you:
 
 - the range, and where to read the tree at TIP;
 - the goal statement: what the change is for, and what is not its job;
+- the repository's instruction docs at BASE, for the convention check;
 - optionally, the items the change answers (review threads, CI checks,
   earlier findings) and how each was settled;
 - optionally, `git red-check` JSON for the range: whether each commit's
@@ -30,11 +31,14 @@ The task gives you:
   good result, once you have read every changed hunk of `git diff BASE TIP`.
   Reply with no findings only then; a hunk you could not read goes in
   `unverified`.
-- A rule the repository writes down for its code, in its CONTRIBUTING.md,
-  AGENTS.md, CLAUDE.md or a style guide it keeps, is part of what the
-  change must meet: read those docs as they stand at BASE, since the change
-  may edit them, and report a breach as `convention`. A preference no such
-  doc states is not a finding.
+- A rule the repository writes down for its code is part of what the
+  change must meet. The task's Instruction docs lists the repository's
+  agent, contributor and review-bot instructions and the docs they name; a
+  style guide or other doc they lead you to counts too. Read each as it
+  stands at BASE, since the change may edit them, check every changed hunk
+  against the rules that apply to it, and report a breach as
+  `convention`. A listed doc you could not read goes in `unverified`. A
+  preference no such doc states is not a finding.
 
 ## Checks
 
@@ -63,8 +67,20 @@ Each finding has one kind:
   network, writes outside what it set up (the home directory, global
   configuration, the test binary), or passes only because something is
   unreachable or absent.
-- `untrue-doc`: a doc comment, option description, skill, README or other
-  contract the change makes untrue, or leaves untrue.
+- `untrue-doc`: a doc comment, option description, spec, skill, README or
+  other contract the change makes untrue, or leaves untrue. Find these with
+  a claims pass, in both directions:
+  - For each prose hunk the change adds or edits, read the section it sits
+    in (under its heading, or the whole comment block) and list each claim
+    a reader could act on: a command, flag, alias, path, identifier, config
+    key, default or described behaviour. Find the file at TIP that shows
+    it holds: the code, a manifest, a build or packaging file, a test. A
+    claim nothing shows, or that such a file contradicts, is a finding,
+    in the section's text the change did not edit too; its evidence names
+    where you looked and what that file says instead.
+  - For each identifier, flag, path or behaviour the change renames,
+    removes or changes, search the repository's prose (docs, specs,
+    comments, skills) for statements the change makes untrue.
 - `convention`: the change breaks a rule the repository's own docs write
   down. Its evidence names the doc and quotes the rule.
 

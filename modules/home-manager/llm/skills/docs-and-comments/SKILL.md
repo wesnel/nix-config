@@ -23,6 +23,14 @@ state came about.
 - **Keep contracts true.** A change that makes a doc comment, an option
   description, a skill or a README untrue corrects it in the same commit. A
   stale contract misleads more than a missing one.
+- **Check each claim before committing it.** For every command, flag, alias,
+  path, default or behaviour the prose you write states, find the code,
+  manifest or build file that shows it, or run it. Check the rest of the
+  section you edit the same way: its reader trusts the whole section.
+- **Write to the repository's own rules.** Its instruction docs (AGENTS.md,
+  CLAUDE.md, CONTRIBUTING.md, a review bot's instructions such as
+  `.github/copilot-instructions.md`, and the style guides they name) bind
+  prose as they bind code; check the prose against them before each push.
 - **Write plainly.** One term per concept, reused exactly; code is named by its
   exact identifier. No filler or hype: leverage, robust, seamless, powerful,
   simply, just, easily. Prefer the active voice, and state the condition before
