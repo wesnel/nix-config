@@ -134,11 +134,9 @@ starts, such as `origin/main` or the parent branch in a stack.
 1. Write the items the change answers (threads, CI checks), with how each
    was settled, to a file, if any. The goal statement is the plan's Goal,
    or the part's.
-2. The general review: prefer `git delegate`, which selects an independent
-   reviewer from the other family where available. Use `/code-review`
-   against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
-   read-only `adversarial-reviewer` given the goal and range as alternatives,
-   not additional passes. Where the repository has test settings, run
+2. The general review runs through `git delegate`, which selects an
+   independent reviewer from the other family where available and falls
+   back as Harness choice says. Where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
    git delegate resolve to different directories; every file you pass
