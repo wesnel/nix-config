@@ -28,6 +28,8 @@ with lib; let
     guard = {
       inherit (cfg.guard) credentialPaths excludedCommands;
     };
+    # Where `git task-worktree` puts task worktrees, as an absolute path.
+    worktrees = "${config.home.homeDirectory}/${removePrefix "~/" cfg.sandbox.worktrees}";
     delegate =
       {
         inherit (cfg.delegate) agents settings quotaStop;
@@ -601,6 +603,7 @@ in {
           directory outside the working directory that every harness's
           sandbox lets its commands write, so a plan begun in one harness
           continues in another. Its `.env` files stay denied to reads.
+          `git task-worktree` creates them here, from agent-tools' config.
         '';
       };
 

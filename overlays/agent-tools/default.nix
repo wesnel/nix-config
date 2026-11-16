@@ -95,7 +95,7 @@
         lib.genAttrs (builtins.fromJSON (builtins.readFile ./internal/routes/known.json))
         (route: builtins.head parts + "\n" + builtins.readFile (./internal/review + "/${route}.md"));
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-delegate (reviews a range or a pull request with reviewers that did not write it, and keeps their findings), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-delegate (reviews a range or a pull request with reviewers that did not write it, and keeps their findings), git-push-guard (keeps private history out of public repositories), git-task-worktree (creates a task worktree from a sandboxed session), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
   };
 in
   agent-tools

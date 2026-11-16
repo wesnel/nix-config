@@ -589,13 +589,19 @@ with lib; let
     #   Every delegate subcommand is one an agent may run; an operator-only
     #   action must never become one, since this exclusion and its allow
     #   rule below take them all.
+    # - git task-worktree: `git worktree add` writes the repository's
+    #   .git/worktrees, which the sandbox denies. It writes only a new
+    #   branch and its worktree under wgn.home.llm.sandbox.worktrees, takes
+    #   a branch name git accepts and a ref as its base, and runs git
+    #   without the repository's hooks or fsmonitor, refusing repository
+    #   config that names a program.
     # - pr-loop's GitHub commands and agent-plan's writes: neither takes a
     #   program or a host from its arguments. The guard refuses a file
     #   argument that names a credential (wgn.home.llm.guard.credentialPaths,
     #   which denyRead holds too), and pr-loop refuses to post text holding a
     #   secret's shape.
     excludedCommands =
-      ["gh-read *" "git delegate *" "git-delegate *" "trash-scratch *"]
+      ["gh-read *" "git delegate *" "git-delegate *" "git task-worktree *" "git-task-worktree *" "trash-scratch *"]
       ++ map (sub "pr-loop") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites
       ++ map (sub "plan-dash") llm.planMirrorCommands;
@@ -797,14 +803,16 @@ in {
 
         # Excluded commands go through the permission flow. These run
         # without a prompt or auto mode's classifier: the excluded commands
-        # that only read, and every agent-plan write. A rule allows a call
-        # only when every command in it matches.
+        # that only read, every agent-plan write, and a task worktree's
+        # creation. A rule allows a call only when every command in it
+        # matches.
         permissions.allow =
           map (s: "Bash(${sub "pr-loop" s})") prLoopReads
           # Every delegate subcommand is one an agent may run; an
           # operator-only action must never become one, since this rule
           # allows it.
           ++ ["Bash(git delegate *)" "Bash(git-delegate *)" "Bash(trash-scratch *)"]
+          ++ ["Bash(git task-worktree *)" "Bash(git-task-worktree *)"]
           ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
           ++ map (s: "Bash(${sub "plan-dash" s})") llm.planMirrorCommands
           ++ mcpRules.allow;
