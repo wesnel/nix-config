@@ -127,7 +127,7 @@ next one starts at step 1.
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.
 7. **Restack**, bottom-up:
-   `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
+   `git -c commit.gpgsign=false rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    for each child, resolving conflicts as the `restack-branches` skill says,
    with its tests run again.
 8. **Push.** `pr-loop push BRANCH...`, bottom up, as the `signing-pass`

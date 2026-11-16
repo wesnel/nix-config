@@ -21,9 +21,9 @@ A review loop over a stack, which the operator starts with
 
 ## Where you run
 
-- Coordinate from the main checkout, never from a session that has entered a
-  worktree (Claude Code's `EnterWorktree`). Its sub-agents inherit that
-  worktree as the only place they may write, and cannot write in their own.
+- In Claude Code, coordinate from the main checkout rather than a session
+  that has entered a worktree with `EnterWorktree`: its sub-agents inherit
+  that worktree as the only place they may write, and cannot write in their own.
 - Leave the main checkout on its branch and its files alone: it holds the
   operator's untracked work. Read another branch with
   `git show <branch>:<path>` or in that branch's worktree.
