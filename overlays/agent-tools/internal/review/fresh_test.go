@@ -24,13 +24,19 @@ import (
 
 // fakeCodex stands in for `codex`: it accepts only the flags the real
 // `codex exec --help` and `codex sandbox --help` list that delegate is
-// meant to pass, records them one to a line and where it ran, copies the
-// file $FAKE_CODEX_COPY names in its working directory, and replies as
-// $FAKE_CODEX says.
+// meant to pass, records them one to a line and where it ran, records for
+// each subcommand the CODEX_HOME it ran with, the files there, its login
+// and where its login lock links to, copies the file $FAKE_CODEX_COPY names
+// in its working directory, and replies as $FAKE_CODEX says. As the real
+// one does, `codex login status` fails without CODEX_HOME/auth.json.
 const fakeCodex = `#!/bin/sh
 echo "$1" >> "$FAKE_CODEX_LOG/calls"
+printf '%s' "$CODEX_HOME" > "$FAKE_CODEX_LOG/$1-home"
+ls -A "$CODEX_HOME" > "$FAKE_CODEX_LOG/$1-home-files" 2>&1
+cat "$CODEX_HOME/auth.json" > "$FAKE_CODEX_LOG/$1-auth" 2>/dev/null
+readlink "$CODEX_HOME/auth.lock" > "$FAKE_CODEX_LOG/$1-lock" 2>/dev/null
 if [ "$1" = login ] && [ "$2" = status ]; then
-  if [ "$FAKE_CODEX" = unauthenticated ]; then echo "Not logged in"; exit 1; fi
+  if [ "$FAKE_CODEX" = unauthenticated ] || [ ! -e "$CODEX_HOME/auth.json" ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in"; exit 0
 fi
 if [ "$1" = sandbox ]; then
@@ -266,6 +272,9 @@ func writeSettings(t *testing.T, f *fixture, settings string) {
 
 type fixture struct {
 	repo, log, base, tip string
+	// codexHome is the user's Codex home, CODEX_HOME, holding a login,
+	// global instructions and a skill.
+	codexHome string
 	// plans is the test's plans directory, and plan the file of the plan
 	// whose Goal is the review's goal statement.
 	plans plans.Config
@@ -307,6 +316,13 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 		t.Fatal(err)
 	}
 	f.plan = created.Plan
+	f.codexHome = t.TempDir()
+	for name, data := range map[string]string{"auth.json": `{"login":"the user's"}`,
+		"AGENTS.md": "the user's instructions\n", "skills/s/SKILL.md": "the user's skill\n"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(f.codexHome, name)), 0o755)
+		os.WriteFile(filepath.Join(f.codexHome, name), []byte(data), 0o600)
+	}
+	t.Setenv("CODEX_HOME", f.codexHome)
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	t.Setenv("FAKE_CLAUDE_LOG", f.log)
 	f.claudeSays(t, "security-reviewer", claudeResult(securityReply(), "Reviewed."))
@@ -424,7 +440,90 @@ func TestCodex(t *testing.T) {
 	t.Run("GIT_DIR naming another repository", testCodexGitDirElsewhere)
 	t.Run("no findings", testCodexNoFindings)
 	t.Run("confinement", testCodexConfinement)
+	t.Run("home", testCodexHome)
 	t.Run("failure", testCodexFailures)
+}
+
+// testCodexHome holds the sandbox probe and the review to a Codex home of
+// their own beside the checkout, which has the user's login and none of
+// their instructions or skills, and is gone with the checkout; without a
+// login to give it, Codex does not run.
+func testCodexHome(t *testing.T) {
+	logged := func(t *testing.T, f *fixture, name string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(f.log, name))
+		if err != nil {
+			t.Fatalf("codex left no %s: %v", name, err)
+		}
+		return string(data)
+	}
+	// homeOf checks that sub ran in a Codex home beside the review's
+	// checkout, not the user's, and returns the files it held.
+	homeOf := func(t *testing.T, f *fixture, sub string) []string {
+		t.Helper()
+		home := logged(t, f, sub+"-home")
+		wt := strings.TrimSpace(logged(t, f, "worktree"))
+		if home == "" || home == f.codexHome || filepath.Dir(home) != filepath.Dir(wt) {
+			t.Errorf("codex %s ran with CODEX_HOME %q, not a home beside the checkout %s", sub, home, wt)
+		}
+		if _, err := os.Stat(home); err == nil {
+			t.Errorf("codex %s's home %s is still there", sub, home)
+		}
+		return strings.Fields(logged(t, f, sub+"-home-files"))
+	}
+
+	t.Run("login alone", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("FAKE_CODEX", "none")
+		if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		for _, sub := range []string{"sandbox", "exec"} {
+			files := homeOf(t, f, sub)
+			if !slices.Contains(files, "auth.json") || slices.Contains(files, "AGENTS.md") || slices.Contains(files, "skills") {
+				t.Errorf("codex %s's home holds %q, want the login and none of the user's instructions or skills", sub, files)
+			}
+			if auth := logged(t, f, sub+"-auth"); auth != `{"login":"the user's"}` {
+				t.Errorf("codex %s's login is %q, not the user's", sub, auth)
+			}
+			// Codex holds this lock while it refreshes the login.
+			if lock := strings.TrimSpace(logged(t, f, sub+"-lock")); lock != filepath.Join(f.codexHome, "auth.lock") {
+				t.Errorf("codex %s's login lock is %q, not the user's", sub, lock)
+			}
+		}
+		f.checkCleanedUp(t)
+	})
+	t.Run("no login", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("FAKE_CODEX", "none")
+		os.Remove(filepath.Join(f.codexHome, "auth.json"))
+		code, out, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
+		if code != 4 {
+			t.Fatalf("exit %d, want 4 for a review that could not run\n%s", code, stderr)
+		}
+		auth := filepath.Join(f.codexHome, "auth.json")
+		if len(out.NotRun) != 1 || out.NotRun[0]["reviewer"] != "codex" || !strings.Contains(out.NotRun[0]["why"], auth) {
+			t.Errorf("not run: %v, want codex's, naming %s", out.NotRun, auth)
+		}
+		if calls, _ := os.ReadFile(filepath.Join(f.log, "calls")); bytes.Contains(calls, []byte("exec")) ||
+			bytes.Contains(calls, []byte("sandbox")) {
+			t.Errorf("codex ran without a login: %q", calls)
+		}
+		f.checkCleanedUp(t)
+	})
+	// A model provider's own auth command stands in for the login.
+	t.Run("provider", func(t *testing.T) {
+		f := setUp(t, true)
+		f.writeGatewayConfig(t, "ngrok-ai")
+		t.Setenv("FAKE_CODEX", "none")
+		os.Remove(filepath.Join(f.codexHome, "auth.json"))
+		if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		if files := homeOf(t, f, "exec"); len(files) != 0 {
+			t.Errorf("codex exec's home holds %q, want nothing", files)
+		}
+	})
 }
 
 func testCodexReview(t *testing.T) {

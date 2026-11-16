@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -132,6 +133,11 @@ func unavailable() string {
 			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(), err)
 		}
 		return ""
+	}
+	// A review's Codex home has only this file of the user's to sign in
+	// with.
+	if _, err := codexLogin(); err != nil {
+		return err.Error()
 	}
 	if err := exec.Command("codex", "login", "status").Run(); err != nil {
 		return "codex is not signed in (`codex login status` fails)"
@@ -274,7 +280,8 @@ func prompt(in inputs) string {
 type Codex struct {
 	availability *availability
 	// Checkout is a worktree the caller made and removes, whose parent
-	// directory is the caller's own and takes the schema and the reply.
+	// directory is the caller's own and takes the schema, the reply and
+	// the run's Codex home.
 	Checkout string
 	Prompt   string
 	// Schema is the JSON schema the reply must fit.
@@ -329,11 +336,18 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 		}
 	}
 
+	// A provider's auth command stands in for the login.
+	home, err := codexHome(dir, config.Codex == nil)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	// Codex's sandbox does not start inside another macOS sandbox; Codex
 	// must then not run at all, rather than run its commands unconfined.
-	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
+	env := slices.DeleteFunc(gitenv.Without(os.Environ()), func(kv string) bool { return strings.HasPrefix(kv, "CODEX_HOME=") })
+	env = append(env, "PATH="+realDirs(os.Getenv("PATH")), "CODEX_HOME="+home)
 	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
 		"-P", profile, "-C", c.Checkout, "--", "git", "rev-parse", "--verify", "HEAD")...)
 	probe.Env = env
@@ -369,6 +383,54 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
 	return &CodexReply{Text: string(data), Model: model}, nil
+}
+
+// codexHome makes a Codex home of one run's own in dir, the caller's
+// directory, which removes it. Codex reads instructions, skills, agents,
+// memories and hooks from its home, and --ignore-user-config skips only
+// its config.toml, so a run in the user's home (CODEX_HOME, else ~/.codex)
+// would see them. With login, the new home holds links to the user's
+// auth.json and to auth.lock, which Codex holds while it refreshes the
+// login; Codex follows the link to replace auth.json, so a refresh reaches
+// the user's home, and the lock keeps it from racing the user's own
+// Codex. Without the user's auth.json, Codex is not run at all.
+func codexHome(dir string, login bool) (string, error) {
+	home, err := os.MkdirTemp(dir, "codex-home-")
+	if err != nil || !login {
+		return home, err
+	}
+	user, err := codexLogin()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range []string{"auth.json", "auth.lock"} {
+		if err := os.Symlink(filepath.Join(user, name), filepath.Join(home, name)); err != nil {
+			return "", err
+		}
+	}
+	return home, nil
+}
+
+// codexLogin is the user's Codex home (CODEX_HOME, else ~/.codex), as an
+// absolute path, where it holds their login, auth.json; else an error
+// naming that file.
+func codexLogin() (string, error) {
+	user := os.Getenv("CODEX_HOME")
+	if user == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		user = filepath.Join(h, ".codex")
+	}
+	user, err := filepath.Abs(user)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(filepath.Join(user, "auth.json")); err != nil { //nolint:gosec // the user's own Codex home, as their CODEX_HOME or home directory names it
+		return "", fmt.Errorf("no Codex login to review with: %w (sign in with `codex login`)", err)
+	}
+	return user, nil
 }
 
 func (events *failureEvents) runError(ctx context.Context, err error, a *availability) error {
