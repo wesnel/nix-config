@@ -70,7 +70,13 @@ independent work, create a unique branch based on the remote-tracking
 default branch; for a requested existing change, use its branch. Task
 worktrees live at `~/.claude/worktrees/<repo>/<branch>`, the one directory
 outside the working directory that Claude Code's and Codex's sandboxes both
-write, so a plan begun in one harness continues in the other. Record
+write, so a plan begun in one harness continues in the other. Create one
+with `git task-worktree <branch> <base>`, a command of its own, which runs
+outside the sandbox; an existing branch is its own base. In Claude Code,
+move the session into it with EnterWorktree's `path`. There, run each
+command that names git alone, with literal arguments: Claude Code refuses a
+loop, `$(...)`, heredoc or `$?` whose text holds `git` anywhere, the
+scratchpad's path included, and a plain command naming git twice. Record
 the worktree and this session in the plan. An explicitly assigned task
 worktree may be reused; an intentional continuation adds its session to
 that plan. Independent tasks use separate worktrees, even when each has
@@ -88,7 +94,10 @@ between edits.
 Use the file-editing tools for every file, scratch files and notes
 included, but a plan's files, which only `agent-plan` writes; the guard's
 refusal of a shell edit names the exceptions. Writing
-a command's output to a new file is capturing, not editing.
+a command's output to a new file is capturing, not editing. Write a script
+you need to a file with the file-editing tools and run that file, in place
+of a heredoc on the command line: the guard reads a `>` in a heredoc's
+body as a redirect, and the operator reads a file more easily.
 
 ## The operator's state
 

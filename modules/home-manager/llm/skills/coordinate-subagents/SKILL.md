@@ -67,13 +67,16 @@ A review loop over a stack, which the operator starts with
   Exit 1 means the base lacks upstream commits: update the base or restack
   before building on it. If the remote-tracking ref needs fetching with the
   operator's key, hand over that fetch rather than silently using local
-  `main`. Create a new branch with `--no-track`, so it does not track
-  `origin/<default>`, which the signing pass refuses to push to:
+  `main`. Create the worktree with `git task-worktree`, each as a command
+  of its own; it makes a new branch without an upstream, which the signing
+  pass needs, and prints the worktree's path:
 
   ```sh
-  git worktree add --no-track ~/.claude/worktrees/<repo>/<branch> -b <branch> <base>   # new work
-  git worktree add ~/.claude/worktrees/<repo>/<branch> <branch>             # existing branch
+  git task-worktree <branch> <base>
+  git task-worktree <branch> <branch>
   ```
+
+  The second form is for an existing branch, which is its own base.
 
   A harness's own worktree option (Claude Code's `isolation: "worktree"`)
   invents the branch name, so use it only for read-only investigation.
@@ -160,7 +163,8 @@ branch, base and worktree; the part's goal and what is not its job; the
 decisions already made, as final; and, where you know it, the commit each
 correction folds into. It says what the part must do, not how, as
 acceptance criteria each checkable on its own, and gives the report a
-length.
+length. The task names the part's steps itself: a part takes no template,
+and `agent-plan new --parent` refuses `--template`.
 
 ## Phases
 
