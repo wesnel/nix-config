@@ -326,8 +326,11 @@ For a Codex caller the general reviewer is Claude's `adversarial-reviewer`,
 or Codex where Claude cannot run; for any other it is Codex. Both use the
 same review contract. Codex runs
 as `codex exec --json --ignore-user-config --ephemeral` in a throwaway worktree of
-the range's tip. None of your Codex configuration loads, so no MCP server or
-plugin; web search and the image viewer are off; and a permissions profile
+the range's tip, with a `CODEX_HOME` of its own beside it that holds only links
+to your login (`auth.json` and its lock) and goes with it. None of your Codex
+configuration loads, so no AGENTS.md, skill, agent, memory, hook, MCP server or
+plugin; with no `auth.json` and no model provider in agent-tools' config, the
+review does not run. Web search and the image viewer are off; and a permissions profile
 lets its commands read only the worktree, the parts of the git directory git
 needs, the codex executable, the Nix store and the system files they need,
 with no writes and no network. Codex's sandbox cannot start inside another
