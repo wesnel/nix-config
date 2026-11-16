@@ -104,8 +104,10 @@ fixture, is written nowhere: put `<REDACTED>` in its place.
 
 ## Commands the operator runs
 
-Hand over what is the operator's to run (a key touch, root, an interactive
-login) as one line that runs as pasted in any shell: plain commands
+Hand over everything left for the operator to run (a key touch, root, an
+interactive login, a cleanup such as files or worktrees to remove) as a
+command, never as steps described in prose: one line that runs as pasted
+in any shell, plain commands
 joined with `&&`, paths and arguments spelled out, in the syntax fish,
 zsh and bash all read alike. Claude Code runs a `!` line in zsh, while
 the operator's terminal is fish, so a loop, `set` or `$var` written for
