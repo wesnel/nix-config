@@ -726,8 +726,8 @@ func (p Plan) Events() ([]Event, error) {
 
 func (e Event) checkCommitIdentity() error {
 	if e.Revision != "" || e.Repository != "" || e.OldRevision != "" {
-		if !repositoryPattern.MatchString(e.Repository) || !revisionPattern.MatchString(e.Revision) {
-			return refusal.New("a commit identity needs a repository owner/name and full revision")
+		if !validLabel(e.Repository) || !revisionPattern.MatchString(e.Revision) {
+			return refusal.New("a commit identity needs a full revision, and its repository label, if any, an owner/name")
 		}
 		if e.OldRevision != "" && !revisionPattern.MatchString(e.OldRevision) {
 			return refusal.New("a rewritten commit needs its full original revision")

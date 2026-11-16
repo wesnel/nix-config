@@ -65,9 +65,13 @@ have (see status) is refused and writes nothing.
                      keywords, pending commands, checkpoints and stale state.
                      A handed-back event's --command is what the operator
                      runs next, in the absolute --dir if given. --revision
-                     records an exact commit and its GitHub origin owner/name
-                     from the current worktree, deriving the subject; applies
-                     to done and verified. --commit alone records only a subject
+                     records an exact commit, by its full object ID in the
+                     current worktree, deriving the subject. Its repository
+                     label, which matching ignores, is origin's GitHub
+                     owner/name, else local/ and the name of the
+                     repository's main checkout.
+                     Applies to done and verified. --commit alone records
+                     only a subject
   commits [PLAN] [--repo OWNER/NAME] [--revision FULL-OID] [--item ID]
                      JSON exact associations from every readable host's plans,
                      or PLAN, resolved through signing rewrite aliases in all

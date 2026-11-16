@@ -260,11 +260,15 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   which plan the work belongs to. Which step a commit completes stays
   yours to log.
 - For a step completed by a commit, run `log --revision REF` in its
-  worktree. It resolves the full commit ID and GitHub origin's owner/name,
-  and derives the subject; `--kind done` and `verified` take it. A supplied
-  `--commit` must match that subject. The commit hook records the same exact
-  identity for the plan or part. `--commit SUBJECT` alone is a subject-only
-  record, useful for existing logs but not exact navigation.
+  worktree. It resolves the full commit ID, the commit's identity in any
+  repository, and derives the subject; `--kind done` and `verified` take
+  it. Its `REPOSITORY` is only a label, which matching ignores: origin's
+  GitHub owner/name, else `local/` and the base name of the repository's
+  main checkout, the same from each of its worktrees, each character an
+  owner/name does not take replaced by `-`. A supplied `--commit` must match that subject. The commit
+  hook records the same exact identity for the plan or part.
+  `--commit SUBJECT` alone is a subject-only record, useful for existing
+  logs but not exact navigation.
 - `git sign-pass` records private rewrite aliases before clearing its
   pending state, including fixups that become one commit. If it cannot
   record them, it warns on stderr and the pass still succeeds; the

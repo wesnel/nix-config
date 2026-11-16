@@ -2,8 +2,10 @@ package plans
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
@@ -14,15 +16,22 @@ import (
 var revisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// CommitIdentity resolves ref in top and uses its GitHub origin as a portable identity.
+// validLabel is whether repository is a commit's repository label: none,
+// or an owner/name.
+func validLabel(repository string) bool {
+	return repository == "" || repositoryPattern.MatchString(repository)
+}
+
+// CommitIdentity resolves ref in top to the commit's full object ID, which
+// is its identity, and its subject. Repository is only a label, which
+// matching ignores: origin's GitHub owner/name where it has one, else
+// localLabel's.
 func CommitIdentity(top, ref string) (Event, error) {
-	url, err := git.Run("-C", top, "remote", "get-url", "origin")
-	if err != nil {
-		return Event{}, err
-	}
-	repository := gh.Slug(url)
-	if !repositoryPattern.MatchString(repository) {
-		return Event{}, refusal.New("origin has no portable owner/name identity")
+	repository := ""
+	if url, err := git.Run("-C", top, "remote", "get-url", "origin"); err == nil && repositoryPattern.MatchString(gh.Slug(url)) {
+		repository = gh.Slug(url)
+	} else if common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		repository = localLabel(common)
 	}
 	revision, err := git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
@@ -33,6 +42,30 @@ func CommitIdentity(top, ref string) (Event, error) {
 	}
 	subject, err := git.Run("-C", top, "show", "-s", "--format=%s", revision)
 	return Event{Repository: repository, Revision: revision, Commit: subject, Worktree: top}, err
+}
+
+// labelPart is every character an owner or name of repositoryPattern takes.
+const labelPart = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+
+// localLabel labels a repository with no GitHub origin local/NAME, NAME
+// being the base name of its main checkout's top-level directory, the
+// parent of common, its git common dir, or of a bare repository, common
+// itself, with each character outside labelPart replaced by -. Every
+// worktree of a repository so gives one label, and every label is an
+// owner/name: an agent-plan that needs one refuses the whole log read at
+// an event without, and keys rewrites by it.
+func localLabel(common string) string {
+	top := common
+	if filepath.Base(common) == ".git" {
+		top = filepath.Dir(common)
+	}
+	name := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(labelPart, r) {
+			return r
+		}
+		return '-'
+	}, filepath.Base(top))
+	return "local/" + name
 }
 
 // CommitOptions selects exact associations; Item is local to Plan.
@@ -238,7 +271,7 @@ func (p Plan) commitAssociations(o CommitOptions, aliases aliases, seen map[stri
 		if e.Revision == "" || e.OldRevision != "" || o.Repository != "" && e.Repository != o.Repository || o.Item != "" && e.Item != o.Item {
 			continue
 		}
-		if !revisionPattern.MatchString(e.Revision) || !repositoryPattern.MatchString(e.Repository) {
+		if !revisionPattern.MatchString(e.Revision) || !validLabel(e.Repository) {
 			return nil, fmt.Errorf("invalid commit identity in %s", p.log())
 		}
 		resolved := aliases.resolve(e.Repository, e.Revision)
