@@ -52,10 +52,12 @@ func numbered(prefix string, ids []string) int {
 // keeps its RC- or UP- ID, and one the record already holds is not added
 // again. It gives
 // each finding in the runs' output its record ID. The guide's walkthrough
-// replaces the record's, and so do a diagram run's diagrams.
-func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, now time.Time) (*record.Range, error) {
+// replaces the record's, and so do a diagram run's diagrams. path is the
+// record record.FindRange found; it returns the path written, as
+// record.UpdateRange does.
+func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, now time.Time) (*record.Range, string, error) {
 	var kept record.Range
-	err := record.Update(path, func(rec *record.Range) error {
+	written, err := record.UpdateRange(path, func(rec *record.Range) error {
 		rec.Repo, rec.Base, rec.Head, rec.PR, rec.Title, rec.Updated = s.slug(), r.base, r.tip, s.number, title, now
 		var findings, rounds []string
 		for _, f := range rec.Findings {
@@ -68,7 +70,7 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 		kept = *rec
 		return nil
 	})
-	return &kept, err
+	return &kept, written, err
 }
 
 func appendRuns(rec *record.Range, runs []*typeRun, now time.Time, findings, rounds []string) {
@@ -208,7 +210,7 @@ func recordOf(s *source) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	return record.FindRange(s.owner, s.repo, r.base, r.tip)
 }
 
 // ShowUsage is `git delegate show -h`.
@@ -405,7 +407,7 @@ func showDoc(s *source) (*ShowDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	number := s.number
+	number, owner, repo := s.number, s.owner, s.repo
 	if path != "" {
 		rec, err := record.ReadRange(path)
 		switch {
@@ -415,12 +417,15 @@ func showDoc(s *source) (*ShowDoc, error) {
 		default:
 			doc.Range = showRange(path, rec)
 			if number == 0 {
+				// A range reviewed for a pull request names it, where
+				// origin may not.
 				number = rec.PR
+				owner, repo, _ = strings.Cut(rec.Repo, "/")
 			}
 		}
 	}
 	if number != 0 {
-		prPath, err := record.PRFile(s.owner, s.repo, number)
+		prPath, err := record.PRFile(owner, repo, number)
 		if err != nil {
 			return nil, err
 		}
@@ -536,7 +541,7 @@ func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(nil, noReviewToSettle(s, path))
 	}
 	var settled *ShowFinding
-	err = record.Update(path, func(rec *record.Range) error {
+	_, err = record.UpdateRange(path, func(rec *record.Range) error {
 		var err error
 		settled, err = settleFinding(rec, s.given, id, state, *target, reason)
 		return err

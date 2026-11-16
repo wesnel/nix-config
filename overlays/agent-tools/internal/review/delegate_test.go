@@ -34,7 +34,7 @@ func TestRecordRounds(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	want := filepath.Join(record.Dir(), "o", "r", f.base+".."+f.tip+".org")
+	want := filepath.Join(record.Dir(), "ranges", f.base+".."+f.tip+".org")
 	if first.Record != want || first.Counts["open"] != 1 || first.review("codex").Findings[0]["finding"] != "F1" {
 		t.Fatalf("record %s, counts %v, findings %v", first.Record, first.Counts, first.review("codex").Findings)
 	}
@@ -63,6 +63,75 @@ func TestRecordRounds(t *testing.T) {
 	}
 }
 
+// A range is reviewed, shown and settled in a repository with no GitHub
+// origin, its record keyed by its commits alone, with no REPO.
+func TestRangeWithoutGitHubOrigin(t *testing.T) {
+	for name, remote := range map[string][]string{
+		"no remote":           {"remote", "remove", "origin"},
+		"an origin elsewhere": {"remote", "set-url", "origin", "https://git.sr.ht/~o/r"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := setUp(t, true)
+			run(t, f.repo, "git", remote...)
+			code, out, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
+			want := filepath.Join(record.Dir(), "ranges", f.base+".."+f.tip+".org")
+			if code != 3 || out.Record != want {
+				t.Fatalf("exit %d, record %q, want %q\n%s", code, out.Record, want, stderr)
+			}
+			if rec := must(record.ReadRange(want)); rec.Repo != "" || rec.Head != f.tip || len(rec.Findings) != 1 {
+				t.Errorf("record %+v", rec)
+			}
+			f.checkCleanedUp(t)
+			if code, stdout, stderr := delegateCmd(t, "show", f.base+"..HEAD"); code != 0 || !strings.Contains(stdout, `"finding": "F1"`) {
+				t.Errorf("show: exit %d\n%s%s", code, stdout, stderr)
+			}
+			if code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix"); code != 0 {
+				t.Errorf("settle: exit %d\n%s", code, stderr)
+			}
+			if rec := must(record.ReadRange(want)); rec.Findings[0].State != record.Fix {
+				t.Errorf("F1 after settling %+v", rec.Findings[0])
+			}
+		})
+	}
+	t.Run("refused/a pull request by its number alone", func(t *testing.T) {
+		f := setUp(t, false)
+		run(t, f.repo, "git", "remote", "remove", "origin")
+		code, _, stderr := runDelegate(t, "7")
+		refused(t, "a number with no GitHub origin", code, stderr)
+	})
+}
+
+// A range reviewed when records were kept under OWNER/NAME is given its
+// earlier findings, and its next round is written under ranges/ on top of
+// them, leaving the old record as it was.
+func TestRangeRecordedUnderGitHubName(t *testing.T) {
+	f := setUp(t, true)
+	old := filepath.Join(record.Dir(), "o", "r", f.base+".."+f.tip+".org")
+	must(0, record.Update(old, func(r *record.Range) error {
+		*r = record.Range{Repo: "o/r", Base: f.base, Head: f.tip, Title: "t", Updated: time.Now(),
+			Findings: []record.Finding{{ID: "F1", State: record.Rebut, Title: "Old", Kind: "bug", Reviewer: "codex", Round: 1,
+				Evidence: "e", Reason: "Settled before."}},
+			Rounds: []record.Round{{ID: "R1", Reviewer: "codex", Model: "m", At: time.Now(), RedCheck: "absent"}}}
+		return nil
+	}))
+	before := must(os.ReadFile(old))
+	code, out, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
+	want := filepath.Join(record.Dir(), "ranges", f.base+".."+f.tip+".org")
+	if code != 3 || out.Record != want {
+		t.Fatalf("exit %d, record %q, want %q\n%s", code, out.Record, want, stderr)
+	}
+	rec := must(record.ReadRange(want))
+	if len(rec.Rounds) != 2 || len(rec.Findings) != 2 || rec.Findings[0].Reason != "Settled before." || rec.Findings[1].ID != "F2" {
+		t.Errorf("record %+v", rec)
+	}
+	if after := must(os.ReadFile(old)); !bytes.Equal(after, before) {
+		t.Errorf("the record under o/r changed:\n%s", after)
+	}
+	if prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt")))); !strings.Contains(prompt, "Settled: Settled before.") {
+		t.Errorf("the review was not given the earlier findings:\n%s", prompt)
+	}
+}
+
 // Red-check's results given with --red-check mark the general review's
 // round, and its untested finding keeps its RC- ID, added once.
 func TestRecordRedCheck(t *testing.T) {
@@ -72,7 +141,7 @@ func TestRecordRedCheck(t *testing.T) {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 	}
-	files := must(filepath.Glob(filepath.Join(record.Dir(), "o", "r", "*.org")))
+	files := must(filepath.Glob(filepath.Join(record.Dir(), "ranges", "*.org")))
 	if len(files) != 1 {
 		t.Fatalf("records %v", files)
 	}
@@ -264,8 +333,12 @@ func TestShow(t *testing.T) {
 
 // settle sets a finding's keyword, target and reason in its record, the
 // one hand change to a record, and refuses what the outcome cannot hold.
+// A record kept under OWNER/NAME is written under ranges/, and left as it
+// was.
 func TestSettle(t *testing.T) {
-	rangeFile, _ := writeGoldens(t)
+	old, _ := writeGoldens(t)
+	before := must(os.ReadFile(old))
+	rangeFile := filepath.Join(record.Dir(), "ranges", filepath.Base(old))
 	t.Chdir(t.TempDir())
 	reason := filepath.Join(t.TempDir(), "reason.md")
 	os.WriteFile(reason, []byte("Fixed in the next commit.\n"), 0o644)
@@ -273,6 +346,9 @@ func TestSettle(t *testing.T) {
 	code, stdout, stderr := delegateCmd(t, "settle", "owner/repo#12", "F1", "fix", "--reason-file", reason)
 	if code != 0 || !strings.Contains(stdout, `"state": "FIX"`) {
 		t.Fatalf("exit %d\n%s%s", code, stdout, stderr)
+	}
+	if after := must(os.ReadFile(old)); !bytes.Equal(after, before) {
+		t.Errorf("the record under owner/repo changed:\n%s", after)
 	}
 	rec := must(record.ReadRange(rangeFile))
 	if rec.Findings[0].State != record.Fix || rec.Findings[0].Reason != "Fixed in the next commit." {
@@ -378,7 +454,7 @@ func TestSettleNoRecord(t *testing.T) {
 // returns its path.
 func writeRange(t *testing.T, base, head string, findings []record.Finding) string {
 	t.Helper()
-	path := must(record.RangeFile("o", "r", base, head))
+	path := must(record.RangeFile(base, head))
 	if err := record.Update(path, func(r *record.Range) error {
 		*r = record.Range{Repo: "o/r", Base: base, Head: head, Title: "t", Updated: time.Now(), Findings: findings,
 			Rounds: []record.Round{{ID: "R1", Reviewer: "codex", Model: "m", At: time.Now(), RedCheck: "absent"}}}

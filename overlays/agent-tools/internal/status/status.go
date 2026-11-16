@@ -90,11 +90,18 @@ func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, 
 				continue
 			}
 			// Any range a review took to this head: git delegate's of the
-			// pull request is merge-base..head.
-			if found, err := filepath.Glob(filepath.Join(record.Dir(), owner, repo, "*.."+r.Head+".org")); err == nil {
-				r.Record = "no"
+			// pull request is merge-base..head. It is under ranges/, or
+			// under the pull request's GitHub name.
+			r.Record = "no"
+			for _, dir := range []string{record.RangesDir(), filepath.Join(record.Dir(), owner, repo)} {
+				found, err := filepath.Glob(filepath.Join(dir, "*.."+r.Head+".org"))
+				if err != nil {
+					r.Record = "unknown"
+					break
+				}
 				if len(found) > 0 {
 					r.Record = "yes"
+					break
 				}
 			}
 		}

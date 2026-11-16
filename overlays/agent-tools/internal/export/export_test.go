@@ -147,16 +147,16 @@ func writeRecords(t *testing.T) {
 		{"o", "r", 7, record.Range{Title: "SENTINEL-mine", Findings: []record.Finding{finding("F1", record.Fix)},
 			Diagrams: []record.Diagram{{ID: "D2", Title: "SENTINEL-diagram", Verdict: "corrected", JSON: reviewDiagram()}}}},
 	} {
-		path, err := record.RangeFile(r.owner, r.repo, strings.Repeat("0", 40), head)
-		if err != nil {
-			t.Fatal(err)
-		}
+		// Both ranges are 0..head, so each is kept under its GitHub name,
+		// where records were kept before ranges/.
+		path := filepath.Join(record.Dir(), r.owner, r.repo, strings.Repeat("0", 40)+".."+head+".org")
 		rec := r.rec
 		rec.Repo, rec.Base, rec.Head, rec.PR, rec.Updated = r.owner+"/"+r.repo, strings.Repeat("0", 40), head, r.pr, day
 		if err := record.Update(path, func(got *record.Range) error { *got = rec; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if path, err = record.PRFile(r.owner, r.repo, r.pr); err != nil {
+		path, err := record.PRFile(r.owner, r.repo, r.pr)
+		if err != nil {
 			t.Fatal(err)
 		}
 		comment := []record.Comment{{Author: "alice", Type: "User", Body: "SENTINEL-comment"}}

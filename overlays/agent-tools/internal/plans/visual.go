@@ -50,8 +50,8 @@ type KeptDiagram struct {
 }
 
 // ReadDiagram reads diagram id from the review record of given, a range
-// BASE..TIP resolved in the worktree top, under the GitHub name of top's
-// origin: the record git delegate keeps and git delegate show prints.
+// BASE..TIP resolved in the worktree top, as record.FindRange finds it:
+// the record git delegate keeps and git delegate show prints.
 func ReadDiagram(top, given, id string) (KeptDiagram, error) {
 	if !diagramID.MatchString(id) {
 		return KeptDiagram{}, refusal.New("%q is not a diagram ID. Pass one `git delegate show %s` lists, as `--diagram D1`", id, given)
@@ -60,29 +60,28 @@ func ReadDiagram(top, given, id string) (KeptDiagram, error) {
 	if !ok || base == "" || tip == "" || strings.HasPrefix(tip, ".") {
 		return KeptDiagram{}, refusal.New("%q is not a range BASE..TIP. Pass the range the review drew the diagram for, as `--range main..HEAD`", given)
 	}
-	origin, err := git.Run("-C", top, "remote", "get-url", "origin")
-	if err != nil {
-		return KeptDiagram{}, err
-	}
-	owner, repo, _ := strings.Cut(gh.Slug(origin), "/")
-	if !record.ValidName(owner) || !record.ValidName(repo) {
-		return KeptDiagram{}, refusal.New("%s has no GitHub origin, which names its review records. Run the command in the worktree of the reviewed change", top)
+	// origin's GitHub name, where it has one, also finds a record kept
+	// under OWNER/NAME.
+	var owner, repo string
+	if origin, err := git.Run("-C", top, "remote", "get-url", "origin"); err == nil {
+		owner, repo, _ = strings.Cut(gh.Slug(origin), "/")
 	}
 	shas := make([]string, 2)
+	var err error
 	for i, rev := range []string{base, tip} {
 		if shas[i], err = git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}"); err != nil {
 			return KeptDiagram{}, refusal.New("%s names no commit in %s. Pass the range the review drew the diagram for, as `--range main..HEAD`", rev, top)
 		}
 	}
 	span := shas[0] + ".." + shas[1]
-	path, err := record.RangeFile(owner, repo, shas[0], shas[1])
+	path, err := record.FindRange(owner, repo, shas[0], shas[1])
 	if err != nil {
 		return KeptDiagram{}, err
 	}
 	r, err := record.ReadRange(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return KeptDiagram{}, refusal.New("%s/%s has no review of %s (%s). Pass the range the review drew the diagram for, as `git delegate show` names it, or draw one with `git delegate --reviewer diagram`",
-			owner, repo, given, span)
+		return KeptDiagram{}, refusal.New("%s has no review of %s (%s). Pass the range the review drew the diagram for, as `git delegate show` names it, or draw one with `git delegate --reviewer diagram`",
+			top, given, span)
 	}
 	if err != nil {
 		return KeptDiagram{}, err

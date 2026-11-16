@@ -39,7 +39,7 @@ func TestVisualCommand(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "tip")
 	base, head := gitIn(t, repo, "rev-parse", "HEAD~1"), gitIn(t, repo, "rev-parse", "HEAD")
-	path, err := record.RangeFile("o", "r", base, head)
+	path, err := record.RangeFile(base, head)
 	if err != nil {
 		t.Fatal(err)
 	}

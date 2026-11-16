@@ -3,21 +3,26 @@ package record
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// NewestRange returns the range record in owner/repo of pull request pr
+// NewestRange returns the range record of owner/repo's pull request pr
 // that was reviewed last, leaving out the one at except, with its path.
 // It returns nil where there is none. A record of the pull request that
 // fails its structure check fails NewestRange with a *DriftError, since
-// when it was reviewed cannot be read; a record of another pull request is
-// passed over.
+// when it was reviewed cannot be read.
 func NewestRange(owner, repo string, pr int, except string) (*Range, string, error) {
-	listed, err := Ranges(owner, repo, "")
+	return newestRange(Dir(), owner, repo, pr, except)
+}
+
+func newestRange(dir, owner, repo string, pr int, except string) (*Range, string, error) {
+	listed, err := prRanges(dir, owner, repo, pr)
 	if err != nil {
 		return nil, "", err
 	}
@@ -29,11 +34,9 @@ func NewestRange(owner, repo string, pr int, except string) (*Range, string, err
 		}
 		var drift *DriftError
 		if errors.As(l.Err, &drift) {
-			if data, _ := os.ReadFile(l.Path); strings.Contains(string(data), "\n:PR: "+strconv.Itoa(pr)+"\n") {
-				return nil, "", l.Err
-			}
+			return nil, "", l.Err
 		}
-		if l.Err != nil || l.Range.PR != pr {
+		if l.Err != nil {
 			continue
 		}
 		if newest == nil || reviewed(l.Range).After(reviewed(newest)) {
@@ -41,6 +44,40 @@ func NewestRange(owner, repo string, pr int, except string) (*Range, string, err
 		}
 	}
 	return newest, newestPath, nil
+}
+
+// PRRanges lists the range records of owner/repo's pull request pr, as
+// Ranges does: by REPO and PR where a record reads, and by those lines of
+// its text where it does not, so a record of another repository's or pull
+// request's is passed over either way.
+func PRRanges(owner, repo string, pr int) ([]Listed, error) {
+	return prRanges(Dir(), owner, repo, pr)
+}
+
+func prRanges(dir, owner, repo string, pr int) ([]Listed, error) {
+	if err := checkRepo(owner, repo); err != nil {
+		return nil, err
+	}
+	listed, err := ranges(dir, owner, repo, "")
+	if err != nil {
+		return nil, err
+	}
+	slug := owner + "/" + repo
+	var of []Listed
+	for _, l := range listed {
+		if l.Err == nil && (l.Range.PR != pr || !strings.EqualFold(l.Range.Repo, slug)) {
+			continue
+		}
+		if l.Err != nil {
+			text, _ := os.ReadFile(l.Path)
+			lower := strings.ToLower(string(text))
+			if !strings.Contains(lower, "\n:pr: "+strconv.Itoa(pr)+"\n") || !strings.Contains(lower, "\n:repo: "+strings.ToLower(slug)+"\n") {
+				continue
+			}
+		}
+		of = append(of, l)
+	}
+	return of, nil
 }
 
 // Listed is a range record found by Ranges: its path, BASE and HEAD from
@@ -53,35 +90,48 @@ type Listed struct {
 	Err        error
 }
 
-// Ranges lists the range records in owner/repo whose file name has base as
-// its BASE, or every one where base is "", in file name order. A record
-// that cannot be read is listed with its Err, so each caller decides
-// whether to pass over it.
+// Ranges lists the range records whose file name has base as its BASE, or
+// every one where base is "", in file name order: those under ranges/, of
+// any repository, and, where owner and repo are a GitHub name rather than
+// "", those under owner/repo, but for one whose file name a
+// record under ranges/ has, which wins. A record that cannot be read is
+// listed with its Err, so each caller decides whether to pass over it.
 func Ranges(owner, repo, base string) ([]Listed, error) {
-	if err := checkRepo(owner, repo); err != nil {
-		return nil, err
+	return ranges(Dir(), owner, repo, base)
+}
+
+func ranges(dir, owner, repo, base string) ([]Listed, error) {
+	dirs := []string{filepath.Join(dir, "ranges")}
+	if checkRepo(owner, repo) == nil {
+		dirs = append(dirs, filepath.Join(dir, owner, repo))
 	}
-	dir := filepath.Join(Dir(), owner, repo)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var listed []Listed
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".org") || strings.HasPrefix(name, "pr-") || strings.HasPrefix(name, ".") {
+	byName := map[string]Listed{}
+	for _, in := range dirs {
+		entries, err := os.ReadDir(in)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		b, h, ok := strings.Cut(strings.TrimSuffix(name, ".org"), "..")
-		if !ok || (base != "" && b != base) {
-			continue
+		if err != nil {
+			return nil, err
 		}
-		path := filepath.Join(dir, name)
-		rec, err := ReadRange(path)
-		listed = append(listed, Listed{Path: path, Base: b, Head: h, Range: rec, Err: err})
+		for _, e := range entries {
+			name := e.Name()
+			if _, kept := byName[name]; kept || e.IsDir() || !strings.HasSuffix(name, ".org") ||
+				strings.HasPrefix(name, "pr-") || strings.HasPrefix(name, ".") {
+				continue
+			}
+			b, h, ok := strings.Cut(strings.TrimSuffix(name, ".org"), "..")
+			if !ok || (base != "" && b != base) {
+				continue
+			}
+			path := filepath.Join(in, name)
+			rec, err := ReadRange(path)
+			byName[name] = Listed{Path: path, Base: b, Head: h, Range: rec, Err: err}
+		}
+	}
+	listed := make([]Listed, 0, len(byName))
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		listed = append(listed, byName[name])
 	}
 	return listed, nil
 }

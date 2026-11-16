@@ -382,7 +382,8 @@ that the reply does not say it read, is a finding of the review's own,
 `UP-…`, settled like any other.
 
 Every reviewer gets a worktree of its own under
-`$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,
+`$XDG_CACHE_HOME/pr-review/ranges/work/` for a range, or
+`$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/` for a pull request, made without your git config,
 hooks, LFS filter or submodules, and removed after it. A pull request is
 fetched over HTTPS, pinned to the head GitHub reports. Reviewed from your
 clone of its repository, it is fetched into that clone as
@@ -396,9 +397,12 @@ operator and propose comments only, and its title, description, linked
 issues and review threads go in as the author's claims. Nothing is written
 to GitHub.
 
-The record of a range is `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/BASE..HEAD.org`,
-a round per reviewer per run, and a pull request's threads and drafted
-replies are `pr-N.org` beside it, which `pr-loop threads` writes too. Only
+The record of a range is `$XDG_STATE_HOME/agent-tools/reviews/ranges/BASE..HEAD.org`,
+BASE and HEAD being full commit IDs, so a repository with no GitHub origin
+has one too; it holds a round per reviewer per run. A record at
+`reviews/OWNER/NAME/BASE..HEAD.org` is read where it is, and a change to it
+is written under `ranges/`, which wins from then on. A pull request's threads and drafted
+replies are `reviews/OWNER/NAME/pr-N.org`, which `pr-loop threads` writes too. Only
 delegate and pr-loop write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
 reads them. delegate prints JSON and exits 0 with no open findings, 3 with

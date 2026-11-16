@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -254,31 +255,33 @@ func reviewSnapshot(g export.GitHub) (string, map[string]string) {
 }
 
 // recordsHash is the hash of pr's review records, OWNER/NAME#N: its range
-// records and its threads' record, by name and content; "" for none.
+// records, as record.PRRanges finds them, and its threads' record, by path
+// and content; "" for none.
 func recordsHash(pr string) string {
 	slug, n, _ := strings.Cut(pr, "#")
 	owner, repo, _ := strings.Cut(slug, "/")
-	if !record.ValidName(owner) || !record.ValidName(repo) {
+	number, err := strconv.Atoi(n)
+	if err != nil {
 		return ""
 	}
-	dir := filepath.Join(record.Dir(), owner, repo)
-	entries, _ := os.ReadDir(dir)
+	listed, _ := record.PRRanges(owner, repo, number)
+	var paths []string
+	for _, l := range listed {
+		paths = append(paths, l.Path)
+	}
+	if path, err := record.PRFile(owner, repo, number); err == nil {
+		paths = append(paths, path)
+	}
 	sum := sha256.New()
 	found := false
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".org") || strings.HasPrefix(name, ".") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		if name == "pr-"+n+".org" || strings.Contains(string(data), "\n:PR: "+n+"\n") {
-			fmt.Fprintf(sum, "%s\x00%d\x00", name, len(data))
-			sum.Write(data)
-			found = true
-		}
+		fmt.Fprintf(sum, "%s\x00%d\x00", path, len(data))
+		sum.Write(data)
+		found = true
 	}
 	if !found {
 		return ""
