@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -105,6 +107,31 @@ func TestBranchHint(t *testing.T) {
 		gitIn(t, linked, "switch", "-q", "-c", "other")
 		if c, _ := edit("s1", "Edit", filepath.Join(linked, "b.go")); !strings.Contains(c, "other in "+linked) {
 			t.Errorf("another branch in the same worktree: %q", c)
+		}
+	})
+
+	// A rebase stopped on a conflict is on the branch it rebases.
+	t.Run("a rebase in progress", func(t *testing.T) {
+		_, main, linked, edit := hinting(t)
+		for dir, text := range map[string]string{linked: "feature\n", main: "main\n"} {
+			os.WriteFile(filepath.Join(dir, "b.go"), []byte(text), 0o644)
+			gitIn(t, dir, "add", "b.go")
+			gitIn(t, dir, "commit", "-q", "-m", text)
+		}
+		edit("s1", "Edit", filepath.Join(linked, "b.go"))
+		rebase := exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "rebase", "main")
+		rebase.Dir, rebase.Env = linked, gitenv.Without(os.Environ())
+		if out, err := rebase.CombinedOutput(); err == nil {
+			t.Fatalf("the rebase did not stop: %s", out)
+		}
+		if c, _ := edit("s1", "Edit", filepath.Join(linked, "b.go")); c != "" {
+			t.Errorf("a rebase in progress: %q", c)
+		}
+		// Off the rebase, a detached HEAD is another branch.
+		gitIn(t, linked, "rebase", "--abort")
+		gitIn(t, linked, "switch", "-q", "--detach")
+		if c, _ := edit("s1", "Edit", filepath.Join(linked, "b.go")); !strings.Contains(c, "detached HEAD") {
+			t.Errorf("a detached HEAD: %q", c)
 		}
 	})
 
