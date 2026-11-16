@@ -83,6 +83,56 @@ func TestPost(t *testing.T) {
 	t.Run("skips worktrees and branches of scratch repositories", testPostSkipsScratchRepos)
 	t.Run("files a worktree at a scratch path", testPostFilesWorktreeInScratch)
 	t.Run("hands over the pull-requests skill", testPostPullRequests)
+	t.Run("hands over the retro skill", testPostRetro)
+}
+
+// A hand-back logged, or a sign-pass ID minted, is followed by the line
+// that hands over the retro skill; another log, or a call whose output
+// shows it failed, leaves it out.
+func testPostRetro(t *testing.T) {
+	claude := func(command, stdout string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
+			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": stdout, "stderr": ""}})
+		return string(event)
+	}
+	codex := func(command, output string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash", "turn_id": "t",
+			"tool_input": map[string]string{"command": command}, "tool_response": output})
+		return string(event)
+	}
+	handBack := "agent-plan log /n/plan.org --item P1 --kind handed-back --command 'git sign-pass' --dir /w"
+	handedBack := `{"event": "e1", "time": "[2026-11-16 Mon 11:24]", "kind": "handed-back", "item": "P1"}` + "\n"
+	done := `{"event": "e2", "time": "[2026-11-16 Mon 11:24]", "kind": "done", "item": "P1.S1"}` + "\n"
+	id := "20261116105936-retro.ngrok.1a2b3c4d\n"
+	for _, c := range []struct {
+		name, event string
+		want        bool
+	}{
+		{"handed-back logged", claude(handBack, handedBack), true},
+		{"handed-back with = after cd", claude("cd /w && agent-plan log /n/plan.org --item P1 --kind=handed-back", handedBack), true},
+		{"handed-back in bash -c", claude(`bash -c "`+handBack+`"`, handedBack), true},
+		{"handed-back from Codex", codex(handBack, "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n"+handedBack), true},
+		{"sign-id", claude("agent-plan sign-id --branch b", id), true},
+		{"sign-id after env and cd", claude("cd /w && env A=1 agent-plan sign-id --plan /n/plan.org --branch b", id), true},
+		{"sign-id from Codex", codex("agent-plan sign-id --branch b", "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n"+id), true},
+		{"done logged", claude("agent-plan log /n/plan.org --item P1.S1 --kind done", done), false},
+		{"done logged beside a printed hand-back", claude("agent-plan log /n/plan.org --item P1.S1 --kind done && cat /w/event.json", done+handedBack), false},
+		{"handed-back refused", claude(handBack, ""), false},
+		{"handed-back refused in Codex", codex(handBack, "Exit code: 2\nWall time: 0.1 seconds\nOutput:\nagent-plan: refused: no such item\n"), false},
+		{"sign-id refused in Codex", codex("agent-plan sign-id --branch b", "Exit code: 2\nWall time: 0.1 seconds\nOutput:\nagent-plan: refused: no plan of this host names session s\n"), false},
+		{"echo of a hand-back", claude("echo '"+handedBack+"'", handedBack), false},
+		{"echo of a sign-id", claude("echo 20261116105936-retro.ngrok.1a2b3c4d", id), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard)
+			got := strings.Contains(out.String(), "`retro` skill")
+			if got != c.want || got && (!strings.Contains(out.String(), "hookSpecificOutput") ||
+				!strings.Contains(out.String(), "agent-plan ask PLAN --kind retro")) {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
+	}
 }
 
 // A command that opens or edits a pull request is followed by the line

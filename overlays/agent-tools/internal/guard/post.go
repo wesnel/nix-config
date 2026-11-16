@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // post is `pr-loop guard --post`, after a shell call: the PostToolUse of
@@ -16,8 +18,9 @@ import (
 // session or worktree (recordFacts), and after a push to GitHub adds one
 // line of context naming the `pr-loop wait ci` to start, read from the
 // command's JSON output. After a command that opens or edits a pull
-// request, and on a session's first commit, it adds the line that hands
-// over the skill whose rules apply. Otherwise it prints nothing.
+// request, on a session's first commit, and after a command that logs a
+// hand-back or mints a sign-pass ID, as its output shows, it adds the line
+// that hands over the skill whose rules apply. Otherwise it prints nothing.
 func post(stdin io.Reader, stdout io.Writer) int {
 	var in struct {
 		ToolInput    json.RawMessage `json:"tool_input"`
@@ -46,6 +49,9 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	}
 	if writesPullRequest(args.Command, 0) {
 		lines = append(lines, pullRequestRules)
+	}
+	if ran := handsBack(args.Command, 0); ran["log"] && loggedHandBack(texts) || ran["sign-id"] && mintedSignID(texts) {
+		lines = append(lines, retroRules)
 	}
 	if len(lines) == 0 {
 		return 0
@@ -93,6 +99,75 @@ func writesPullRequest(text string, depth int) bool {
 		}
 	}
 	return found
+}
+
+// retroRules hands over the retro skill when a session hands its work back,
+// the moment its papercuts go into the plan and the hand-back.
+const retroRules = "You just logged a hand-back or minted a sign-pass ID. Load the `retro` skill, if it is not loaded, " +
+	"record each papercut of this session with `agent-plan ask PLAN --kind retro`, and list their IDs in the hand-back."
+
+// handsBack is what a command line runs that hands work back, each once:
+// "log" for `agent-plan log` with --kind handed-back, and "sign-id" for
+// `agent-plan sign-id`.
+func handsBack(text string, depth int) map[string]bool {
+	found := map[string]bool{}
+	if depth > maxDepth {
+		return found
+	}
+	v := visitor{
+		script: func(text string) string {
+			for name := range handsBack(text, depth+1) {
+				found[name] = true
+			}
+			return ""
+		},
+		call: func(c call) string {
+			c = c.named()
+			w := c.words
+			if len(w) < 2 || c.expands[0] || base(w[0]) != "agent-plan" {
+				return ""
+			}
+			switch {
+			case w[1] == "log" && contains(optionValues(w[2:], "-kind", "--kind"), "handed-back"):
+				found["log"] = true
+			case w[1] == "sign-id":
+				found["sign-id"] = true
+			}
+			return ""
+		},
+	}
+	for _, segment := range segments(text) {
+		if words, expands := split(segment); len(words) > 0 {
+			unwrap(call{words: words, expands: expands}, v)
+		}
+	}
+	return found
+}
+
+// loggedHandBack reports whether a tool's output texts hold the event
+// `agent-plan log` prints once it has logged a hand-back; a refused log
+// prints none.
+func loggedHandBack(texts []string) bool {
+	for _, event := range jsonObjects(texts) {
+		if event["kind"] == "handed-back" {
+			return true
+		}
+	}
+	return false
+}
+
+// mintedSignID reports whether a line of a tool's output texts is the ID
+// `agent-plan sign-id` prints once it has minted one; a refused call
+// prints none.
+func mintedSignID(texts []string) bool {
+	for _, text := range texts {
+		for _, line := range strings.Split(text, "\n") {
+			if plans.CheckSignID(strings.TrimSpace(line)) == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pushes reports whether a command line runs a command that pushes to
