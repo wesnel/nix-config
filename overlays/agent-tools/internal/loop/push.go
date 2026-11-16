@@ -388,7 +388,7 @@ func (u *uploader) blob(sha string) error {
 }
 
 func (u *uploader) tree(sha string) error {
-	out, err := git.Bytes(nil, "ls-tree", "-z", sha)
+	out, err := git.Bytes(nil, "ls-tree", "--full-tree", "-z", sha)
 	if err != nil {
 		return err
 	}

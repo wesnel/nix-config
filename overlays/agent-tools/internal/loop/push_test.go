@@ -282,6 +282,23 @@ func TestPush(t *testing.T) {
 		}
 	})
 
+	// git lists a tree, run in a subdirectory, as only the entries under
+	// that directory, unless told to list it whole.
+	t.Run("run from a subdirectory", func(t *testing.T) {
+		f, dir, _ := pushStack(t)
+		f.drafts["lower"] = true
+		gitIn(t, dir, "switch", "-q", "lower")
+		sub := filepath.Join(dir, "d", "e")
+		os.MkdirAll(sub, 0o755)
+		os.WriteFile(filepath.Join(sub, "x"), []byte("x\n"), 0o644)
+		gitIn(t, dir, "add", "d")
+		gitIn(t, dir, "commit", "-qm", "Add d/e/x")
+		useDir(t, filepath.Join(dir, "d"))
+		if _, err := Push([]string{"lower"}, nil, false); err != nil || !onGitHub(t, f, dir, "lower") {
+			t.Errorf("pushing from a subdirectory: %v", err)
+		}
+	})
+
 	// An amend keeps the message, so the lease the first refusal names
 	// must not carry the changed commit onto a ready PR.
 	// Whitespace counts: an indent is a change in Python, YAML or a Makefile.
