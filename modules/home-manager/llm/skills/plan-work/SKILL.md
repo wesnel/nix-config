@@ -254,11 +254,14 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   `pushed` for every push, and adds new worktrees, branches and pull
   requests to the plan's properties, in the plan of the session, else of
   the linked worktree it ran in, never of the repository's main checkout;
-  `agent-plan log` refuses both. A commit no plan takes, such as one in
-  the main checkout by a session no plan names, makes a plan for it, "Unplanned work in" its repository, which names the
-  session and worktree; give it a goal and steps, or say in your report
-  which plan the work belongs to. Which step a commit completes stays
-  yours to log.
+  `agent-plan log` refuses both. The session's plan takes a commit only
+  where its `WORKTREES` name a worktree of the commit's repository (the
+  same git common dir). A commit in a repository under `/tmp`,
+  `/private/tmp` or `$TMPDIR` is logged nowhere. Any other commit goes to
+  a plan "Unplanned work in" its repository, made where there is none,
+  which names the worktree, and the session too when the session had no
+  plan; give it a goal and steps, or say in your report which plan the
+  work belongs to. Which step a commit completes stays yours to log.
 - For a step completed by a commit, run `log --revision REF` in its
   worktree. It resolves the full commit ID, the commit's identity in any
   repository, and derives the subject; `--kind done` and `verified` take

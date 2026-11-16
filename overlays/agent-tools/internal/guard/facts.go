@@ -284,7 +284,13 @@ func recordPrintedCommits(c plans.Config, session string, g gitCall, output stri
 	return context
 }
 
+// recordCommitFact files the commit r in the plan RecordCommit picks,
+// unless its repository is scratch, made to try something, which is no
+// plan's work.
 func recordCommitFact(c plans.Config, session, dir string, r reflogCommit, logged map[string]bool, now time.Time) (context []string) {
+	if inScratchRepo(dir) {
+		return nil
+	}
 	who := session
 	if strings.ContainsAny(who, " \t\r\n") {
 		who = ""
