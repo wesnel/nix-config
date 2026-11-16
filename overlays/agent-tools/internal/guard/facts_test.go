@@ -143,10 +143,10 @@ func testPostLinksPlans(t *testing.T) {
 // git printed nothing for it (-q) and the shell ran in another checkout,
 // reaching the worktree through git -C or cd, as an agent whose guard
 // refuses cd before most commands commits. A quiet commit that made
-// nothing logs nothing, nor logs again a commit already logged.
+// nothing logs nothing, nor logs again a commit already logged. The
+// repository has no remote: plain git is enough to find the commits.
 func testPostRecordsQuietCommits(t *testing.T) {
 	main, linked, p := planned(t)
-	gitOut(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
 	// s2 is a session no plan names, so the worktree alone finds the part.
 	post := func(command, stdout string) {
 		t.Helper()

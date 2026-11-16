@@ -403,17 +403,9 @@ type reflogCommit struct{ revision, branch, subject string }
 // oldest first. Each commit call makes at most one commit, so they are
 // among the top calls entries of HEAD's reflog: those git commit wrote in
 // the last reflogWindow, skipping those this call recorded (logged), down
-// to the first any plan has already recorded. Without an owner/name
-// identity for origin no plan's record can be checked, so it returns none.
+// to the first any plan has already recorded, by its object ID.
 func reflogCommits(c plans.Config, dir string, calls int, logged map[string]bool, now time.Time) []reflogCommit {
 	state := gitState{dir: dir}
-	repository := ""
-	if identity, err := plans.CommitIdentity(toplevel(dir), "HEAD"); err == nil {
-		repository = identity.Repository
-	}
-	if repository == "" {
-		return nil
-	}
 	text, ok := state.run("log", "-g", "-n", fmt.Sprint(calls), "--format=%H%x1f%ct%x1f%gs%x1f%s", "HEAD")
 	if !ok {
 		return nil
@@ -432,7 +424,7 @@ func reflogCommits(c plans.Config, dir string, calls int, logged map[string]bool
 		if logged[f[0]] {
 			continue
 		}
-		if known, err := c.Commits(plans.CommitOptions{Repository: repository, Revision: f[0]}); err != nil || len(known) > 0 {
+		if known, err := c.Commits(plans.CommitOptions{Revision: f[0]}); err != nil || len(known) > 0 {
 			break
 		}
 		out = append(out, reflogCommit{revision: f[0], branch: branch, subject: f[3]})
