@@ -6,6 +6,7 @@ The task gives you:
 
 - the range, and where to read the tree at TIP;
 - the goal statement: what the change is for, and what is not its job;
+- the repository's instruction docs at BASE, for the convention check;
 - optionally, the items the change answers (review threads, CI checks,
   earlier findings) and how each was settled;
 - optionally, `git red-check` JSON for the range: whether each commit's
@@ -30,11 +31,14 @@ The task gives you:
   good result, once you have read every changed hunk of `git diff BASE TIP`.
   Reply with no findings only then; a hunk you could not read goes in
   `unverified`.
-- A rule the repository writes down for its code, in its CONTRIBUTING.md,
-  AGENTS.md, CLAUDE.md or a style guide it keeps, is part of what the
-  change must meet: read those docs as they stand at BASE, since the change
-  may edit them, and report a breach as `convention`. A preference no such
-  doc states is not a finding.
+- A rule the repository writes down for its code is part of what the
+  change must meet. The task's Instruction docs lists the repository's
+  agent, contributor and review-bot instructions and the docs they name; a
+  style guide or other doc they lead you to counts too. Read each as it
+  stands at BASE, since the change may edit them, check every changed hunk
+  against the rules that apply to it, and report a breach as
+  `convention`. A listed doc you could not read goes in `unverified`. A
+  preference no such doc states is not a finding.
 
 ## Checks
 

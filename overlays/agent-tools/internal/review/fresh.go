@@ -213,7 +213,10 @@ type inputs struct {
 	// adequacy is what the reviewer is told of test adequacy, beside
 	// red-check's results.
 	adequacy string
-	where    string
+	// instructions is the general review's list of the repository's
+	// instruction docs at BASE; "" for every other review.
+	instructions string
+	where        string
 	// contract is a focused review's instructions, in place of Contract,
 	// and focused the sections it adds: threat notes, the Reverting
 	// section and overlapping branches.
@@ -251,6 +254,7 @@ func prompt(in inputs) string {
 	fmt.Fprintf(&b, "\n# This review\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.r.tip, in.r.given, in.r.commits, in.where)
 	fmt.Fprintf(&b, "\n## Goal statement\n\n%s\n", redact.Secrets(strings.TrimSpace(in.goal)))
+	b.WriteString(in.instructions)
 	// Items and earlier findings carry threads and CI logs.
 	if s := strings.TrimSpace(in.items); s != "" {
 		fmt.Fprintf(&b, "\n## Items\n\n%s\n", redact.Secrets(s))
