@@ -17,6 +17,7 @@
         };
 
         codex.enable = true;
+        colima.enable = true;
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;

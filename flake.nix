@@ -163,6 +163,7 @@
       ./modules/home-manager/bash
       ./modules/home-manager/claude
       ./modules/home-manager/codex
+      ./modules/home-manager/colima
       ./modules/home-manager/emacs
       ./modules/home-manager/fish
       ./modules/home-manager/fonts
