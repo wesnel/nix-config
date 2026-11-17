@@ -428,6 +428,73 @@ func TestOwners(t *testing.T) {
 		{"owner's mkdir under $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"mkdir \"$TMPDIR/lock\""}}`, nil},
 		{"owner's log under $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"bash -c 'go vet ./... 2>\"$TMPDIR/vet.log\"'"}}`, nil},
 		{"owner's mkdir of a variable's path, run in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"mkdir \"$L\""}}`, []string{"LINKED"}},
+		// From the main checkout, writes that all land in scratch pass and
+		// any that may land in the checkout are refused. A variable is
+		// followed only where the line starts by assigning it a value the
+		// guard can read, and binds it nowhere else, the shell does not set
+		// it, and its reference ends a word or a path's part, leaving no
+		// other expansion in the word.
+		{"main thread's printf into $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"printf x > $TMPDIR/out.sh"}}`, nil},
+		// The guard does not read the script; only the redirection is judged.
+		{"main thread's scratch script redirected into scratch, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"bash SCRATCH/gen > SCRATCH/out"}}`, nil},
+		{"main thread's cp into a variable's scratch directory, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; cp a.go $D/a.go"}}`, nil},
+		{"main thread's loop redirecting into scratch through a variable and a loop variable, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in bash zsh; do bash $D/gen-$s > \"$D/out-$s\"; done"}}`, nil},
+		{"main thread's write through a variable and another expansion", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > $D/$x"}}`, []string{"worktree"}},
+		{"main thread's write through OLDPWD, which cd sets", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"OLDPWD=SCRATCH; cd .; printf x > $OLDPWD/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through PWD, which the shell sets", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"PWD=SCRATCH; printf x > $PWD/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a zsh modifier", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH/flake.nix; printf x > $D:t"}}`, []string{"worktree"}},
+		{"main thread's write through a zsh subscript", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > $D[1]"}}`, []string{"worktree"}},
+		{"main thread's write through a variable after eval", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; eval \"$(cat SCRATCH/s)\"; printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable after a sourced script", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; . SCRATCH/s.sh; printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's sed -i in the main checkout", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"sed -i s/a/b/ flake.nix"}}`, []string{"worktree"}},
+		{"main thread's shell loop writing scratch by absolute paths, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"for s in bash zsh fish; do sed \"s#OUT#SCRATCH/out-$s.sh#\" SCRATCH/gen.txt > SCRATCH/g-$s; $s SCRATCH/g-$s; done; cmp SCRATCH/out-bash.sh SCRATCH/out-zsh.sh"}}`, nil},
+		{"main thread's shell loop writing scratch through a variable and a loop variable", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in bash zsh fish; do sed \"s#OUT#$D/out-$s.sh#\" $D/gen.txt > $D/g-$s; $s $D/g-$s; done; cmp $D/out-bash.sh $D/out-zsh.sh"}}`, nil},
+		// A loop variable is followed only over a list of literal names,
+		// none a path, in the last part of the target, and each name is
+		// judged.
+		{"main thread's loop over a parent directory", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a ..; do cp a.go $D/$s; done"}}`, []string{"worktree"}},
+		{"main thread's loop over a path", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a ../main/b; do printf x > $D/$s; done"}}`, []string{"worktree"}},
+		{"main thread's loop over a variable's words", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in $X; do printf x > $D/$s; done"}}`, []string{"worktree"}},
+		{"main thread's loop variable before the last part of the target", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a b; do printf x > $D/$s/x; done"}}`, []string{"worktree"}},
+		{"main thread's loop variable bound again", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a b; do read s; printf x > $D/$s; done"}}`, []string{"worktree"}},
+		{"main thread's loop variable used before its loop", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > $D/$s; for s in a; do :; done"}}`, []string{"worktree"}},
+		{"main thread's loop over a name linked into the main checkout", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a to-main; do cp a.go $D/$s; done"}}`, []string{"worktree"}},
+		{"main thread's loop in a subshell", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; (for s in a; do :; done); printf x > $D/$s"}}`, []string{"worktree"}},
+		{"main thread's loop variable after its loop", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for s in a; do :; done; printf x > $D/$s"}}`, []string{"worktree"}},
+		{"main thread's loop in a pipeline", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; true | for s in a; do :; done; printf x > $D/$s"}}`, []string{"worktree"}},
+		// A line with a word that may bind a variable the guard does not
+		// see resolves none.
+		{"main thread's write through a variable after a sourced script in braces", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; { . SCRATCH/s.sh; }; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a variable after a sourced script as a condition", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; if . SCRATCH/s.sh; then :; fi; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a variable printf -v binds", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf -vD %s MAIN; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a variable read -ra binds", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; read -raD < /dev/null; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a quoted assignment, which runs a command", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"\"D\"=SCRATCH; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's touch through a variable and a glob", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; touch $D/*/new"}}`, []string{"worktree"}},
+		{"main thread's write through zsh's match, which =~ sets", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"match=SCRATCH; [[ $PWD =~ '(.*)' ]]; printf x > $match/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a variable print -v binds", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; print -vD MAIN; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"main thread's write through a variable wait -p binds", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; wait -pD; printf x > $D/flake.nix"}}`, []string{"worktree"}},
+		{"owner's write into scratch through a variable, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > $D/out.sh"}}`, nil},
+		{"main thread's write through a variable under $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=\"$TMPDIR/gen\" && printf x > \"$D/out.sh\""}}`, nil},
+		{"main thread's heredoc and loop in $TMPDIR by absolute paths, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"cat > $TMPDIR/gen.txt <<'X'\necho hi\nX\nfor s in bash zsh fish; do sed \"s#OUT#$TMPDIR/out-$s.sh#\" $TMPDIR/gen.txt > $TMPDIR/g-$s; $s $TMPDIR/g-$s; done; cmp $TMPDIR/out-bash.sh $TMPDIR/out-zsh.sh"}}`, nil},
+		// Past the cd's && chain the line runs in the main checkout if the cd
+		// failed, so a relative write there may land in it.
+		{"main thread's relative writes after cd to $TMPDIR and a newline", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"cd \"$TMPDIR\" && cat > gen.txt <<'X'\necho hi\nX\nfor s in bash zsh fish; do sed \"s#OUT#out-$s.sh#\" gen.txt > g-$s; $s g-$s; done; cmp out-bash.sh out-zsh.sh"}}`, []string{"worktree"}},
+		{"main thread's relative writes in cd's && chain to $TMPDIR", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"cd \"$TMPDIR\" && printf x > gen.txt && bash gen.txt > out.txt"}}`, nil},
+		{"main thread's write through an unassigned variable, run in the main checkout", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"printf x > $OUT/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned the main checkout", true, `{"tool_name":"Bash","cwd":"SCRATCH","tool_input":{"command":"D=MAIN; printf x > $D/a.go"}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned only if a test fails", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"test -d SCRATCH || D=SCRATCH; printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned in a subshell", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"(D=SCRATCH); printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned in a pipeline", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH | cat; printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned again", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; D=$(pwd); printf x > $D/a.go"}}`, []string{"worktree"}},
+		{"main thread's write through a variable a loop binds again", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; for D in . ..; do printf x > $D/a.go; done"}}`, []string{"worktree"}},
+		{"main thread's write to an escaped variable's name", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > \\$D/$s"}}`, []string{"worktree"}},
+		{"main thread's write to a single-quoted variable's name", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH; printf x > '$D'/\"$s\""}}`, []string{"worktree"}},
+		{"main thread's write through a variable assigned for one command alone", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D=SCRATCH printf x > $D/a.sh"}}`, []string{"worktree"}},
+		{"main thread's write through a variable whose value names TMPDIR the line changed", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"TMPDIR=.; D=\"$TMPDIR\"; printf x > \"$D/flake.nix\""}}`, []string{"worktree"}},
+		{"main thread's write through a variable holding a quoted tilde", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D='~/..'; mkdir -p \"$D\"; printf x > \"$D/flake.nix\""}}`, []string{"worktree"}},
+		{"main thread's write through a variable whose value holds its own name, run in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"out=\"$TMPDIR/out\"; printf x > \"$out/a.sh\""}}`, nil},
+		{"main thread's cp through a variable split at a changed IFS", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"IFS=/; D=SCRATCH; cp a.go $D/a.go"}}`, []string{"worktree"}},
+		{"main thread's cp through a variable the shell splits", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"D='SCRATCH x'; cp a.go $D/a.go"}}`, []string{"worktree"}},
 		// A redirection before the program is judged where it is, and the
 		// program after it by its name.
 		{"owner's write into the main checkout, redirected first", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":">MAIN/a.go echo x"}}`, []string{"LINKED"}},

@@ -3,8 +3,10 @@ package guard
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -373,11 +375,15 @@ var operationExits = map[string]map[string]bool{
 // shellEditPaths are the absolute paths of the files a command line
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
-// as command does. Each file is named as fencePath has it.
+// as command does. Each file is named as fencePath has it, once the
+// variables leadingAssignments and loopVariables give are in place: a
+// command is judged once for each word of a loop it names.
 func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]string, string) {
 	if depth > maxDepth {
 		return nil, ""
 	}
+	known := leadingAssignments(text)
+	loops := loopVariables(text, known)
 	var out []string
 	w := cwds{here: []string{dir}}
 	end := ""
@@ -417,14 +423,26 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 			continue
 		}
 		end = ends[i]
-		c := call{words: words, expands: expands}
-		w.begin(c)
-		if reason := unwrap(c, v); reason != "" {
+		variants := expansions(words, expands, known, loops, i)
+		w.begin(call{words: variants[0], expands: expands})
+		if reason := unwrapEach(variants, expands, v); reason != "" {
 			return nil, reason
 		}
 		w.next(end)
 	}
 	return out, ""
+}
+
+// unwrapEach hands v each of a segment's expansions in turn, the words of
+// one command as expansions gives them, and returns the first denial's
+// reason, or "".
+func unwrapEach(variants [][]string, expands []bool, v visitor) string {
+	for _, words := range variants {
+		if reason := unwrap(call{words: words, expands: expands}, v); reason != "" {
+			return reason
+		}
+	}
+	return ""
 }
 
 func editPathsInDirs(text string, dirs []string, depth int, creatingWorktree bool) (out []string, reason string) {
@@ -490,6 +508,350 @@ func fencePath(word, cwd string) string {
 		return "/"
 	}
 	return physical(rawPath(strings.Join(parts[:i], "/"), cwd))
+}
+
+// assignedValues maps a variable's name to the value a command line has
+// given it, as leadingAssignments finds them.
+type assignedValues map[string]string
+
+// leadingAssignments are the variables a command line gives a value before
+// it runs anything, which hold wherever the line uses them: the segments
+// that open the line hold only NAME=VALUE words, outside any subshell,
+// pipeline or background job, and end with ;, && or a newline, so every
+// one has run before the first command. A value counts where
+// readableValue can tell it and it holds nothing the shell would expand,
+// split or read as syntax where the variable is used. A name
+// that appears anywhere else on the line other than as $NAME or ${NAME},
+// where something may bind it again (a second assignment, for NAME in,
+// read NAME, unset NAME, ${NAME:=x}), is left out, and so stays the shell's
+// to decide; so is one the line names after a $ the shell leaves as it is
+// (quotedNames), since split, which takes quotes off, no longer tells that
+// $NAME from one the shell expands. So is one of shellSet, which the shell
+// binds without the line naming it. A line that names IFS, which decides
+// where the shell splits an unquoted $NAME, or runs code the guard does
+// not read in this shell (runsUnread), has none.
+func leadingAssignments(text string) assignedValues {
+	known := assignedValues{}
+	if bindings(text, "IFS") > 0 || runsUnread(text) {
+		return known
+	}
+	assigned := map[string]int{}
+	quoted := quotedNames(text)
+	words, expands := leadingAssignmentWords(text)
+	for j, w := range words {
+		name, value, _ := strings.Cut(w, "=")
+		assigned[name]++
+		if value, ok := readableValue(text, value, expands[j], quoted); ok {
+			known[name] = value
+		} else {
+			delete(known, name)
+		}
+	}
+	for name := range known {
+		if bindings(text, name) != 1 || assigned[name] != 1 || quoted[name] || shellSet[name] {
+			delete(known, name)
+		}
+	}
+	return known
+}
+
+// shellSet are the variables bash or zsh binds itself, as cd does PWD and
+// OLDPWD, read REPLY and getopts OPTARG, or through another name tied to
+// it, as zsh's path is to PATH. Their values are the shell's to decide.
+var shellSet = set("PWD", "OLDPWD", "REPLY", "OPTARG", "OPTIND", "_", "RANDOM", "SRANDOM", "SECONDS",
+	"EPOCHSECONDS", "EPOCHREALTIME", "LINENO", "PPID", "UID", "EUID", "GID", "EGID", "SHLVL", "HOSTNAME",
+	"PIPESTATUS", "BASH_REMATCH", "BASH_COMMAND", "MATCH", "MBEGIN", "MEND", "match", "mbegin", "mend",
+	"BASHPID", "GROUPS", "FUNCNAME", "HISTCMD", "status", "pipestatus", "argv",
+	"PATH", "path", "CDPATH", "cdpath", "FPATH", "fpath", "MANPATH", "manpath", "MAILPATH", "mailpath",
+	"MODULE_PATH", "module_path", "IFS")
+
+// binders are the commands that may bind a variable the guard does not see
+// bound: by code it does not read (., source, eval), or by a name attached
+// to an option or built at run time (read -raD).
+var binders = set(".", "source", "eval", "read", "mapfile", "readarray", "declare", "typeset", "local",
+	"export", "unset", "getopts")
+
+// nameOptions are the commands that bind a variable named by an option's
+// value, which may be attached to it (printf -vD), by that option.
+var nameOptions = map[string]string{"printf": "-v", "print": "-v", "wait": "-p"}
+
+// runsUnread reports whether any word of a command line, in any position,
+// is one of binders, or one after a command of nameOptions starts with its
+// option: a blunt check, so that a line which may bind a variable out of
+// the guard's sight has no variable followed.
+func runsUnread(text string) bool {
+	for _, segment := range segments(text) {
+		words, _ := split(segment)
+		var options []string
+		for _, w := range words {
+			if binders[w] || slices.ContainsFunc(options, func(o string) bool { return strings.HasPrefix(w, o) }) {
+				return true
+			}
+			if o, ok := nameOptions[w]; ok {
+				options = append(options, o)
+			}
+		}
+	}
+	return false
+}
+
+// readableValue is value, an assignment's on text that the shell expands
+// where expanded says, as the shell gives it, with $TMPDIR and $HOME in
+// their place (shellPath); ok is false where the guard cannot tell it. It
+// cannot where the value names a variable the line binds or names after a
+// literal $ (quotedNames), since shellPath reads $TMPDIR and $HOME from the
+// guard's own environment, nor where it starts with ~, which split cannot
+// tell quoted, and so kept, from expanded.
+func readableValue(text, value string, expanded bool, quoted map[string]bool) (string, bool) {
+	if strings.HasPrefix(value, "~") {
+		return "", false
+	}
+	for _, m := range variable.FindAllStringSubmatch(value, -1) {
+		if name := m[1] + m[2]; bindings(text, name) > 0 || quoted[name] {
+			return "", false
+		}
+	}
+	value = shellPath(value, expanded)
+	return value, value != "" && !strings.ContainsAny(value, " \t\n$`*?[]~<>|&;(){}'\"\\")
+}
+
+// leadingAssignmentWords are the NAME=VALUE words of the segments that open
+// a command line, as leadingAssignments takes them, with whether the shell
+// expands each. A segment that runs a command after its assignments, which
+// then hold for that command alone, ends them, as does one whose word has a
+// quote before its = as written ("D"=x), which the shell runs as a command.
+func leadingAssignmentWords(text string) (words []string, expands []bool) {
+	texts, background, ends, nested := backgroundSegments(text)
+	for i, segment := range texts {
+		w, x := split(segment)
+		if nested[i] || background[i] || !slices.Contains([]string{";", "\n", "&&", ""}, ends[i]) ||
+			len(w) == 0 && ends[i] == "&&" || slices.ContainsFunc(w, func(s string) bool { return !assignedAsWritten(s, segment) }) {
+			return words, expands
+		}
+		words, expands = append(words, w...), append(expands, x...)
+	}
+	return words, expands
+}
+
+// assignedAsWritten reports whether word, as split gives it from segment,
+// is an assignment there: NAME= stands unquoted at the start of a word of
+// segment.
+func assignedAsWritten(word, segment string) bool {
+	if !assignment.MatchString(word) {
+		return false
+	}
+	name, _, _ := strings.Cut(word, "=")
+	return regexp.MustCompile(`(^|[ \t])` + name + `=`).MatchString(segment)
+}
+
+var leadingName = regexp.MustCompile(`^\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// quotedNames are the names that follow a $ the shell leaves as it is: one
+// escaped with a backslash, or inside single quotes.
+func quotedNames(text string) map[string]bool {
+	out := map[string]bool{}
+	quote := byte(0)
+	for i := 0; i < len(text); i++ {
+		c, literal := text[i], false
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+			literal = c == '$'
+		case c == '\\' && i+1 < len(text):
+			i++
+			literal = text[i] == '$'
+		case c == '"' && quote == '"':
+			quote = 0
+		case quote == 0 && (c == '"' || c == '\''):
+			quote = c
+		}
+		if m := leadingName.FindStringSubmatch(text[i+1:]); literal && m != nil {
+			out[m[1]] = true
+		}
+	}
+	return out
+}
+
+var identifier = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// bindings counts the places in text that name appears other than as a
+// reference, $NAME or ${NAME}, or as part of a path, next to a / or a .,
+// and where it ends a word or is followed by what a binding's name is
+// (=, +=, [, a redirection, :, or a closing ) or }): each may bind it.
+// Elsewhere, such as s in sed's s#a#b#, no shell syntax binds it.
+func bindings(text, name string) int {
+	n := 0
+	for _, m := range identifier.FindAllStringIndex(text, -1) {
+		start, end := m[0], m[1]
+		if text[start:end] != name {
+			continue
+		}
+		dollar := start > 0 && text[start-1] == '$'
+		braced := start > 1 && text[start-2:start] == "${" && end < len(text) && text[end] == '}'
+		path := start > 0 && strings.ContainsRune("/.", rune(text[start-1])) || end < len(text) && strings.ContainsRune("/.", rune(text[end]))
+		bound := end == len(text) || strings.ContainsRune(" \t\n=+[;&|()}<>:\"'\\`", rune(text[end]))
+		if !dollar && !braced && !path && bound {
+			n++
+		}
+	}
+	return n
+}
+
+// reference is $NAME or ${NAME} where it ends a word or a path's part, as
+// expand takes it: anything else after it, such as zsh's :t modifier or a
+// [..] subscript, changes what it gives.
+var reference = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(/|$)`)
+
+// expand is words with each reference that known gives a value replaced by
+// it, in the words the shell expands, and, where loop names a variable,
+// each reference to it in a word's last part replaced by value, where that
+// leaves the word nothing more to expand, glob characters included; any
+// other word is left as written.
+func (known assignedValues) expand(words []string, expands []bool, loop, value string) []string {
+	out := slices.Clone(words)
+	for i, w := range words {
+		if !expands[i] {
+			continue
+		}
+		r := reference.ReplaceAllStringFunc(withLoopValue(w, loop, value), func(ref string) string {
+			m := reference.FindStringSubmatch(ref)
+			if value, ok := known[m[1]+m[2]]; ok {
+				return value + m[3]
+			}
+			return ref
+		})
+		if !strings.ContainsAny(r, "$`*?[") {
+			out[i] = r
+		}
+	}
+	return out
+}
+
+// loopVariable is a for loop's variable as loopVariables takes it: the
+// words it runs over, and the segments of the line its loop starts and
+// ends at; the segments between them are its body.
+type loopVariable struct {
+	words    []string
+	from, to int
+}
+
+// loopName is a word of a loop's list that loopVariables follows: a
+// literal file name.
+var loopName = regexp.MustCompile(`^[A-Za-z0-9._,+=@%-]+$`)
+
+// loopVariables are the variables of the line's `for NAME in WORD...`
+// loops, by the segment of backgroundSegments each loop starts at, where
+// every word is a literal file name, never . or .., so that a reference to
+// NAME in a path's last part names a file in the same directory whichever
+// word it takes; and where that for alone binds NAME, the shell does not
+// set it, the line does not name it after a literal $ (quotedNames), no
+// leading assignment gives it, and the for is not in a subshell, pipeline
+// or background job, nor on a line runsUnread finds.
+func loopVariables(text string, known assignedValues) map[string]loopVariable {
+	loops := map[string]loopVariable{}
+	if runsUnread(text) {
+		return loops
+	}
+	quoted := quotedNames(text)
+	texts, background, ends, nested := backgroundSegments(text)
+	for i := range texts {
+		words, expands := leadingWords(texts[i])
+		if len(words) < 4 || words[0] != "for" || words[2] != "in" || slices.Contains(expands[:3], true) ||
+			nested[i] || background[i] || ends[i] == "|" || i > 0 && ends[i-1] == "|" {
+			continue
+		}
+		name, list := words[1], words[3:]
+		_, assigned := known[name]
+		if assigned || shellSet[name] || quoted[name] || bindings(text, name) != 1 || len(list) > 32 ||
+			slices.Contains(expands[3:], true) || slices.ContainsFunc(list, notFileName) {
+			continue
+		}
+		loops[name] = loopVariable{words: list, from: i, to: loopEnd(texts, i)}
+	}
+	return loops
+}
+
+// leadingWords are a segment's words, as split gives them, from the first
+// that is not a shell keyword.
+func leadingWords(segment string) ([]string, []bool) {
+	words, expands := split(segment)
+	for len(words) > 0 && !expands[0] && keywords[words[0]] {
+		words, expands = words[1:], expands[1:]
+	}
+	return words, expands
+}
+
+// loopEnd is the segment of texts that holds the done closing the loop
+// that starts at segment from, or len(texts) where none does.
+func loopEnd(texts []string, from int) int {
+	depth := 0
+	for i := from + 1; i < len(texts); i++ {
+		words, _ := leadingWords(texts[i])
+		switch {
+		case len(words) == 0:
+		case words[0] == "for" || words[0] == "while" || words[0] == "until" || words[0] == "select":
+			depth++
+		case words[0] == "done" && depth == 0:
+			return i
+		case words[0] == "done":
+			depth--
+		}
+	}
+	return len(texts)
+}
+
+// expansions are words as expand gives them, once for each word of the loop
+// variable they name, a segment of its loop's body, or once with no
+// loop variable where they name none, or more than one, or change
+// directory, which the guard follows once.
+func expansions(words []string, expands []bool, known assignedValues, loops map[string]loopVariable, segment int) [][]string {
+	names := map[string]bool{}
+	for i, w := range words {
+		for _, m := range variable.FindAllStringSubmatch(w, -1) {
+			if l, ok := loops[m[1]+m[2]]; ok && expands[i] && l.from < segment && segment < l.to {
+				names[m[1]+m[2]] = true
+			}
+		}
+	}
+	if len(names) != 1 || slices.Contains(words, "cd") || slices.Contains(words, "pushd") {
+		return [][]string{known.expand(words, expands, "", "")}
+	}
+	named := slices.Collect(maps.Keys(names))[0]
+	var out [][]string
+	for _, value := range loops[named].words {
+		out = append(out, known.expand(words, expands, named, value))
+	}
+	return out
+}
+
+// withLoopValue is word with each reference to the variable loop in its
+// last part replaced by value, where the part holds nothing else to expand
+// and stays a file name of this directory (loopName); otherwise word as
+// written. A reference before the last part stays, so expand leaves such a
+// word as written.
+func withLoopValue(word, loop, value string) string {
+	if loop == "" {
+		return word
+	}
+	cut := strings.LastIndex(word, "/") + 1
+	last := variable.ReplaceAllStringFunc(word[cut:], func(ref string) string {
+		if m := variable.FindStringSubmatch(ref); m[1]+m[2] == loop {
+			return value
+		}
+		return ref
+	})
+	if notFileName(last) {
+		return word
+	}
+	return word[:cut] + last
+}
+
+// notFileName reports whether a word is other than a literal name of a
+// file in a directory, as loopName has it, or is . or ...
+func notFileName(word string) bool {
+	return word == "." || word == ".." || !loopName.MatchString(word)
 }
 
 // gitWritePaths names the absolute paths a git command, run in cwd, writes,
