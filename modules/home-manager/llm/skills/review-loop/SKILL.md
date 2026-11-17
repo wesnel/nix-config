@@ -46,6 +46,15 @@ Each PR exists to deliver its Linear ticket. Its scope statement (Setup
 below) is its goal statement, against which every proposed change is
 measured as the `review-change` skill's goal statement says.
 
+The decisions of the plan the PR was written under (Setup step 4) bind it
+too. A thread asking for what one of them rejected is settled as the
+`review-change` skill's Triage says, with that decision's reason as the
+evidence: `rebut` where the reason shows the suggestion wrong for this
+code, `defer` where it puts the work outside the PR's goal. The reply
+restates the reason in words a reader of the PR alone follows. Where the
+reason no longer holds, the thread is `needs-operator`: reopening a
+settled decision is the operator's call.
+
 ## Setup
 
 1. `pr-loop stack` from each PR's branch. If `linear` is false, stop and
@@ -67,7 +76,22 @@ measured as the `review-change` skill's goal statement says.
    which runs the setup command the operator configured for the repository,
    such as generating files it does not commit. If a setup fails, stop and
    hand back its output.
-4. `pr-loop threads <number>` for each PR, which also writes the PR's
+4. Find the plan each PR was written under, any host's. In the PR's
+   worktree, run `agent-plan commits --repo OWNER/NAME --revision OID` for
+   each of the PR's own commits, its `fixup!` commits left out (`git log
+   --format='%H %s' BASE..HEAD`), and keep the associations whose subject
+   is the commit's own: a `fixup!` subject belongs to a review loop's plan.
+   Each kept association's `plan` names the plan, and its `item` the step
+   or part that made the commit, a part's starting with its ID (`P2`,
+   `P2.S1`). Link it with `agent-plan link PLAN NAME --why '#12 was
+   written under it'`, and read, before triage, its goal (`agent-plan goal
+   NAME`, with `--part P2` for a part) and the decisions that bind the PR:
+   for the plan, `agent-plan decisions NAME`; for a part, `agent-plan
+   decisions NAME --all`, keeping the plan's own and that part's (IDs
+   starting `P2.`).
+   Scope above says how they bind it. A PR whose commits no plan logged
+   has none.
+5. `pr-loop threads <number>` for each PR, which also writes the PR's
    review record.
 
 ## Bots mode: each round
