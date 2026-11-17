@@ -357,7 +357,10 @@ have (see status) is refused and writes nothing.
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
                      that edits files in the worktree DIR (OWNERS in the plan)
-  remind             a hook (reads stdin) that asks, in a session with a plan,
+  remind [--harness claude|codex]
+                     a hook (reads stdin; Codex's passes --harness codex,
+                     which says whose transcript it names) that asks, in a
+                     session with a plan,
                      for the coordinator to check a finished sub-agent's report
                      and log its part (Claude Code's UserPromptSubmit and
                      PostToolUse on Agent, Codex's PostToolUse on
@@ -372,7 +375,13 @@ have (see status) is refused and writes nothing.
                      it as sign-delivered, marked stale when over a day old;
                      and on every one of those prompts, with or without a
                      plan, adds the time and how long since the operator's
-                     previous message in the session; never blocks
+                     previous message in the session; files each line the
+                     operator ran with ! that exited non-zero since the
+                     agent last spoke as a retro question, once (Codex's
+                     UserPromptSubmit); and blocks Claude Code's Stop once
+                     after the reply to such a line that wrote to stderr,
+                     asking the agent to file it if it failed; blocks
+                     nothing else
   sign-id [--plan PLAN] [--session ID] [--branch B]... [--worktree DIR] [--base REF]
                      log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
@@ -483,11 +492,19 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return statusLine(stdin, stdout)
 	}
 	if args[0] == "remind" {
+		harness := "claude"
+		if len(args) == 3 && args[1] == "--harness" && (args[2] == "claude" || args[2] == "codex") {
+			harness = args[2]
+		} else if len(args) != 1 {
+			// Not 2, which a hook takes as blocking the event.
+			fmt.Fprintln(stderr, "agent-plan: usage: agent-plan remind [--harness claude|codex]")
+			return 1
+		}
 		// A failure asks for nothing, quietly.
 		input := readAll(stdin)
 		var out []byte
 		if c, err := plans.Load(); err == nil {
-			out = c.Remind(input)
+			out = c.Remind(input, harness)
 		}
 		if line := prompttime.Remind(prompttime.DefaultDir(), input, time.Now()); line != "" {
 			out = plans.WithContext(out, input, line)

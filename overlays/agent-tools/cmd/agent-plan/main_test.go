@@ -1308,4 +1308,28 @@ func TestHooks(t *testing.T) {
 			}
 		}
 	})
+
+	// Codex's hooks name their harness, and only Codex's rollout is read
+	// for a failed ! line; a hook given a flag it does not know must not
+	// exit 2, which a hook takes as blocking the event.
+	t.Run("reminder in the harness its flag names", func(t *testing.T) {
+		planned(t)
+		rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+		shell, _ := json.Marshal(map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user",
+			"content": []any{map[string]any{"type": "input_text",
+				"text": "<user_shell_command>\n<command>\ntrash /w/a\n</command>\n<result>\nExit code: 1\nOutput:\n\n</result>\n</user_shell_command>"}}}})
+		if err := os.WriteFile(rollout, append(shell, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stdin := fmt.Sprintf(`{"session_id":"other","cwd":"/nowhere","hook_event_name":"UserPromptSubmit","prompt":"ok","transcript_path":%q}`, rollout)
+		if code, out, _ := agentPlan(t, stdin, "remind", "--harness", "codex"); code != 0 || !strings.Contains(out, "trash /w/a") {
+			t.Errorf("remind --harness codex: %d %q, want the failed line", code, out)
+		}
+		if code, out, _ := agentPlan(t, stdin, "remind"); code != 0 || strings.Contains(out, "trash /w/a") {
+			t.Errorf("remind in Claude Code: %d %q, want nothing of a Codex rollout", code, out)
+		}
+		if code, out, errs := agentPlan(t, stdin, "remind", "--harness", "bogus"); code != 1 || out != "" || !strings.Contains(errs, "--harness claude|codex") {
+			t.Errorf("remind --harness bogus: %d %q %q, want exit 1 and the usage", code, out, errs)
+		}
+	})
 }

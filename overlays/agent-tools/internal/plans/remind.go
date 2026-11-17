@@ -37,9 +37,27 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // delivers the results of the session's sign-passes that it has not yet
 // received (see DeliverSigns).
 //
+// A line the operator ran with ! is filed or asked about, as handoff.go
+// says: on Codex's UserPromptSubmit and on Claude Code's Stop. harness,
+// "claude" or "codex", says whose transcript the input names.
+//
 // It returns the hook's output, or nothing, on any error too.
-func (c Config) Remind(input []byte) []byte {
+func (c Config) Remind(input []byte, harness string) []byte {
+	var hook hookTranscript
+	if json.Unmarshal(input, &hook) != nil {
+		return nil
+	}
+	if harness == "claude" {
+		if stop := c.stopAfterPastedLine(hook); stop != nil {
+			return stop
+		}
+	}
 	out := c.remind(input)
+	if harness == "codex" {
+		if failed := c.fileFailedLines(hook, time.Now()); failed != "" {
+			out = WithContext(out, input, failed)
+		}
+	}
 	if signs := c.remindSigns(input, time.Now()); signs != "" {
 		return WithContext(out, input, signs)
 	}

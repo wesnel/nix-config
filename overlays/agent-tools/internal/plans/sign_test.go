@@ -421,7 +421,7 @@ func TestRemindSignResult(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed; pushed loop"}, time.Now())
-			out := c.Remind(c2.event)
+			out := c.Remind(c2.event, "claude")
 			want := "sign-pass " + id + " signed: 1 signed; pushed loop"
 			var got struct {
 				Specific struct {
@@ -441,7 +441,7 @@ func TestRemindSignResult(t *testing.T) {
 					t.Errorf("want %s's additionalContext %q, got %s", c2.format, want, out)
 				}
 			}
-			if again := c.Remind(c2.event); len(again) != 0 {
+			if again := c.Remind(c2.event, "claude"); len(again) != 0 {
 				t.Errorf("delivered twice: %s", again)
 			}
 		})
