@@ -9,8 +9,9 @@
 First link the plans related to this one with =agent-plan link=, as the
 =plan-work= skill's Related says.
 The =review-change= pipeline's first stage, as the =plan-work= skill says:
-the Goal with its =Builds on:= and =Likely next changes:= lines, which
-that skill's Goal defines, and the build's steps added with
+the Goal with its =Builds on:=, =Qualities:= and =Likely next changes:=
+lines, which that skill's Goal defines, the =Qualities:= line as the
+=budget-the-qualities= skill says, and the build's steps added with
 =agent-plan step PLAN --after S2=, each with what marks it done. Load the
 =design= skill before writing them.
 Done when the Goal is written and every build step is in the plan.
@@ -29,8 +30,12 @@ settled or asked.
 :AFTER: S2
 :END:
 The build steps S1 added, each test first as the =write-tests= skill says,
-and committed as the =signing-pass= skill says.
-Done when every build step is logged =verified= or =abandoned=.
+and committed as the =signing-pass= skill says. Before the first, run each
+command the Goal's =Qualities:= line names for a baseline; after the last,
+run them again the same way.
+Done when every build step is logged =verified= or =abandoned=, and this
+step's evidence holds each budgeted quality's result before and after:
+a number as the =explain-a-number= skill says, or what a check found.
 *** TODO Fresh review loop
 :PROPERTIES:
 :CUSTOM_ID: S4
