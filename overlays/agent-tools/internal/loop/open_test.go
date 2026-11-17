@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // fakeOpen answers what Open asks GitHub, for the viewer "me" in o/r with
@@ -127,6 +130,11 @@ func TestOpenPushed(t *testing.T) {
 	})
 	t.Run("opens it", func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
+		// open records the pull request in a plan, so the plans it reads
+		// must be the tests' own, not the home directory's.
+		if c, err := plans.Load(); err != nil || !strings.HasPrefix(c.Dir, filepath.Dir(plansConfig)+string(filepath.Separator)) {
+			t.Fatalf("plans at %q (%v), outside the tests' %s", c.Dir, err, filepath.Dir(plansConfig))
+		}
 		result, err := Open("feat", "", "Add feat", "Why it is needed.", false)
 		if err != nil {
 			t.Fatal(err)

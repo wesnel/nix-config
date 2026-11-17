@@ -372,6 +372,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 		return nil, fmt.Errorf("opening the pull request failed, so %s was deleted from GitHub again: %w", branch, err)
 	}
 	pr := opened.CreatePullRequest.PullRequest
+	recordOpened(branch, pr.URL)
 	if err := recordTracking(repo, branch, local); err != nil {
 		return nil, err
 	}

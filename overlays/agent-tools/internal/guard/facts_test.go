@@ -98,44 +98,23 @@ func planProperty(t *testing.T, file, name string) string {
 	return ""
 }
 
-// A branch or pull request the hook records in a plan that another plan
-// names too links the plan to it, with that as the reason.
+// A branch the hook records in a plan that another plan names too links
+// the plan to it, with that as the reason. pr-loop open links on a pull
+// request itself (loop's TestLoopEvents).
 func testPostLinksPlans(t *testing.T) {
 	main, _, p := planned(t)
 	c, err := plans.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := func(slug, branch string) plans.Plan {
-		t.Helper()
-		made, err := c.New(plans.NewOptions{Title: "Other " + slug, Slug: slug, Branches: []string{branch}}, time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		o, err := c.Open(made.Plan)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return o
-	}
-	other("topic", "main..topic")
-	reviewed := other("reviewed", "main..reviewed")
-	url := "https://github.com/o/r/pull/12"
-	if _, err := reviewed.AddToProperty("", "PULL_REQUESTS", url, time.Now()); err != nil {
+	if _, err := c.New(plans.NewOptions{Title: "Other topic", Slug: "topic", Branches: []string{"main..topic"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	gitOut(t, main, "switch", "-q", "-c", "topic")
 	postHook(t, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
-	opened := `{"pr": 12, "url": "` + url + `", "draft": true, "branch": "topic", "base": "main"}`
-	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
 	text, _ := os.ReadFile(p.File())
-	for _, want := range []string{
-		"][Other topic]]: Both work on branch topic.\n",
-		"][Other reviewed]]: Both name pull request " + url + ".\n",
-	} {
-		if !strings.Contains(string(text), want) {
-			t.Errorf("the plan lacks %q:\n%s", want, text)
-		}
+	if want := "][Other topic]]: Both work on branch topic.\n"; !strings.Contains(string(text), want) {
+		t.Errorf("the plan lacks %q:\n%s", want, text)
 	}
 }
 
@@ -254,8 +233,9 @@ func testPostRecordsFacts(t *testing.T) {
 	postHook(t, claudeEvent("s1", main, "git -C "+main+" branch other topic", ""))
 
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "topic", "base": "main"}`
+	// pr-loop open and push log their own pushes, and open its pull
+	// request, so the hook records neither.
 	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
-	// pr-loop push logs its own push.
 	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
 	postHook(t, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
 
@@ -292,7 +272,6 @@ func testPostRecordsFacts(t *testing.T) {
 	want := []string{
 		"committed " + p.Name + " main Add the loop Add the loop s1",
 		"committed P1 part Add the flag Add the flag s1",
-		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12 ",
 		"pushed " + p.Name + "   pushed other topic ",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -302,7 +281,7 @@ func testPostRecordsFacts(t *testing.T) {
 	for name, want := range map[string]string{
 		"WORKTREES":     main + " " + feature,
 		"BRANCHES":      "main..loop main..feature main..topic topic..other",
-		"PULL_REQUESTS": "https://github.com/o/r/pull/12",
+		"PULL_REQUESTS": "",
 	} {
 		if got := planProperty(t, p.File(), name); got != want {
 			t.Errorf("%s: %q, want %q", name, got, want)

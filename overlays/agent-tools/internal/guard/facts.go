@@ -368,6 +368,10 @@ func recordWorktreeFact(c plans.Config, session string, g gitCall, now time.Time
 
 func recordPushFacts(c plans.Config, session, cwd, command string, texts []string, now time.Time) {
 	who := pushers(command, 0)
+	// pr-loop push and open log their pushes, and open its pull request,
+	// themselves, in either harness.
+	delete(who, "pr-loop push")
+	delete(who, "pr-loop open")
 	if len(who) == 0 {
 		return
 	}
@@ -375,18 +379,6 @@ func recordPushFacts(c plans.Config, session, cwd, command string, texts []strin
 	if !ok {
 		return
 	}
-	for _, result := range jsonObjects(texts) {
-		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
-			branch, _ := result["branch"].(string)
-			if added, _ := p.AddToProperty(part, "PULL_REQUESTS", url, now); added {
-				c.LinkEvidence(p.File(), now)
-			}
-			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
-			return
-		}
-	}
-	// pr-loop push logs its push itself.
-	delete(who, "pr-loop push")
 	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}

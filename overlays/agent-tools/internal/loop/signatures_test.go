@@ -56,7 +56,7 @@ func bakeOperatorProfile(t *testing.T, configHome string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostpaths.Bake(t, configHome, state)
+	bake(t, configHome, state)
 }
 
 func sshOperatorProfile(t *testing.T, dir string) (string, []string) {
@@ -133,7 +133,7 @@ func TestOpenAuthorityFailure(t *testing.T) {
 			config := filepath.Join(home, "git", "config")
 			switch name {
 			case "missing profile":
-				hostpaths.Bake(t, filepath.Join(t.TempDir(), ".config"), t.TempDir())
+				bake(t, filepath.Join(t.TempDir(), ".config"), t.TempDir())
 			case "blocked public key":
 				public := filepath.Join(filepath.Dir(home), ".ssh", "operator.pub")
 				if err := os.Remove(public); err != nil {
@@ -406,7 +406,7 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				gitIn(t, dir, "config", "--file", config, setting[0], setting[1])
 			}
 			if keyboxd {
-				hostpaths.Bake(t, configHome, filepath.Join(home, "state"))
+				bake(t, configHome, filepath.Join(home, "state"))
 			} else {
 				bakeOperatorProfile(t, configHome)
 			}
