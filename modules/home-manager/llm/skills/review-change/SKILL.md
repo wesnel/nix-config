@@ -38,6 +38,8 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
      and the low ones first: high for a mechanical choice with a precedent
      here, medium for one with no one-to-one precedent, low for a leap, a
      workaround or changed behaviour;
+   - for work from a ticket, each acceptance criterion in the Goal with
+     whether the change meets it, and what the change does beyond the ticket;
    - the `retro` skill's proposals for findings settled `fix` and session
      papercuts, referring to those already recorded as they occurred;
    - the `brag` skill's items for brag-worthy work in the change, referring
@@ -83,7 +85,9 @@ only when the operator requests one, on the tip they will read.
 
 The reviewer's only view of intent: the plan's Goal, or a part's, holding
 the goal and what is not this change's job, with nothing of how the work
-went. `agent-plan goal PLAN [--part P1]` prints it, and `git delegate`
+went. For work from a ticket, the Goal states the ticket's acceptance
+criteria in the plan's own words, so every reviewer checks the change
+against them. `agent-plan goal PLAN [--part P1]` prints it, and `git delegate`
 reads it with `--plan PLAN [--part P1]`. When the caller names a plan and
 part for the review, use their Goal as it stands.
 
