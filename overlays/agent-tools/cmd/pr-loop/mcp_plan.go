@@ -125,7 +125,7 @@ func planTools() []mcpTool {
 		makeTool("edit", []string{"plan", "item"}, plan, item, prose("title"), content),
 		makeTool("after", []string{"plan", "item", "after"}, plan, item, after, boolFlag("clear", "clear dependencies")),
 		makeTool("section", []string{"plan", "section"}, plan, enum("section", true, "Goal", "Verification"),
-			p("text", literal, true, "inline section text; a Goal holds a line starting Builds on: and one starting Likely next changes:"), part),
+			p("text", literal, true, "inline section text; a Goal holds lines starting Builds on:, Qualities: and Likely next changes:"), part),
 		// A tape's source is read from a file, which these tools never take.
 		makeTool("visual", []string{"plan", "entry"}, plan, p("entry", text, false, "the visual's ID, as V1, to give it url alone"),
 			flag("branch"), p("range", text, false, "the reviewed range BASE..TIP, resolved in the worktree, with diagram"),

@@ -239,8 +239,9 @@ have (see status) is refused and writes nothing.
                      TEXT may hold line breaks, but no line Org reads as a
                      heading, a drawer, a planning line or a #+ keyword
                      other than a block's. A Goal holds a line starting
-                     "Builds on:" and one starting "Likely next changes:",
-                     each followed by text, as the plan-work skill says
+                     "Builds on:", one starting "Qualities:" and one
+                     starting "Likely next changes:", each followed by
+                     text, as the plan-work skill says
   visual PLAN --branch B --range BASE..TIP --diagram ID [--caption C]
   visual PLAN --branch B (--tape FILE | --url URL) --caption C
   visual PLAN VID --url URL

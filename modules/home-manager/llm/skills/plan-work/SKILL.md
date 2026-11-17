@@ -115,12 +115,15 @@ no command makes goes in your report for the operator.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It holds text, no
-  headings, and these two lines, each starting a line with its label;
-  `agent-plan section` refuses a plan's or a part's Goal without either:
+  headings, and these three lines, each starting a line with its label;
+  `agent-plan section` refuses a plan's or a part's Goal without any one:
   - `Builds on:` what already does the job, or part of it (code, a skill
     section, a tool, an agent, another plan), and how this change extends
     it; or that nothing was found, and where the search looked. Search by
     what the thing does, not only by its name.
+  - `Qualities:` each non-functional quality the change moves, with its
+    budget and the command that measures it, or that none moves and why,
+    as the `budget-the-qualities` skill says.
   - `Likely next changes:` one or two concrete changes expected after
     this one, not speculation, which the design review of the plan checks
     would each be a local edit.
