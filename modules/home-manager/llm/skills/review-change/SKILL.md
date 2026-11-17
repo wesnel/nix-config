@@ -34,7 +34,10 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
    - the design reviews' open questions for the operator and the decisions you
-     made yourself, as one list;
+     made yourself, as one list, each of your decisions graded by confidence
+     and the low ones first: high for a mechanical choice with a precedent
+     here, medium for one with no one-to-one precedent, low for a leap, a
+     workaround or changed behaviour;
    - the `retro` skill's proposals for findings settled `fix` and session
      papercuts, referring to those already recorded as they occurred;
    - the `brag` skill's items for brag-worthy work in the change, referring
