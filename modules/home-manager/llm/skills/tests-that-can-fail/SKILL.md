@@ -1,5 +1,5 @@
 ---
-name: write-tests
+name: tests-that-can-fail
 description: Checklist for tests that can fail and say why. Load before writing, changing or reviewing tests in any language, and before any change in behaviour (a feature, a fix, a changed contract), which starts with its test.
 ---
 

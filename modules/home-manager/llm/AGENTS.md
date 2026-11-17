@@ -166,7 +166,7 @@ feature, a fix, a changed contract) starts with its test, seen failing for
 the expected reason before the code changes, and the report shows both
 runs; a new or changed check (lint rule, CI step, hook, guard rule, Nix
 assertion) is shown failing on a deliberate violation. Load the
-`write-tests` skill before writing, changing or reviewing tests.
+`tests-that-can-fail` skill before writing, changing or reviewing tests.
 
 ## Prefer git to gh
 

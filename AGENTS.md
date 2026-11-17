@@ -15,7 +15,7 @@ systems".
 
 ## Tests in `overlays/agent-tools`
 
-The `write-tests` skill has the rules. In Go they take these forms:
+The `tests-that-can-fail` skill has the rules. In Go they take these forms:
 
 - Related cases sit under one parent test with a short name (`TestParse`),
   each a `t.Run` subtest, so `-run TestParse/empty` selects one.

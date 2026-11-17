@@ -33,7 +33,7 @@ refuted or dropped.
 :AFTER: S3
 :END:
 =diagnose-failure= stage 5, with its test written first as the
-=write-tests= skill says.
+=tests-that-can-fail= skill says.
 Done when =git red-check= on the fix exits 0, and the shrunken and the
 original commands pass.
 *** TODO Review and hand back

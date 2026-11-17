@@ -6,7 +6,7 @@ effort: high
 skills:
   - tool-selection
   - signing-pass
-  - write-tests
+  - tests-that-can-fail
   - review-change
   - plan-work
   - claims-not-facts
