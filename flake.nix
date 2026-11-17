@@ -1546,6 +1546,11 @@
             else "agent-plan link is not excluded from the sandbox" end'
           check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
             else "agent-plan link is not allowed" end'
+          # git task-worktree writes the .git/worktrees the sandbox denies,
+          # so it runs outside it, under either name, without a prompt.
+          check '. as $s | ("git task-worktree *", "git-task-worktree *")
+            | (select(. as $c | $s.sandbox.excludedCommands | index([$c]) == null) | "not excluded from the sandbox: \(.)"),
+              ("Bash(\(.))" | select(. as $r | $s.permissions.allow | index([$r]) == null) | "not allowed: \(.)")'
           # Demo digests and brag files are agent-plan's alone to write, as
           # plans are: the sandbox denies shell writes to their directories
           # and a deny rule the file tools' writes, and the commands that
