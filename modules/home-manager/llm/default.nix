@@ -843,7 +843,7 @@ in {
           # checks a sandboxed command can run: no daemon is reachable.
           emacsclient = ./skills/emacsclient/SKILL.md;
           signing-pass = ./skills/signing-pass/SKILL.md;
-          write-tests = ./skills/write-tests/SKILL.md;
+          tests-that-can-fail = ./skills/tests-that-can-fail/SKILL.md;
           pull-requests = ./skills/pull-requests/SKILL.md;
           docs-and-comments = ./skills/docs-and-comments/SKILL.md;
           design = ./skills/design/SKILL.md;

@@ -84,7 +84,7 @@ Some failures put one hypothesis first:
 - It is a fix as the `reproduce-first` skill says: it changes the cause and
   covers every instance.
 - Its test fails before the fix for the reported reason, at a seam that
-  reproduces the real call, as the `write-tests` skill says. Where no seam
+  reproduces the real call, as the `tests-that-can-fail` skill says. Where no seam
   reaches the failure, say so in the hand-back instead of testing a
   shallower seam; building such a seam, when it is outside the change's
   job, is a follow-up (`agent-plan followup`).

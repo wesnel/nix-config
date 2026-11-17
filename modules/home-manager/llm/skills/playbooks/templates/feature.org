@@ -28,8 +28,8 @@ settled or asked.
 :CUSTOM_ID: S3
 :AFTER: S2
 :END:
-The build steps S1 added, each test first as the =write-tests= skill says,
-and committed as the =signing-pass= skill says.
+The build steps S1 added, each test first as the =tests-that-can-fail=
+skill says, and committed as the =signing-pass= skill says.
 Done when every build step is logged =verified= or =abandoned=.
 *** TODO Fresh review loop
 :PROPERTIES:

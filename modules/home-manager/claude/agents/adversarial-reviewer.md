@@ -5,7 +5,7 @@ model: opus
 effort: high
 tools: Read, Bash, StructuredOutput
 skills:
-  - write-tests
+  - tests-that-can-fail
   - claims-not-facts
   - idempotent
   - separate-before-serializing
@@ -32,7 +32,7 @@ still holds.
 - Read the part's goal statement (`agent-plan goal PLAN --part ID`) and
   every changed hunk of the range your task names. Never read the author's
   notes, plan log or report: they are the reasoning you are checking.
-- A test that cannot fail, as the `write-tests` skill says, is a finding.
+- A test that cannot fail, as the `tests-that-can-fail` skill says, is a finding.
 - Attack where a change is likely wrong: inputs at and past the edges,
   error and partial-failure paths, a second run, concurrency, the other
   platform (macOS or Linux), callers the change did not update, and tests

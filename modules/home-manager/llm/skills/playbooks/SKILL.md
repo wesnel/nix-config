@@ -13,16 +13,16 @@ come back after a compaction or a resume as the `plan-work` skill's
 
 ```sh
 agent-plan new --title 'Fix the lost write' --slug fix-lost-write --template bug-fix
-agent-plan set PLAN SKILLS diagnose-failure write-tests review-change
+agent-plan set PLAN SKILLS diagnose-failure tests-that-can-fail review-change
 ```
 
 | Kind | Template | `SKILLS` |
 | --- | --- | --- |
 | A question to answer, changing nothing | `investigation` | none |
-| A bug: a wrong output, a crash, a failing or flaky test | `bug-fix` | `diagnose-failure write-tests review-change` |
+| A bug: a wrong output, a crash, a failing or flaky test | `bug-fix` | `diagnose-failure tests-that-can-fail review-change` |
 | A regression in speed or resources | `slowdown` | `diagnose-failure explain-a-number review-change` |
-| New behaviour | `feature` | `design write-tests review-change` |
-| A change of structure that keeps behaviour | `refactor` | `subtract-first migrate-and-delete write-tests review-change` |
+| New behaviour | `feature` | `design tests-that-can-fail review-change` |
+| A change of structure that keeps behaviour | `refactor` | `subtract-first migrate-and-delete tests-that-can-fail review-change` |
 | A design question running code answers fastest | `prototype` | none |
 | A number to move, by attempts measured against a fixed harness | `measured-improvement` | `explain-a-number review-change` |
 

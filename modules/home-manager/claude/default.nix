@@ -83,7 +83,7 @@ with lib; let
   # What both Claude Code and the headless reviewers run with.
   sharedSettings = recursiveUpdate gatewaySettings otelSettings;
 
-  headlessSkills = filterAttrs (name: _: elem name (attrNames (import ../llm/principles.nix) ++ ["write-tests"])) config.wgn.home.llm.skills;
+  headlessSkills = filterAttrs (name: _: elem name (attrNames (import ../llm/principles.nix) ++ ["tests-that-can-fail"])) config.wgn.home.llm.skills;
   # These skills need only their text, without frontmatter or support files.
   skillBody = name: let
     skill = headlessSkills.${name};
