@@ -11,6 +11,25 @@ serve = Path(os.environ["serve"]).read_text()
 config_path = re.search(r"-config (\S+)", serve).group(1)
 proxy = json.loads(Path(config_path).read_text())["mcpServers"]["parallels"]
 lima = json.loads(Path(config_path).read_text())["mcpServers"]["lima"]
+debug = json.loads(Path(config_path).read_text())["mcpServers"]["debug"]
+debug_inventory = json.loads(Path(os.environ["inventory"]).read_text())["debug"]
+debug_allowed = debug_inventory["reads"] + debug_inventory["confirms"] + debug_inventory["preapprovedWrites"]
+assert set(debug_allowed) == {
+    "lima_dev_status", "lima_dev_job_result", "lima_dev_start", "lima_dev_stop",
+    "lima_dev_exec_start", "lima_dev_import", "lima_dev_job_cancel",
+}
+assert debug_inventory["reads"] == ["lima_dev_status", "lima_dev_job_result"]
+assert debug_inventory["confirms"] == []
+assert debug["options"]["toolFilter"] == {"mode": "allow", "list": debug_allowed}
+assert debug["transportType"] == "stdio" and debug["command"].endswith("/bin/lima-mcp")
+assert debug["args"][0] == "--config" and debug["args"][1].endswith("-lima-debug.json")
+assert debug["args"][1] != lima["args"][1]
+debug_config = json.loads(Path(debug["args"][1]).read_text())
+dev_config = json.loads(Path(lima["args"][1]).read_text())
+assert debug_config["limaHome"] != dev_config["limaHome"]
+assert debug_config["outbox"] != dev_config["outbox"]
+assert debug_config["limaHome"] in debug_config["deniedReads"]
+assert dev_config["limaHome"] in debug_config["deniedReads"]
 assert lima["transportType"] == "stdio"
 assert lima["command"].endswith("/bin/lima-mcp")
 limaInventory = json.loads(Path(os.environ["inventory"]).read_text())["lima"]
@@ -29,6 +48,12 @@ result = subprocess.run([lima["command"], *lima["args"]], input="".join(json.dum
 replies = sorted((json.loads(line) for line in result.stdout.splitlines()), key=lambda r: r["id"])
 assert replies[0]["result"]["protocolVersion"] == "2025-06-18"
 assert [tool["name"] for tool in replies[1]["result"]["tools"]] == lima["options"]["toolFilter"]["list"]
+# The debug configuration is accepted by the real managed runtime. The
+# proxy's reviewed filter keeps generic instance operations unexposed.
+result = subprocess.run([debug["command"], *debug["args"]], input="".join(json.dumps(x) + "\n" for x in requests),
+                        text=True, capture_output=True, check=True)
+replies = sorted((json.loads(line) for line in result.stdout.splitlines()), key=lambda r: r["id"])
+assert set(debug_allowed) <= {tool["name"] for tool in replies[1]["result"]["tools"]}
 inventory = json.loads(Path(os.environ["inventory"]).read_text())["parallels"]
 allowed = inventory["reads"] + inventory["confirms"]
 assert proxy["transportType"] == "stdio"
@@ -40,8 +65,9 @@ assert "/usr/local/bin" in proxy["env"]["PATH"].split(":")
 assert proxy["timeout"] == "6m"
 assert "parallels" not in json.loads(os.environ["devboxEndpoints"])
 assert "lima" not in json.loads(os.environ["devboxEndpoints"])
+assert "debug" not in json.loads(os.environ["devboxEndpoints"])
 agent_proxy = json.loads(Path(os.environ["agentConfig"]).read_text())["mcpProxy"]
-assert agent_proxy["localServers"] == ["lima", "parallels"]
+assert agent_proxy["localServers"] == ["debug", "lima", "parallels"]
 assert agent_proxy["endpoints"]["parallels"] == "/parallels/mcp"
 
 with tempfile.TemporaryDirectory() as directory:
@@ -51,7 +77,8 @@ with tempfile.TemporaryDirectory() as directory:
     claude = home / ".claude.json"
     codex.write_text('[mcp_servers.keep]\ncommand = "keep"\n'
                      '[mcp_servers.parallels.tools.parallels_vm_exec]\napproval_mode = "approve"\n'
-                     '[mcp_servers.lima.tools.lima_exec]\napproval_mode = "approve"\n')
+                     '[mcp_servers.lima.tools.lima_exec]\napproval_mode = "approve"\n'
+                     '[mcp_servers.debug.tools.lima_stop]\napproval_mode = "approve"\n')
     claude.write_text(json.dumps({"mcpServers": {"keep": {"command": "keep"}}}))
     env = dict(os.environ, HOME=directory)
     before = (codex.read_bytes(), claude.read_bytes())
@@ -67,6 +94,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert "tools" not in codex_servers["lima"], "stale Lima approval survived registration"
     assert codex_servers["lima"]["url"] == "http://127.0.0.1:6290/lima/mcp"
     assert codex_servers["lima"]["tool_timeout_sec"] > 300
+    assert codex_servers["debug"]["default_tools_approval_mode"] == "prompt"
+    assert codex_servers["debug"]["tools"] == {
+        name: {"approval_mode": "approve"} for name in debug_inventory["reads"] + debug_inventory["preapprovedWrites"]
+    }, "debug approval must match only its reviewed operations"
+    assert codex_servers["debug"]["tool_timeout_sec"] > 300
+    assert codex_servers["debug"]["url"] == "http://127.0.0.1:6290/debug/mcp"
+    assert claude_servers["debug"]["url"] == codex_servers["debug"]["url"]
     assert entry["default_tools_approval_mode"] == "prompt", "native approval is not prompt"
     assert "tools" not in entry, "stale per-tool approval survived registration"
     assert entry["tool_timeout_sec"] > 360

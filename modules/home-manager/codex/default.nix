@@ -758,7 +758,7 @@ in {
         }
         // optionalAttrs ((pkgs.agent-tools.mcpTools.${name}.preapprovedWrites or []) != []) {
           default_tools_approval_mode = "prompt";
-          tools = genAttrs (pkgs.agent-tools.mcpTools.${name}.preapprovedWrites) (_: {approval_mode = "approve";});
+          tools = genAttrs (with pkgs.agent-tools.mcpTools.${name}; reads ++ preapprovedWrites) (_: {approval_mode = "approve";});
         }
         // optionalAttrs (elem name ["parallels" "lima" "debug"]) {
           tool_timeout_sec = 370;
