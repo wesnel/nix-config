@@ -164,14 +164,14 @@ with lib; let
   credentialReads = concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths;
 
   # The guard's mcp.json as permission rules, for each server of each
-  # service: its reads allowed and its confirmed writes asked, without a
+  # service: reads and preapproved guest writes allowed, confirmed writes asked, without a
   # hook round trip. The hook still sees every MCP call (its matcher keeps
   # `mcp__.*`) and refuses a listed server's other tools.
   mcpRules = let
     services = attrValues pkgs.agent-tools.mcpTools;
-    rules = key: concatMap (s: concatMap (server: map (tool: "mcp__${server}__${tool}") s.${key}) s.servers) services;
+    rules = key: concatMap (s: concatMap (server: map (tool: "mcp__${server}__${tool}") (s.${key} or [])) s.servers) services;
   in {
-    allow = rules "reads";
+    allow = rules "reads" ++ rules "preapprovedWrites";
     ask = rules "confirms";
   };
 
@@ -828,7 +828,7 @@ in {
           "$defaults"
           "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
           "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `pr-loop`."
-          "Running anything as root: sudo, doas, su, or an administrator prompt."
+          "Running anything as host root: sudo, doas, su, or an administrator prompt. Guest root through the configured debug MCP endpoint is preapproved."
           "Changing an agent's settings or hooks, or the guard's config: Claude Code's or Codex's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
           "Publishing a package, container image or release."
           "Running a command with NGROK_ENV set to prod or stage, however it is set."

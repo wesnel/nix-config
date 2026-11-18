@@ -879,11 +879,12 @@ git itself does not use the keychain's GitHub login:
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `parallels` (`parallels`) | local Parallels Desktop MCP | VM reads; guest commands, keyboard input and lifecycle changes you confirm |
 | `lima` (`lima`, `limaDev.enable`) | local `lima-mcp` | default-home list and the managed VM's status and job results; stops, the managed VM's start, guest commands and imports you confirm |
+| `debug` (`limaDebug.enable`) | local `lima-mcp` with a separate guest | managed Linux tracing and debugging; guest commands, root, imports and lifecycle preapproved for agents, status and results alone for reviewers |
 
 Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
 lists are also permission rules generated from `mcp.json`: each server's
-reads allowed and its listed writes asked, and the guard still refuses any
+reads and preapproved guest writes allowed, its confirmed writes asked, and the guard still refuses any
 other tool on a listed server. Linear, Parallels and Lima calls use Codex's
 native per-call approval; Codex gets the other remote servers' reads alone. Reviewers
 get reads alone.
@@ -907,8 +908,9 @@ isolation rests on:
   the store, allows each flag and value, restricts the network to two
   relays, and runs QEMU under `sandbox-exec`.
 - Attestation finds QEMU in the process table and checks its argv against
-  the guard's, on every status and command and each minute, and stops a VM
-  that fails. It cannot see whether QEMU runs under the Seatbelt profile:
+  the guard's, on every status and command and each minute. Status only
+  reports; commands and the watcher stop a VM that fails. It cannot see
+  whether QEMU runs under the Seatbelt profile:
   that needs cgo. This is a recorded residual.
 - The guest reaches only the HTTPS hosts of the egress policy, through the
   CONNECT relay, and private dial, through the HTTP/3 broker, whose CA
@@ -925,6 +927,23 @@ not ignored ones. `lima_dev_import`, which you confirm, then copies the
 bundle out of the outbox, refuses it if its history holds a credential's
 path, and makes the guest's working directory the repository's. What was
 changed only in the guest is discarded.
+
+The `debug` endpoint uses a separate managed `agent-debug` guest through
+the same launch guard and attestation. Its own Lima home and outbox keep
+debugging apart from the ngrok development guest. It has no private dial,
+host shares or forwarded credentials. Provisioning installs strace,
+bpftrace, kernel-matched perf, GDB, Delve and LLDB; guest root is available
+without a password. Host root remains the operator's.
+
+Use `lima-debug-export NAME` in a task worktree and the `debug` endpoint's
+`lima_dev_import` to copy the reproducer. The `diagnose-failure` skill's
+probe recipes select tracing or debugger inspection before temporary
+logging. Imports replace guest project state; stop/start preserves the
+guest disk. To recreate it, use the operator's `lima-debug` wrapper, which
+keeps the launch guard in place. A changed template requires recreation;
+save needed results first. Native LLDB MCP and rr require capability
+checks before use. A Linux reproduction is needed to explain a failure
+observed on macOS.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in

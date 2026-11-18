@@ -9,7 +9,8 @@ import (
 )
 
 // mcpJSON lists, per service, the MCP servers the guard has reviewed, the
-// tools of theirs it lets through and the writes the operator confirms.
+// tools of theirs it lets through, preapproved guest writes, and writes
+// the operator confirms. Preapproved writes still refuse reviewers.
 // mcp-proxy's tool filters are built from the same file, so a tool added
 // here is served and allowed together, and one missing from both lists is
 // hidden by the proxy as well as refused. `refuses` names the tools
@@ -23,15 +24,16 @@ import (
 var mcpJSON []byte
 
 // mcpService is how the guard treats one service's MCP tools. A tool on one
-// of its servers that is neither a read nor a confirmed write, including one
+// of its servers that is neither a read nor an inventoried write, including one
 // the server adds later, is refused until it is reviewed and listed.
 type mcpService struct {
 	// key is the service's key in mcp.json, which is also its server's
 	// name in mcp-proxy.
-	key             string
-	service         string
-	servers         []string
-	reads, confirms map[string]bool
+	key               string
+	service           string
+	servers           []string
+	reads, confirms   map[string]bool
+	preapprovedWrites map[string]bool
 	// readsByName stands in for reads where the vendor publishes no tool
 	// list: a tool whose name has a reading verb and no writing one.
 	readsByName bool
@@ -43,12 +45,13 @@ type mcpService struct {
 // mcpServices are the services in mcp.json, by their key there.
 var mcpServices = func() map[string]*mcpService {
 	var raw map[string]struct {
-		Service     string   `json:"service"`
-		Servers     []string `json:"servers"`
-		Reads       []string `json:"reads"`
-		Confirms    []string `json:"confirms"`
-		ReadsByName bool     `json:"readsByName"`
-		CodexPrompt bool     `json:"codexPrompt"`
+		Service           string   `json:"service"`
+		Servers           []string `json:"servers"`
+		Reads             []string `json:"reads"`
+		Confirms          []string `json:"confirms"`
+		PreapprovedWrites []string `json:"preapprovedWrites"`
+		ReadsByName       bool     `json:"readsByName"`
+		CodexPrompt       bool     `json:"codexPrompt"`
 	}
 	if err := json.Unmarshal(mcpJSON, &raw); err != nil {
 		panic("mcp.json: " + err.Error())
@@ -56,7 +59,7 @@ var mcpServices = func() map[string]*mcpService {
 	services := map[string]*mcpService{}
 	for id, r := range raw {
 		services[id] = &mcpService{key: id, service: r.Service, servers: r.Servers, reads: set(r.Reads...),
-			confirms: set(r.Confirms...), readsByName: r.ReadsByName, codexPrompt: r.CodexPrompt}
+			confirms: set(r.Confirms...), preapprovedWrites: set(r.PreapprovedWrites...), readsByName: r.ReadsByName, codexPrompt: r.CodexPrompt}
 	}
 	return services
 }()
@@ -164,6 +167,9 @@ func checkMCP(server mcpServer, name string, who role) string {
 	case strings.EqualFold(server.name, OpsServer):
 		return opsCall
 	case server.listed != nil:
+		if server.listed.preapprovedWrites[name] && (server.name != server.listed.key || !mcpproxy.Load().Serves(server.name)) {
+			return "Preapproved guest writes require the exact configured MCP proxy endpoint."
+		}
 		return server.listed.check(name, who)
 	case who != baseline:
 		return unlistedServerReviewer
@@ -249,8 +255,10 @@ func (s *mcpService) check(name string, who role) string {
 	switch {
 	case s.reads[name] || s.readsByName && readName(name):
 		return ""
-	case confirm && who == reviewer:
+	case (confirm || s.preapprovedWrites[name]) && who == reviewer:
 		return reviewerReport
+	case s.preapprovedWrites[name]:
+		return ""
 	case confirm:
 		return s.confirmReason()
 	}

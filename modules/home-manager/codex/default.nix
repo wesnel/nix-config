@@ -756,7 +756,11 @@ in {
         // optionalAttrs (pkgs.agent-tools.mcpTools.${name}.codexPrompt or false) {
           default_tools_approval_mode = "prompt";
         }
-        // optionalAttrs (elem name ["parallels" "lima"]) {
+        // optionalAttrs ((pkgs.agent-tools.mcpTools.${name}.preapprovedWrites or []) != []) {
+          default_tools_approval_mode = "prompt";
+          tools = genAttrs (pkgs.agent-tools.mcpTools.${name}.preapprovedWrites) (_: {approval_mode = "approve";});
+        }
+        // optionalAttrs (elem name ["parallels" "lima" "debug"]) {
           tool_timeout_sec = 370;
         })
       mcpProxy.endpoints;

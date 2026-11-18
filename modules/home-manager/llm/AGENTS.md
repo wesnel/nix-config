@@ -104,7 +104,7 @@ fixture, is written nowhere: put `<REDACTED>` in its place.
 
 ## Commands the operator runs
 
-Hand over what is the operator's to run (a key touch, root, an interactive
+Hand over what is the operator's to run (a key touch, host root, an interactive
 login) as one line that runs as pasted in any shell: plain commands
 joined with `&&`, paths and arguments spelled out, in the syntax fish,
 zsh and bash all read alike. Claude Code runs a `!` line in zsh, while
@@ -112,6 +112,16 @@ the operator's terminal is fish, so a loop, `set` or `$var` written for
 either one fails in the other. Begin it with `!` in Claude Code and Codex,
 which run such a line in the session; leave it plain in agent-shell, and
 when its output shows a secret.
+
+## Linux debugging guest
+
+The `debug` MCP endpoint's managed guest is authorized for agent debugging,
+including passwordless guest root, package installation and tracing
+settings. Use its managed tools and the `diagnose-failure` skill's probe
+recipes. This authorization applies only to that isolated guest; host
+root and other VMs retain their own permissions. Keep credentials out of
+the debugging guest and reproduce there before drawing conclusions about
+a failure on another operating system.
 
 ## Documentation and comments
 
