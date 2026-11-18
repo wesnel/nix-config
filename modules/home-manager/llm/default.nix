@@ -37,7 +37,8 @@ with lib; let
       // optionalAttrs ngrokAi {
         codex = {
           model = cfg.ngrokAi.models.review;
-          inherit (cfg.ngrokAi) contextWindow provider;
+          inherit (cfg) contextWindow;
+          inherit (cfg.ngrokAi) provider;
         };
       };
     publicText = {
@@ -182,6 +183,19 @@ in {
       '';
     };
 
+    contextWindow = mkOption {
+      type = types.ints.between 100000 1000000;
+      default = 200000;
+      description = ''
+        The requested automatic-compaction window, in tokens, for every
+        Claude Code session, including subscription sessions and headless
+        reviewers. Claude Code caps it at the model's context window and
+        compacts as the context nears this size. Through the ngrok.ai
+        gateway, it also supplies the assumed context window for model IDs
+        Claude Code does not recognize and for Codex and its reviewers.
+      '';
+    };
+
     ngrokAi = {
       models = {
         primary = mkOption {
@@ -205,17 +219,6 @@ in {
             `/review`, and the adversarial-reviewer sub-agent.
           '';
         };
-      };
-
-      contextWindow = mkOption {
-        type = types.ints.between 100000 1000000;
-        default = 200000;
-        description = ''
-          The context window, in tokens, Claude Code and Codex assume for the
-          gateway's models, which they do not recognize: a session compacts
-          as it nears it. The models take more; a smaller window spends less
-          per request.
-        '';
       };
 
       baseURL = mkOption {
