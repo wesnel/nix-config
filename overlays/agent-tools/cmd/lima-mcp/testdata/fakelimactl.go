@@ -103,13 +103,15 @@ func main() {
 	case "create":
 		// create --tty=false --name NAME TEMPLATE
 		name, template := args[3], args[4]
-		// Lima reads the files caCerts names when it creates the instance.
-		if _, err := os.Stat(filepath.Join(home, "_mcp", "ca.pem")); err != nil {
-			fail("open ca.pem: %v", err)
-		}
 		data, err := os.ReadFile(template)
 		if err != nil {
 			fail("%v", err)
+		}
+		// Lima reads the files caCerts names when it creates the instance.
+		if strings.Contains(string(data), "caCerts:") {
+			if _, err := os.Stat(filepath.Join(home, "_mcp", "ca.pem")); err != nil {
+				fail("open ca.pem: %v", err)
+			}
 		}
 		if err := os.MkdirAll(filepath.Join(home, name), 0o700); err != nil {
 			fail("%v", err)
@@ -166,10 +168,9 @@ func main() {
 			i++
 		}
 		command := args[i+1:]
-		// A job's guest command, setsid -w sh -c WRAPPER lima-mcp-job
-		// SCRIPT, runs its script in the stand-in guest, without the
-		// session and timeout around it.
-		if g.Home != "" && command[0] == "setsid" {
+		// The host cannot run the guest's systemd. The job payload runs
+		// here; TestGuestJobLinux exercises supervision in a Linux guest.
+		if g.Home != "" && command[0] == "bash" && len(command) == 5 && command[3] == "lima-mcp-job" {
 			g.run(workdir, command[len(command)-1])
 		}
 		for _, a := range command {

@@ -2,6 +2,7 @@ package limavm
 
 import (
 	"encoding/binary"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -119,6 +120,27 @@ func relays(g *GuardConfig) string {
 
 func TestGuard(t *testing.T) {
 	c := probeConfig(t)
+	t.Run("HTTPS only exposes no private dial relay", func(t *testing.T) {
+		g := probeConfig(t)
+		g.QUIC = netip.AddrPort{}
+		launch, err := Guard(g, argvFixture(t, g, "boot"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := strings.Join(launch.Argv, " ")
+		if !strings.Contains(args, "restrict=on,ipv6=off,guestfwd=tcp:192.168.5.100:3128-cmd:") || strings.Contains(args, "lima-egress quic") || strings.Contains(launch.Argv[2], "slots-quic") {
+			t.Fatalf("unexpected HTTPS-only launch: %s", args)
+		}
+		if err := CheckLive(g, g.QEMU, launch.Argv[3:]); err != nil {
+			t.Fatal(err)
+		}
+		withQUIC := append([]string(nil), launch.Argv[3:]...)
+		i := slices.Index(withQUIC, "-netdev") + 1
+		withQUIC[i] += ",guestfwd=tcp:192.168.5.101:443-cmd:/bin/false"
+		if err := CheckLive(g, g.QEMU, withQUIC); err == nil {
+			t.Fatal("attested an extra private dial relay")
+		}
+	})
 
 	for _, name := range []string{"probe-accel", "probe-netdev", "probe-machine", "probe-cpu", "probe-version"} {
 		t.Run("passes Lima's "+name+" through unchanged", func(t *testing.T) {

@@ -123,12 +123,12 @@ func TestInspect(t *testing.T) {
 	t.Run("no lima.yaml", func(t *testing.T) {
 		x := newInspection(t)
 		os.Remove(filepath.Join(x.c.InstanceDir(), "lima.yaml"))
-		decides(t, x, StateMismatch, "lima-dev delete")
+		decides(t, x, StateMismatch, "instance probe in Lima home "+x.c.LimaHome)
 	})
 	t.Run("another lima.yaml", func(t *testing.T) {
 		x := newInspection(t)
 		os.WriteFile(filepath.Join(x.c.InstanceDir(), "lima.yaml"), []byte("plain: false\n"), 0o600)
-		decides(t, x, StateMismatch, "lima-dev delete")
+		decides(t, x, StateMismatch, "instance probe in Lima home "+x.c.LimaHome)
 	})
 
 	t.Run("fails when limactl list fails", func(t *testing.T) {

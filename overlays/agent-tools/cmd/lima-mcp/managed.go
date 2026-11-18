@@ -155,14 +155,21 @@ func (m *managed) list(ctx context.Context) (limavm.Listed, error) {
 	return l, fmt.Errorf("limactl list printed no instance: %s", out)
 }
 
-// attest decides the VM's state with limavm.Inspector, and stops a running
-// VM it decides is mismatch or running-unattested: a VM it cannot attest
-// does not keep running. An error decides nothing: the VM is left as it is,
-// and the caller fails, or, for the watcher, tries again.
-func (m *managed) attest(ctx context.Context) (limavm.Attestation, error) {
+// inspect reads the VM's state without changing it.
+func (m *managed) inspect(ctx context.Context) (limavm.Attestation, error) {
 	a, err := limavm.Inspector{Config: m.cfg, List: m.list, Processes: m.processes, ProcessArgs: m.processArgs}.Inspect(ctx)
 	if err != nil {
 		return a, fmt.Errorf("attestation could not read what it needs, and left the VM as it is: %w", err)
+	}
+	return a, nil
+}
+
+// attest stops a running VM that is mismatch or running-unattested.
+// An inspection error decides nothing and leaves the VM as it is.
+func (m *managed) attest(ctx context.Context) (limavm.Attestation, error) {
+	a, err := m.inspect(ctx)
+	if err != nil {
+		return a, err
 	}
 	if a.Listed.Running() && (a.State == limavm.StateMismatch || a.State == limavm.StateUnattested) {
 		if out, _, serr := m.limactl(ctx, "stop", "-f", m.cfg.Instance); serr != nil {
@@ -222,9 +229,10 @@ func (m *managed) start(ctx context.Context, _ string) (string, bool, *int, erro
 	if err := m.refreshLinks(); err != nil {
 		return "", false, nil, err
 	}
-	// limactl create reads the CA the template's caCerts names.
-	if err := limavm.EnsureCA(ctx, m.cfg.CACert(), m.cfg.CAKey(), m.cfg.QUICServers); err != nil {
-		return "", false, nil, err
+	if m.cfg.QUIC.IsValid() {
+		if err := limavm.EnsureCA(ctx, m.cfg.CACert(), m.cfg.CAKey(), m.cfg.QUICServers); err != nil {
+			return "", false, nil, err
+		}
 	}
 	var log strings.Builder
 	step := func(args ...string) error {
@@ -261,31 +269,47 @@ func (m *managed) start(ctx context.Context, _ string) (string, bool, *int, erro
 	if a.State != limavm.StateAttested {
 		return log.String(), false, nil, fmt.Errorf("the started VM is %s: %s", a.State, a.Reason)
 	}
-	if err := step("copy", m.cfg.Shim, m.cfg.Instance+":"+guestShim); err != nil {
-		return log.String(), false, nil, err
-	}
-	install := "install -m 0755 " + guestShim + " /usr/local/bin/lima-udp-shim && systemctl restart lima-udp-shim"
-	if err := step("shell", m.cfg.Instance, "--", "sudo", "sh", "-c", install); err != nil {
-		return log.String(), false, nil, err
-	}
-	return log.String(), false, nil, nil
+	err = m.installShim(step)
+	return log.String(), false, nil, err
 }
 
-// guestJob is the guest command for job id: a session of its own, whose
-// ID it records in the guest's /tmp/lima-mcp-jobs/ID, so that cancelling
-// the job can kill all of it, and the script under the guest's timeout.
-// (timeout puts itself in a process group of its own, so the session, not
-// the group, is what holds the whole command.)
+func (m *managed) installShim(step func(...string) error) error {
+	if !m.cfg.QUIC.IsValid() {
+		return nil
+	}
+	if err := step("copy", m.cfg.Shim, m.cfg.Instance+":"+guestShim); err != nil {
+		return err
+	}
+	install := "install -m 0755 " + guestShim + " /usr/local/bin/lima-udp-shim && systemctl restart lima-udp-shim"
+	return step("shell", m.cfg.Instance, "--", "sudo", "sh", "-c", install)
+}
+
+// guestJob runs the script as the guest user in a system service. The
+// root-owned cgroup also contains sudo children; systemd bounds their
+// lifetime even when the host connection disappears. Cancellation marks
+// the job before stopping it, so a delayed launch cannot start afterwards.
 func guestJob(id string, seconds int, script string) []string {
-	return []string{"setsid", "-w", "sh", "-c",
-		`d=/tmp/lima-mcp-jobs; mkdir -p "$d"; echo $$ > "$d/` + id + `"; ` +
-			`timeout -k 10 ` + strconv.Itoa(seconds) + ` bash -lc "$1"; rc=$?; rm -f "$d/` + id + `"; exit $rc`,
+	return []string{"bash", "-c", `set -eu
+sudo -n install -d -m 0755 /run/lima-mcp-jobs
+environment=()
+while IFS= read -r -d '' value; do environment+=("--setenv=$value"); done < <(env -0)
+exec sudo -n systemd-run --quiet --wait --pipe --collect --service-type=exec --expand-environment=no \
+  --unit=lima-mcp-job-` + id + ` --uid="$(id -u)" --gid="$(id -g)" --working-directory="$PWD" \
+  --property=RuntimeMaxSec=` + strconv.Itoa(seconds) + `s --property=TimeoutStopSec=10s --property=KillMode=control-group \
+  "--property=ExecCondition=/usr/bin/test ! -e /run/lima-mcp-jobs/` + id + `.cancel" \
+  "${environment[@]}" -- bash -lc "$1"`,
 		"lima-mcp-job", script}
 }
 
-// guestKill is the guest command that kills job id's session.
+// guestKill prevents a late launch and stops the job's entire cgroup.
+// Cancellation markers remain in /run until reboot, since a disconnected
+// SSH command may still be on its way to creating the unit.
 func guestKill(id string) []string {
-	return []string{"sh", "-c", `f=/tmp/lima-mcp-jobs/` + id + `; [ -s "$f" ] && pkill -KILL -s "$(cat "$f")"; rm -f "$f"`}
+	return []string{"sudo", "-n", "sh", "-c", `set -eu
+install -d -m 0755 /run/lima-mcp-jobs
+touch /run/lima-mcp-jobs/` + id + `.cancel
+state=$(systemctl show --property=LoadState --value "$1") || [ "$state" = not-found ]
+if [ "$state" != not-found ]; then systemctl stop "$1"; fi`, "lima-mcp-cancel", "lima-mcp-job-" + id + ".service"}
 }
 
 // exec runs script in the guest's workdir under the guest's timeout, once
@@ -367,7 +391,7 @@ func callStatus(ctx context.Context, s *server, raw json.RawMessage) map[string]
 	if err := strict(raw, &input); err != nil {
 		return failure("invalid arguments")
 	}
-	a, err := m.attest(ctx)
+	a, err := m.inspect(ctx)
 	if err != nil {
 		return failure(err.Error())
 	}

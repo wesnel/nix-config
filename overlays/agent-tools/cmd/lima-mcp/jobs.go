@@ -63,6 +63,9 @@ func (js *jobs) start(timeout time.Duration, work jobRun) *job {
 		switch {
 		case cancelled(ctx):
 			j.status = "cancelled"
+			if err != nil && err != context.Canceled {
+				j.err = err.Error()
+			}
 		case err != nil:
 			j.status, j.err = "failed", err.Error()
 		default:

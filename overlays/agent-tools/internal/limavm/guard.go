@@ -36,7 +36,7 @@ var probes = [][]string{
 
 // Guard decides what to run for the QEMU arguments Lima gave: a probe as
 // it is; a boot whose every flag and value the allowlist accepts, with its
-// network restricted to the two relays, under sandbox-exec with Profile;
+// network restricted to its configured relays, under sandbox-exec with Profile;
 // and nothing else, which it refuses.
 func Guard(c *GuardConfig, args []string) (Launch, error) {
 	for _, p := range probes {
@@ -107,13 +107,17 @@ func first(s []string) string {
 }
 
 // relaySuffix is what the guard appends to the user netdev: no route out
-// of slirp but the two guestfwd relays, which run lima-mcp through the
+// of slirp but the configured guestfwd relays, which run lima-mcp through the
 // stable links.
 func relaySuffix(c *GuardConfig) string {
 	relay := func(at, mode string) string {
 		return fmt.Sprintf(",guestfwd=tcp:%s-cmd:%s lima-egress %s --config %s", at, c.BinLink(), mode, c.ConfigLink())
 	}
-	return ",restrict=on,ipv6=off" + relay(c.Connect.String(), "connect") + relay(c.QUIC.String(), "quic")
+	suffix := ",restrict=on,ipv6=off" + relay(c.Connect.String(), "connect")
+	if c.QUIC.IsValid() {
+		suffix += relay(c.QUIC.String(), "quic")
+	}
+	return suffix
 }
 
 // bootDiskFormat is what the guard appends to Lima's boot disk, which
@@ -476,8 +480,11 @@ func Profile(c *GuardConfig) string {
 	b.WriteString(")\n")
 	fmt.Fprintf(&b, "(allow file-read* (subpath %q))\n", c.LimaHome)
 	b.WriteString("(deny file-write*)\n")
-	fmt.Fprintf(&b, "(allow file-write* (subpath %q) (subpath %q) (subpath %q) (literal %q) (subpath \"/dev\"))\n",
-		c.InstanceDir(), c.Slots(), c.QUICSlots(), c.EgressLog())
+	fmt.Fprintf(&b, "(allow file-write* (subpath %q) (subpath %q)", c.InstanceDir(), c.Slots())
+	if c.QUIC.IsValid() {
+		fmt.Fprintf(&b, " (subpath %q)", c.QUICSlots())
+	}
+	fmt.Fprintf(&b, " (literal %q) (subpath \"/dev\"))\n", c.EgressLog())
 	return b.String()
 }
 

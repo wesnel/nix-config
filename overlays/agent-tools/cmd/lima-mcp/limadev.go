@@ -42,8 +42,10 @@ func devMain(args []string, execute func(path string, argv, env []string) error)
 	if err := limavm.RefreshLinks(c, args[1]); err != nil {
 		return err
 	}
-	if err := limavm.EnsureCA(context.Background(), c.CACert(), c.CAKey(), c.QUICServers); err != nil {
-		return err
+	if c.QUIC.IsValid() {
+		if err := limavm.EnsureCA(context.Background(), c.CACert(), c.CAKey(), c.QUICServers); err != nil {
+			return err
+		}
 	}
 	return execute(c.Limactl, append([]string{c.Limactl}, args[3:]...), limactlEnv(c))
 }

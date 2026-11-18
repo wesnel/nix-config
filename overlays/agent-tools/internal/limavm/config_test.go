@@ -48,6 +48,15 @@ func configJSON(t *testing.T, edit func(map[string]any)) []byte {
 }
 
 func TestParseConfig(t *testing.T) {
+	t.Run("HTTPS only without private dial", func(t *testing.T) {
+		c, err := ParseConfig(configJSON(t, withoutPrivateDial))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.QUIC.IsValid() || c.Shim != "" || len(c.QUICServers) != 0 || len(c.Endpoints) != 0 || !c.Egress.Allows("github.com") {
+			t.Fatalf("HTTPS-only configuration: %+v", c)
+		}
+	})
 	t.Run("a rendered configuration", func(t *testing.T) {
 		c, err := ParseConfig(configJSON(t, nil))
 		if err != nil {
@@ -82,6 +91,13 @@ func TestParseConfig(t *testing.T) {
 		{"a missing path", func(m map[string]any) { delete(m, "limactl") }, "limactl"},
 		{"a missing home", func(m map[string]any) { delete(m, "home") }, "home"},
 		{"a missing git", func(m map[string]any) { delete(m, "git") }, "git"},
+		{"private dial without its shim", func(m map[string]any) { delete(m, "shim") }, "shim"},
+		{"a shim without private dial", func(m map[string]any) { withoutPrivateDial(m); m["shim"] = "/nix/store/s/bin/shim" }, "disabled private dial"},
+		{"QUIC servers without private dial", func(m map[string]any) {
+			withoutPrivateDial(m)
+			m["egress"].(map[string]any)["quicServers"] = []any{"us.quic.connect-endpoint.ngrok.com"}
+		}, "disabled private dial"},
+		{"private endpoints without private dial", func(m map[string]any) { withoutPrivateDial(m); m["privateDialEndpoints"] = []any{"db.internal:5432"} }, "disabled private dial"},
 		{"a relative outbox", func(m map[string]any) { m["outbox"] = "lima-mcp-outbox" }, "outbox"},
 		{"a relative path", func(m map[string]any) { m["qemu"] = "bin/qemu" }, "qemu"},
 		{"an unclean path", func(m map[string]any) { m["limaHome"] = "/private/tmp/../lima-probe" }, "limaHome"},
@@ -121,6 +137,13 @@ func TestParseConfig(t *testing.T) {
 			t.Fatal("trailing data parsed")
 		}
 	})
+}
+
+func withoutPrivateDial(m map[string]any) {
+	delete(m, "quic")
+	delete(m, "shim")
+	m["egress"].(map[string]any)["quicServers"] = []any{}
+	m["privateDialEndpoints"] = []any{}
 }
 
 func TestParseGuardConfig(t *testing.T) {
