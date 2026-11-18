@@ -49,7 +49,8 @@ reply and posting it once the operator answers y.
 
 Each push, reply, resolve and wait ci's result is logged in the plan of the
 session that runs it: the plan naming the harness's session or this
-worktree; reply --from also logs each thread it answers as finding-settled,
+worktree; open also adds the pull request it opened to the plan's
+PULL_REQUESTS, linking the plans that name it too; reply --from also logs each thread it answers as finding-settled,
 with --review ROUND.THREAD and the file's outcome. A failure to log is
 printed on stderr and fails nothing.
 
@@ -115,9 +116,9 @@ printed on stderr and fails nothing.
   guard --reviewer            PreToolUse hook a reviewer agent's definition adds beside
                               --baseline (reads stdin): also keeps the agent to reading
   guard --post                PostToolUse hook for Claude Code and Codex (reads stdin):
-                              records the shell call's commits, pushes (but push's,
-                              which push logs), new worktrees,
-                              branches and PRs in the plan of its session or worktree,
+                              records the shell call's commits, pushes (but open's
+                              and push's, which they log), new worktrees and
+                              branches in the plan of its session or worktree,
                               each commit with the session, asking which step it
                               completes (a commit no plan takes makes a plan
                               naming both); after a push to GitHub, names the

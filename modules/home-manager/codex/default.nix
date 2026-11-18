@@ -399,10 +399,12 @@ in {
           # path that changes with every rebuild. Codex adds these to any
           # other layer's hooks.
           ".codex/hooks.json".text = builtins.toJSON {
-            # Records commits, pushes, worktrees, branches and PRs in the
-            # plan and asks which step a commit completes; after a push to
-            # GitHub, names the `pr-loop wait ci` to start; hands over the
-            # pull-requests skill when a PR is opened or edited, and the
+            # Records commits, pushes, worktrees and branches in the plan
+            # (pr-loop open, which Codex runs as an MCP tool no hook sees,
+            # records its PR itself) and asks which step a commit completes;
+            # after a shell push to GitHub, names the `pr-loop wait ci` to
+            # start; hands over the pull-requests skill when a shell call
+            # opens or edits a PR, and the
             # commit rules on the session's first commit. Codex names every
             # shell call Bash.
             hooks.PostToolUse = [
