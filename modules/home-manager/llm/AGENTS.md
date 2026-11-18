@@ -141,6 +141,9 @@ one that matters.
 **Explain a number.** Load the `explain-a-number` skill before reporting a
 number you measured.
 
+**Budget the qualities.** Load the `budget-the-qualities` skill before
+writing a plan's Goal.
+
 **Reproduce first.** Show a failure before fixing it, and gone afterwards,
 with the same reproduction; load the `reproduce-first` skill before fixing
 one, and the `diagnose-failure` skill before looking for its cause.

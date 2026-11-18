@@ -106,6 +106,16 @@ Propose `upgrade` where the change moves a dependency's version:
 - the version a CI workflow runs an action at;
 - a toolchain or language version, or a pinned container image.
 
+Propose `perf` where the change can make a path cost more, or where the
+goal statement's `Qualities:` line budgets a quality:
+
+- work added to a path run often or waited on: startup, each request,
+  each tool call or hook, each item of an input that grows;
+- loops, queries or calls whose number grows with an input;
+- memory read whole, cached or accumulated;
+- what is shipped or loaded growing: a dependency, an artifact, the
+  context an agent loads.
+
 ## Output
 
 Reply with one JSON object and nothing else:

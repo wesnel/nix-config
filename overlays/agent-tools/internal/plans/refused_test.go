@@ -49,7 +49,7 @@ func TestRefusedWritesNothing(t *testing.T) {
 			return err
 		},
 		"section": func(p Plan) error {
-			_, err := p.SetSection("", "Goal", "Add the loop.\nBuilds on: the run command.\nLikely next changes: its flag.", day)
+			_, err := p.SetSection("", "Goal", "Add the loop.\nBuilds on: the run command.\nQualities: none moved.\nLikely next changes: its flag.", day)
 			return err
 		},
 		"postpone": func(p Plan) error {

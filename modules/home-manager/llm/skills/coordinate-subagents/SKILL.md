@@ -112,8 +112,8 @@ what is this work's.
   `git delegate` cannot run the selected provider, from the prompt
   `git delegate --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
-- **`security-reviewer`**, **`compat-reviewer`** and
-  **`upgrade-reviewer`:** that focus's review of a part's range outside
+- **`security-reviewer`**, **`compat-reviewer`**, **`upgrade-reviewer`**
+  and **`perf-reviewer`:** that focus's review of a part's range outside
   the fresh review loop, or from the prompt
   `git delegate --print-prompt --reviewer ROUTE` prints where delegate
   cannot run it headless (its stderr names the type). An

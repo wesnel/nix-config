@@ -27,6 +27,11 @@ var securityChecks string
 //go:embed compat.md
 var compatChecks string
 
+// perfChecks are the perf review's checks, checklist and output.
+//
+//go:embed perf.md
+var perfChecks string
+
 // focus is a focused review: the checks that replace the general
 // contract's, the categories of its checklist a reply must name as
 // checked, the kinds of finding it adds to the general ones, and what its
@@ -53,6 +58,7 @@ var focuses = map[string]focus{
 	"security": newFocus(securityChecks, focus{kinds: []string{"vulnerability"}, threatNotes: true}),
 	"compat":   newFocus(compatChecks, focus{kinds: []string{"incompatible"}, reverting: true}),
 	"upgrade":  newFocus(upgradeChecks, focus{kinds: []string{"upgrade-break"}, upgrades: true}),
+	"perf":     newFocus(perfChecks, focus{kinds: []string{"costlier", "unmeasured"}}),
 }
 
 // Reverting is the heading of a pull request description's section on

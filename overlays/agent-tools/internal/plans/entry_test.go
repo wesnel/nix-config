@@ -310,11 +310,11 @@ func TestSetAfter(t *testing.T) {
 func TestSetSection(t *testing.T) {
 	_, p := entryPlan(t)
 	setGoal(t, p.file(""), "Old goal.")
-	e, err := p.SetSection("", "Goal", "Add the loop.\n\nBuilds on: the run command.\nLikely next changes: its flag.", day)
+	e, err := p.SetSection("", "Goal", "Add the loop.\n\nBuilds on: the run command.\nQualities: none moved.\nLikely next changes: its flag.", day)
 	if err != nil || e.Kind != "planned" || e.Item != p.Name || e.Summary != "Goal written" {
 		t.Fatalf("goal: %+v, %v", e, err)
 	}
-	if goal, _ := p.Goal(""); goal != "Add the loop.\n\nBuilds on: the run command.\nLikely next changes: its flag.\n" {
+	if goal, _ := p.Goal(""); goal != "Add the loop.\n\nBuilds on: the run command.\nQualities: none moved.\nLikely next changes: its flag.\n" {
 		t.Errorf("goal %q", goal)
 	}
 	if _, err := p.SetSection("P1", "Verification", "- go test ./...", day); err != nil {
@@ -323,19 +323,22 @@ func TestSetSection(t *testing.T) {
 	if text := fileText(t, p.file("P1")); !strings.HasSuffix(text, "** Verification\n- go test ./...\n") {
 		t.Errorf("part:\n%s", text)
 	}
-	if e, err := p.SetSection("P1", "Goal", "The flag.\nBuilds on: nothing found in cmd.\nLikely next changes: its default.", day); err != nil || e.Item != "P1" {
+	if e, err := p.SetSection("P1", "Goal", "The flag.\nBuilds on: nothing found in cmd.\nQualities: none moved.\nLikely next changes: its default.", day); err != nil || e.Item != "P1" {
 		t.Errorf("a part's goal: %+v, %v", e, err)
 	}
 
-	// A Goal missing either line is refused, naming the line to add, and
-	// leaves the plan's or the part's file as it was.
+	// A Goal missing any of its lines is refused, naming the line to add,
+	// and leaves the plan's or the part's file as it was.
 	for what, c := range map[string]struct{ part, text, missing string }{
-		"a goal without Builds on":                  {"", "Add the loop.\nLikely next changes: its flag.", "Builds on:"},
-		"a goal without Likely next changes":        {"", "Add the loop.\nBuilds on: the run command.", "Likely next changes:"},
-		"a goal with an empty Builds on":            {"", "Add the loop.\nBuilds on: \nLikely next changes: its flag.", "Builds on:"},
-		"a goal naming Builds on mid-line":          {"", "Add the loop; Builds on: the run command.\nLikely next changes: its flag.", "Builds on:"},
-		"a part's goal without Builds on":           {"P1", "The flag.\nLikely next changes: its default.", "Builds on:"},
-		"a part's goal without Likely next changes": {"P1", "The flag.\nBuilds on: nothing found in cmd.", "Likely next changes:"},
+		"a goal without Builds on":                  {"", "Add the loop.\nQualities: none moved.\nLikely next changes: its flag.", "Builds on:"},
+		"a goal without Likely next changes":        {"", "Add the loop.\nBuilds on: the run command.\nQualities: none moved.", "Likely next changes:"},
+		"a goal with an empty Builds on":            {"", "Add the loop.\nBuilds on: \nQualities: none moved.\nLikely next changes: its flag.", "Builds on:"},
+		"a goal naming Builds on mid-line":          {"", "Add the loop; Builds on: the run command.\nQualities: none moved.\nLikely next changes: its flag.", "Builds on:"},
+		"a part's goal without Builds on":           {"P1", "The flag.\nQualities: none moved.\nLikely next changes: its default.", "Builds on:"},
+		"a part's goal without Likely next changes": {"P1", "The flag.\nBuilds on: nothing found in cmd.\nQualities: none moved.", "Likely next changes:"},
+		"a goal without Qualities":                  {"", "Add the loop.\nBuilds on: the run command.\nLikely next changes: its flag.", "Qualities:"},
+		"a goal with an empty Qualities":            {"", "Add the loop.\nBuilds on: the run command.\nQualities:\nLikely next changes: its flag.", "Qualities:"},
+		"a part's goal without Qualities":           {"P1", "The flag.\nBuilds on: nothing found in cmd.\nLikely next changes: its default.", "Qualities:"},
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			before := fileText(t, p.file(c.part))
@@ -354,7 +357,7 @@ func TestSetSection(t *testing.T) {
 		{"", "Steps", "x"},
 		{"", "Goal", "*** heading"},
 		{"", "Goal", " "},
-		{"P7", "Goal", "x\nBuilds on: y\nLikely next changes: z"},
+		{"P7", "Goal", "x\nBuilds on: y\nQualities: none moved.\nLikely next changes: z"},
 	} {
 		t.Run("refused/"+strings.Join(c[:], " "), func(t *testing.T) {
 			_, err := p.SetSection(c[0], c[1], c[2], day)

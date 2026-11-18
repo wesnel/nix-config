@@ -53,12 +53,33 @@ func TestSecurityChecklistInBandSignaling(t *testing.T) {
 // Where a focused review cannot run headless, delegate names the agent
 // type to start on the prompt it prints.
 func TestFocusAgentNamed(t *testing.T) {
-	f := setUp(t, true)
-	f.config(t, map[string]any{})
-	code, _, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
-	if code != 4 || !strings.Contains(stderr, "start a new `security-reviewer` sub-agent on what `git delegate --print-prompt "+
-		"--reviewer security") {
-		t.Errorf("exit %d\n%s", code, stderr)
+	for _, route := range []string{"security", "perf"} {
+		t.Run(route, func(t *testing.T) {
+			f := setUp(t, true)
+			f.config(t, map[string]any{})
+			code, _, stderr := runDelegate(t, "--reviewer", route, "--plan", f.plan, f.base+"..HEAD")
+			if code != 4 || !strings.Contains(stderr, "start a new `"+route+"-reviewer` sub-agent on what `git delegate --print-prompt "+
+				"--reviewer "+route) {
+				t.Errorf("exit %d\n%s", code, stderr)
+			}
+		})
+	}
+}
+
+// The perf reply names every category of its checklist as checked, which
+// includes the plan's budgets.
+func TestPerfChecklist(t *testing.T) {
+	f, ok := focuses["perf"]
+	if !ok {
+		t.Fatal("no perf focus")
+	}
+	if !slices.Contains(f.categories, "budgets") {
+		t.Errorf("the perf checklist has no budgets category: %v", f.categories)
+	}
+	for _, kind := range []string{"costlier", "unmeasured"} {
+		if !strings.Contains(string(f.schema()), `"`+kind+`"`) {
+			t.Errorf("the perf reply schema takes no %s finding", kind)
+		}
 	}
 }
 

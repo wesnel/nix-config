@@ -466,6 +466,7 @@ func (o EditOptions) edit(lines []string, id, file string, body []string) ([]str
 // text says. The plan-work skill's Goal defines them.
 var goalLines = []struct{ label, holds string }{
 	{"Builds on:", "what already does the job, or part of it, and how this change extends it, or that nothing was found and where the search looked"},
+	{"Qualities:", "each non-functional quality the change moves, with its budget and the command that measures it, or that none moves and why"},
 	{"Likely next changes:", "one or two concrete changes expected after this one"},
 }
 
