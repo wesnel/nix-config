@@ -89,7 +89,14 @@ TYPEs (--reviewer, repeated):
             as below. Its prompt adds the open branches that change the same
             files. Its reply must name every category of its checklist as
             checked, and say of each moved pin whether it read its text.
-  guide     the walkthrough, by Claude Code's review-guide agent, headless
+  perf      the performance review, by Claude Code's perf-reviewer agent,
+            headless as security is: what the change makes cost more in
+            time, memory, size or calls, and qualities it moves that the
+            goal's Qualities: line leaves unbudgeted or measures off the
+            changed path. It only reads. Its prompt adds the open branches
+            that change the same files. Its reply must name every category
+            of its checklist as checked.
+  guide    the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
             no hunk, and a hunk no chunk cites, are dropped. Run it with
@@ -258,6 +265,7 @@ var reviewerTypes = map[string]reviewerType{
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
 	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
 	"upgrade":  {claude: true, agent: "upgrade-reviewer", focus: "upgrade"},
+	"perf":     {claude: true, agent: "perf-reviewer", focus: "perf"},
 	"guide":    {claude: true, agent: "review-guide", guide: true},
 	"diagram":  {diagram: true},
 }

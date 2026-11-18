@@ -58,6 +58,8 @@ checks do not already answer:
   or program consumes, including rollback across versions.
 - `upgrade`: changed dependency versions and their effects on this code.
   Add security only for a distinct security question.
+- `perf`: work added to a path run often or waited on, cost that grows
+  with an input, or a quality the Goal's `Qualities:` line budgets.
 - Design review: a new architecture, ownership or state model, a
   significant interface decision, or interactions across parts whose
   structure needs judgement.
@@ -192,9 +194,12 @@ actions) change here, against upstream's commits, changelogs and
 releases between each pin's two versions, which delegate gathers on the
 host before the reviewer starts; the reviewer never fetches. An `UP-`
 finding names a pin whose upstream changes nobody read; read them or say
-in the reply why the pin is safe. Each runs headless as its route's own
-agent type, `ROUTE-reviewer` (`security-reviewer`, `compat-reviewer`,
-`upgrade-reviewer`); where delegate cannot run it (exit 4),
+in the reply why the pin is safe. `perf` reviews what the change makes
+cost more, and whether each budget's command runs the changed path; it
+measures nothing, so its findings say what a run would show. Each runs
+headless as its route's own agent type, `ROUTE-reviewer`
+(`security-reviewer`, `compat-reviewer`, `upgrade-reviewer`,
+`perf-reviewer`); where delegate cannot run it (exit 4),
 `git delegate --print-prompt --reviewer ROUTE` with the same files prints
 the prompt for a new sub-agent of that type, which stderr names. Settle
 each finding as Triage says. Verify fixes under the same selection and
