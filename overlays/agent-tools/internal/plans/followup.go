@@ -32,6 +32,9 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 	if err := p.checkOwn(); err != nil {
 		return Recorded{}, err
 	}
+	if err := p.checkOpen(); err != nil {
+		return Recorded{}, err
+	}
 	o.Title, o.Context = strings.TrimSpace(o.Title), strings.TrimSpace(o.Context)
 	context, err := o.validate()
 	if err != nil {
@@ -50,7 +53,10 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		if _, ok := items[o.FoundIn]; !ok {
 			return refusal.New("%q is not an item of %s. Pass the ID of the item the work was found in, as `agent-plan status %s` lists it", o.FoundIn, p.Name, p.file(""))
 		}
-		id := nextListedID(o.Part, "F", items)
+		id, err := p.nextID(partPrefix(o.Part), "F")
+		if err != nil {
+			return err
+		}
 		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":CUSTOM_ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
 			context...)
 		err = l.edit(file, func(lines []string) ([]string, error) {

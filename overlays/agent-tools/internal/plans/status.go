@@ -20,7 +20,7 @@ type Step struct {
 	// Keyword is the keyword the log gives the step.
 	Keyword string `json:"keyword"`
 	// Minutes is how long the step has been worked on: the sum of its spans
-	// from a started event to the next done or abandoned event, to the
+	// from a started event to the next done, abandoned or carried event, to the
 	// minute the log stamps. A span still open at the time of the status
 	// runs to it, and Running is set. Nil for a step never started.
 	Minutes *int `json:"minutes,omitempty"`
@@ -34,11 +34,14 @@ type Status struct {
 	Title string `json:"title"`
 	State string `json:"status"`
 	Steps []Step `json:"steps"`
-	// NotDone are the steps with no done event, and DoneNotVerified those
-	// with one but no verified event; abandoned steps are in neither.
-	NotDone         []string `json:"notDone"`
+	// Unsettled are the steps the log leaves TODO or STARTED, which a
+	// hand-back waits for; DoneNotVerified those it leaves DONE; Carried
+	// those it carried to the next plan. Abandoned steps are in none.
+	Unsettled       []string `json:"unsettled"`
 	DoneNotVerified []string `json:"doneNotVerified"`
-	// Implemented is Verified of Total, the steps not abandoned.
+	Carried         []string `json:"carried"`
+	// Implemented is Verified of Total, the steps neither abandoned nor
+	// carried.
 	Verified    int    `json:"verified"`
 	Total       int    `json:"total"`
 	Implemented string `json:"implemented"`
@@ -152,9 +155,9 @@ func eventTime(e Event, loc *time.Location) (time.Time, bool) {
 }
 
 // workTime sets Minutes and Running of the steps of s that events started:
-// the sum of each step's spans, from a started event to the next done or
-// abandoned one, and a span still open at now runs to it. A started event
-// inside an open span, and a done or abandoned one outside any, change
+// the sum of each step's spans, from a started event to the next done,
+// abandoned or carried one, and a span still open at now runs to it. A
+// started event inside an open span, and a closing one outside any, change
 // nothing. An event whose stamp does not parse is ignored.
 func workTime(steps []Step, index map[string]int, events []Event, now time.Time) {
 	opened := map[string]time.Time{}
@@ -168,7 +171,7 @@ func workTime(steps []Step, index map[string]int, events []Event, now time.Time)
 		switch start, open := opened[e.Item]; {
 		case e.Kind == "started" && !open:
 			opened[e.Item], timed[e.Item] = at, true
-		case (e.Kind == "done" || e.Kind == "abandoned") && open:
+		case (e.Kind == "done" || e.Kind == "abandoned" || e.Kind == carriedKind) && open:
 			total[e.Item] += at.Sub(start)
 			delete(opened, e.Item)
 		}
@@ -257,8 +260,8 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
-		DoneNotVerified: []string{}, Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
+	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, Unsettled: []string{},
+		DoneNotVerified: []string{}, Carried: []string{}, Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
 	open, err := p.Questions(true)
 	if err != nil {
 		return Status{}, err
@@ -302,15 +305,18 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	}
 	workTime(s.Steps, index, events, now)
 	for _, step := range s.Steps {
-		switch {
-		case step.Abandoned:
+		switch step.Keyword {
+		case kwAbandoned:
 			continue
-		case !step.Done:
-			s.NotDone = append(s.NotDone, step.ID)
-		case !step.Verified:
+		case kwCarried:
+			s.Carried = append(s.Carried, step.ID)
+			continue
+		case kwDone:
 			s.DoneNotVerified = append(s.DoneNotVerified, step.ID)
-		default:
+		case kwVerified:
 			s.Verified++
+		default:
+			s.Unsettled = append(s.Unsettled, step.ID)
 		}
 		s.Total++
 	}
@@ -418,13 +424,16 @@ func (s Status) Org() string {
 	b.WriteString("|-\n")
 	for _, step := range s.Steps {
 		done := yes(step.Done)
-		if step.Abandoned {
+		switch step.Keyword {
+		case kwAbandoned:
 			done = "abandoned"
+		case kwCarried:
+			done = "carried"
 		}
 		b.WriteString(row(step.ID, step.Title, done, yes(step.Verified), strings.Join(step.Commits, "; ")))
 	}
-	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Without done: %s\n- Done, not verified: %s\n",
-		s.State, s.Implemented, list(s.NotDone), list(s.DoneNotVerified))
+	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Unsettled: %s\n- Done, not verified: %s\n- Carried: %s\n",
+		s.State, s.Implemented, list(s.Unsettled), list(s.DoneNotVerified), list(s.Carried))
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))

@@ -18,6 +18,9 @@ func (p Plan) Postpone(id, until string, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
 	}
+	if err := p.checkOpen(); err != nil {
+		return Event{}, err
+	}
 	if !projected(id) {
 		return Event{}, refusal.New("%q is not a step or a part, the items a schedule keeps waiting. Pass an ID such as S1 or P1 that `agent-plan status %s` lists", id, p.file(""))
 	}

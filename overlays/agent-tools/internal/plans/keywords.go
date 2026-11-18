@@ -26,12 +26,13 @@ const (
 	kwDone       = "DONE"
 	kwVerified   = "VERIFIED"
 	kwAbandoned  = "ABANDONED"
+	kwCarried    = "CARRIED"
 	kwAsk        = "ASK"
 	kwDecided    = "DECIDED"
 	kwDropped    = "DROPPED"
 	kwSuperseded = "SUPERSEDED"
 
-	stepSequence     = kwTodo + " " + kwStarted + " | " + kwDone + " " + kwVerified + " " + kwAbandoned
+	stepSequence     = kwTodo + " " + kwStarted + " | " + kwDone + " " + kwVerified + " " + kwAbandoned + " " + kwCarried
 	questionSequence = kwAsk + " | " + kwDecided + "(@) " + kwDropped + "(@) " + kwSuperseded
 )
 
@@ -64,6 +65,8 @@ func stepState(events []Event, id string) string {
 			state = kwVerified
 		case "abandoned":
 			state = kwAbandoned
+		case carriedKind:
+			state = kwCarried
 		}
 	}
 	return state

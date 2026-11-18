@@ -172,6 +172,13 @@ have (see status) is refused and writes nothing.
                      discovered or handed back since then (a step's time is
                      its first event). A plan that cannot be read is named
                      on stderr, and the exit is 1, after the rest
+  pickup PLAN [--session HARNESS:ID]
+                     pick PLAN up in a fresh session, as the line carry
+                     prints says: add this session (from the environment,
+                     or --session) to its SESSIONS once, set it working,
+                     and print the skills it works under, its open
+                     follow-ups and its brief. Refused for a plan whose
+                     work was carried on, naming the plan that holds it
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
@@ -295,6 +302,22 @@ have (see status) is refused and writes nothing.
                      it as linked; nothing when PLAN already links OTHER.
                      Refused for PLAN itself, a part's file, and a plan in
                      the old form, which has no file-level ID
+  carry PLAN [--title T] [--slug S] [--text GOAL] [--template NAME]
+                     move what PLAN leaves open, its unsettled steps, open
+                     follow-ups and open questions, under the same IDs to
+                     the plan it is carried to, made the first time with
+                     PLAN's title, slug, goal, repositories, branches,
+                     worktrees, harness, pull requests, skills and pipeline
+                     unless given, and with --template, while it has no
+                     steps, the review stages of template NAME (the steps
+                     it marks :STAGE: review) under fresh IDs, waiting on
+                     the carried steps; CARRIED_TO and CARRIED_FROM name each
+                     other, and the new plan links PLAN under Related. Each
+                     step and follow-up becomes CARRIED in PLAN and each
+                     question DROPPED; PLAN then takes no new work. Run
+                     again, it finishes a run that stopped and otherwise
+                     changes nothing. Refused while a part's steps are open,
+                     and for a plan with nothing open
   related PLAN [--json]
                      the plans, any host's, related to PLAN, and why, as
                      "- hard|soft [linked] NAME (TITLE): EVIDENCE"; writes
@@ -688,6 +711,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runQuestions(*all, *asJSON, *count, *waiting, stdout, report, wantPlan)
 	case "open":
 		return runOpen(*kind, *since, *asJSON, c, positional, stdout, stderr, report)
+	case "pickup":
+		return runPickup(lastValue(sessions), stdout, report, wantPlan)
 	case "brief":
 		return runBrief(*resume, stdout, report, wantPlan)
 	case "decisions":
@@ -719,6 +744,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runReference(*note, c, positional, stderr, report)
 	case "link":
 		return runLink(*why, c, positional, stderr, report)
+	case "carry":
+		return runCarry(plans.CarryOptions{Title: *title, Slug: *slug, Goal: *text, Template: *template}, c, positional, stderr, report)
 	case "postpone":
 		return runPostpone(*until, *unset, c, positional, stderr, report)
 	case "init":
@@ -1044,6 +1071,26 @@ func runOpen(kind string, since string, asJSON bool, c plans.Config, positional 
 	return 0
 }
 
+// runPickup joins this session, or the one --session names, to a plan
+// carried to it, and prints what the session starts from.
+func runPickup(session string, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
+	p, ok := wantPlan()
+	if !ok {
+		return 2
+	}
+	if session == "" {
+		if h, id := plans.EnvSession(); id != "" {
+			session = h + ":" + id
+		}
+	}
+	out, err := p.Pickup(session, time.Now())
+	if err != nil {
+		return report(nil, err)
+	}
+	io.WriteString(stdout, out)
+	return 0
+}
+
 func runBrief(resume bool, stdout io.Writer, report func(any, error) int, wantPlan func() (plans.Plan, bool)) int {
 	p, ok := wantPlan()
 	if !ok {
@@ -1183,6 +1230,14 @@ func runLink(why string, c plans.Config, positional []string, stderr io.Writer, 
 		return 2
 	}
 	return report(c.Link(positional[0], positional[1], why, time.Now()))
+}
+
+func runCarry(o plans.CarryOptions, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
+	if len(positional) != 1 {
+		fmt.Fprint(stderr, "agent-plan carry: takes PLAN [--title T] [--slug S] [--text GOAL] [--template NAME]\n")
+		return 2
+	}
+	return report(c.Carry(positional[0], o, time.Now()))
 }
 
 func runPostpone(until string, unset bool, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
