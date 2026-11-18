@@ -423,10 +423,11 @@ no prompt or provider output. Calls already started may finish.
 It never runs `git red-check`, which runs the commits' code: the session runs
 it, as it runs any test, and passes its JSON with `--red-check FILE`, a
 file under the working directory. delegate refuses JSON whose commits are
-not the range's, or that ran other test settings than the repository's,
+not the range's, or that ran other test suites than the repository's,
 records the round's red-check as the session's, and raises an `untested`
-finding of its own, `RC-…`, for each commit whose tests pass without it.
-Where the repository has test settings and no `--red-check` is given, it
+finding of its own, `RC-…`, for each suite of a commit that passes without
+it, at that suite's test files. Where the repository has test suites and
+no `--red-check` is given, it
 says on stderr that the review has no red-check results. For someone else's
 pull request, the session fetches it from delegate's clone, a local read,
 and runs red-check on it there.
@@ -434,10 +435,12 @@ and runs red-check on it there.
 ### `git red-check`
 
 Checks that the tests a commit adds or changes test it, rather than taking
-an agent's word that they failed first. In a throwaway worktree under
-`.git/red-check/`, removed afterwards, it runs the test command at the
-commit's parent plus only the commit's test files, which must fail, then at
-the commit, which must pass:
+an agent's word that they failed first. A repository's tests are a list of
+suites, each a test command, an optional build command and the globs of its
+test files. A commit runs each suite whose test files it changes: in a
+throwaway worktree under `.git/red-check/`, removed afterwards, the suite's
+test command runs at the commit's parent plus only that suite's test files,
+where it must fail, then at the commit, where it must pass:
 
 ``` sh
 git red-check                                  # HEAD
@@ -445,42 +448,77 @@ git red-check --fixups main..HEAD              # each fixup on the branch
 git red-check --test 'go test ./...' --build 'go vet ./...' --test-files '**/*_test.go' HEAD~2
 ```
 
-It prints each commit's verdict, why it falls short, and the end of each
-run's output as JSON, and exits 0 when every commit's tests build and fail
-without the change and pass with it, 3 when they pass without it or fail
-with it, and 4 when the evidence is missing or weak: no test files changed,
-only test files changed, or the tests fail without the change only to build,
-or with no build command to say whether they built. So a repository needs a
-build command for any commit to exit 0. See `git red-check -h` (git turns
-`--help` into a manual-page lookup).
+It prints, as JSON, each commit's verdict, the worst of its suites', and
+for each suite it ran that suite's verdict, why it falls short, and the end
+of each run's output. It exits 0 when every suite of every commit builds,
+fails without the change and passes with it, 3 when a suite passes without
+it or fails with it, and 4 when the evidence is missing or weak: the commit
+changes no suite's test files, or only a suite's test files, or a suite's
+tests fail without the change only to build, or with no build command to
+say whether they built. So a suite needs a build command for a commit to
+exit 0. See `git red-check -h` (git turns `--help` into a manual-page
+lookup).
 
-For co-located Rust unit tests, pass `--rust-test-files '**/*.rs'`. It
-transplants a trailing top-level `#[cfg(test)] mod NAME { ... }` onto the
-parent's unchanged production bytes. Both revisions must contain the same
-regular source path; the parent may lack the test module. Nested candidate
-modules, extra module attributes and non-trailing modules are refused.
-Tokens and whitespace outside literals and comments must be ASCII; raw
-identifiers and lifetimes, shebangs and byte-order marks are refused. C strings
-are refused because their token boundaries depend on the Rust edition. Unicode
-contents of strings, characters and comments are supported. Separator whitespace
-and ordinary comments after the final production token do not count as a
-production change; their parent bytes are still preserved in the projected file.
-Use `--build 'cargo test --no-run --offline'` so compilation failures remain
-distinct from failed assertions. Test support such as manifest changes must
-be selected explicitly with `--test-files`, which copies the entire file;
-select it only when every change there belongs to test support.
-
-Settings missing from the flags come from `test`, `build`, `testFiles` and
-`rustTestFiles` in
-the clone's agent settings, never from the repository. Those are a JSON
+The suites come from `suites` in the clone's agent settings, never from the
+repository; `--test`, `--test-files`, `--inline-test-files` and `--build`
+make one suite, named `flags`, in their place. The settings are a JSON
 object in `.git/info/agents.json` under the clone's common git directory
 (`git rev-parse --git-common-dir`), shared by all its worktrees and never
-tracked, with the keys `setup`, `test`, `build`, `testFiles`, `rustTestFiles`, `routes` and
-`threatNotes` that `internal/repos` describes. The operator writes it; the
-guard refuses every agent's write, and a clone without it has no settings,
-so `git red-check` there runs nothing until given flags. The test command
-runs the commit's code, so run it in a sandbox when the commit is not
-trusted.
+tracked, with the keys `setup`, `suites`, `routes` and `threatNotes` that
+`internal/repos` describes. Each suite has a `name` of its own, a `test`
+command, and `testFiles` or `inlineTestFiles` globs, or both, and may have
+a `build` command; the settings are refused at load otherwise. A flake check is a suite whose test command
+builds the check and whose test files are the check's own test script. For
+example, settings in the ngrok Mac's clone of this repository, where the
+`aarch64-darwin` checks build, could name the Go tests and the
+`agent-plan-sync` check:
+
+``` json
+{
+  "suites": [
+    {
+      "name": "agent-tools",
+      "test": "cd overlays/agent-tools && go test -count=1 ./...",
+      "build": "cd overlays/agent-tools && go vet ./...",
+      "testFiles": ["overlays/agent-tools/**/*_test.go", "overlays/agent-tools/**/testdata/**"]
+    },
+    {
+      "name": "agent-plan-sync",
+      "test": "nix build --no-link .#checks.aarch64-darwin.agent-plan-sync",
+      "build": "nix eval --raw .#checks.aarch64-darwin.agent-plan-sync.drvPath",
+      "testFiles": ["modules/home-manager/llm/plan-activation-tests.sh"]
+    }
+  ]
+}
+```
+
+The flake suite's build command evaluates the check without building it,
+which tells a flake that fails to evaluate from a test that fails. The
+operator writes the file; the guard refuses every agent's write, and a
+clone without it has no suites, so `git red-check` there runs nothing
+until given flags. A test command runs the commit's code, so run it in a
+sandbox when the commit is not trusted.
+
+A suite's `testFiles` hold only tests, and red-check copies each whole.
+Its `inlineTestFiles` are source files that hold their own tests, and
+red-check copies only a file's tests onto the parent's code, splitting the
+file by its extension; it refuses an extension it cannot split, and a file
+both globs select. A `.rs` file's tests are its trailing top-level
+`#[cfg(test)] mod NAME { ... }`, transplanted onto the parent's unchanged
+production bytes. Both revisions must contain the same regular source path;
+the parent may lack the test module. Nested candidate modules, extra module
+attributes and non-trailing modules are refused. Tokens and whitespace
+outside literals and comments must be ASCII; raw identifiers and lifetimes,
+shebangs and byte-order marks are refused. C strings are refused because
+their token boundaries depend on the Rust edition. Unicode contents of
+strings, characters and comments are supported. Separator whitespace and
+ordinary comments after the final production token do not count as a
+production change; their parent bytes are still preserved in the projected
+file. Give a Rust suite `"build": "cargo test --no-run --offline"` so
+compilation failures remain distinct from failed assertions. Test support
+such as manifest changes goes in the suite's `testFiles`, which copies the
+entire file; select it only when every change there belongs to test
+support.
 
 ## plans: one file per change, one log
 
@@ -840,13 +878,14 @@ git itself does not use the keychain's GitHub login:
 | `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `parallels` (`parallels`) | local Parallels Desktop MCP | VM reads; guest commands, keyboard input and lifecycle changes you confirm |
+| `lima` (`lima`, `limaDev.enable`) | local `lima-mcp` | default-home list and the managed VM's status and job results; stops, the managed VM's start, guest commands and imports you confirm |
 
 Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
 lists are also permission rules generated from `mcp.json`: each server's
 reads allowed and its listed writes asked, and the guard still refuses any
-other tool on a listed server. Linear and Parallels calls use Codex's native
-per-call approval; Codex gets the other remote servers' reads alone. Reviewers
+other tool on a listed server. Linear, Parallels and Lima calls use Codex's
+native per-call approval; Codex gets the other remote servers' reads alone. Reviewers
 get reads alone.
 
 ngrok enables Parallels. It requires an installed Parallels Desktop, and
@@ -856,6 +895,36 @@ require a running VM. VM deletion, reset, configuration and encryption tools
 are excluded. If the local server cannot start, inspect
 `~/.local/state/mcp-proxy.log`; `mcp-proxy-status` checks authentication,
 not local process startup.
+
+ngrok also enables `lima` with `limaDev`: the instances of the default
+Lima home, listed and stopped, and a managed `ngrok-agent` VM in a Lima
+home of its own, `~/.local/state/lima-mcp/lima`, which sessions cannot
+read. Run `limactl` against that home only as `lima-dev`, never plain
+`limactl`, which would start QEMU without its launch guard. What its
+isolation rests on:
+
+- QEMU starts only through the guard, which reads its configuration from
+  the store, allows each flag and value, restricts the network to two
+  relays, and runs QEMU under `sandbox-exec`.
+- Attestation finds QEMU in the process table and checks its argv against
+  the guard's, on every status and command and each minute, and stops a VM
+  that fails. It cannot see whether QEMU runs under the Seatbelt profile:
+  that needs cgo. This is a recorded residual.
+- The guest reaches only the HTTPS hosts of the egress policy, through the
+  CONNECT relay, and private dial, through the HTTP/3 broker, whose CA
+  vouches for the private-dial servers' names alone.
+- No VM boots in a session sandbox, so the operator runs the live checks.
+
+A session hands a repository to the VM through an outbox,
+`~/.local/state/lima-mcp-outbox`, which is the one directory besides the
+workspace and tool caches that Codex's and Claude Code's sandboxes let
+their commands write (`wgn.home.llm.sandbox.writableRoots`). In the
+repository, `lima-dev-export NAME` writes `NAME.bundle` there: HEAD,
+`origin/main`, the index and the worktree, untracked files included but
+not ignored ones. `lima_dev_import`, which you confirm, then copies the
+bundle out of the outbox, refuses it if its history holds a credential's
+path, and makes the guest's working directory the repository's. What was
+changed only in the guest is discarded.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in

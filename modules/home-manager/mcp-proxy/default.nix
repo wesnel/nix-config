@@ -59,6 +59,16 @@ with lib; let
         timeout = "6m";
         options.toolFilter = toolFilter "parallels";
       };
+    }
+    // optionalAttrs cfg.lima {
+      lima = {
+        transportType = "stdio";
+        command = getExe' config.wgn.home.llm.agentTools "lima-mcp";
+        # With the configuration, it also serves the managed VM.
+        args = optionals cfg.limaDev.enable ["--config" "${cfg.limaDev.configFile}"];
+        timeout = "6m";
+        options.toolFilter = toolFilter "lima";
+      };
     };
 
   configFile = pkgs.writeText "mcp-proxy.json" (builtins.toJSON {
@@ -145,6 +155,8 @@ with lib; let
     '';
   };
 in {
+  imports = [./lima-dev.nix];
+
   options.wgn.home.mcp-proxy = {
     enable = mkEnableOption ''
       one MCP endpoint per upstream server at http://127.0.0.1:PORT/NAME/mcp,
@@ -252,6 +264,12 @@ in {
       description = "Serve local Parallels Desktop VMs. Guest commands require Parallels Tools in the guest.";
     };
 
+    lima = mkOption {
+      type = types.bool;
+      default = false;
+      description = "List and stop the instances of the default Lima home, and serve the managed VM when `limaDev` is enabled.";
+    };
+
     datadog = {
       enable = mkOption {
         type = types.bool;
@@ -277,6 +295,10 @@ in {
         {
           assertion = !cfg.parallels || darwin;
           message = "wgn.home.mcp-proxy.parallels requires macOS and Parallels Desktop";
+        }
+        {
+          assertion = !cfg.lima || darwin;
+          message = "wgn.home.mcp-proxy.lima requires macOS and Lima";
         }
       ];
       home.packages = [authorize status];

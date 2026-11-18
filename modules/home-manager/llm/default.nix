@@ -437,6 +437,8 @@ in {
         ]
         # The secret's link, besides where it resolves to below.
         ++ optional ngrokAi config.sops.secrets.ngrok-ai-key.path
+        # The managed Lima VM's home: its SSH key and the broker CA's key.
+        ++ optional proxy.limaDev.enable proxy.limaDev.home
         # sops-nix decrypts into the per-user temporary directory on macOS
         # and /run/user on Linux; ~/.config/sops-nix/secrets links there.
         # The sandbox matches the path a link resolves to, and denying the
@@ -625,6 +627,29 @@ in {
           ++ ["~/.cache/nix" "~/.cache/uv"];
       };
 
+      writableRoots = mkOption {
+        type = types.listOf (types.strMatching "/.*");
+        default = [];
+
+        description = ''
+          Absolute directories besides the workspace and the tool caches
+          that Codex's and Claude Code's sandboxes let their commands
+          write, each a place a session hands files to a program outside
+          the sandbox, which checks what it takes from there: the managed
+          Lima VM's outbox. Nothing on PATH and nothing a program outside
+          the sandbox loads code or configuration from belongs here. An
+          assertion refuses a root, compared as written, that has a `.` or
+          `..` component or a trailing slash; that starts with, or holds a
+          path starting with, an entry of
+          {option}`wgn.home.llm.guard.credentialPaths`; or that is, is
+          under or holds an entry of
+          {option}`wgn.home.llm.sandbox.deniedReads`. Each entry is read
+          with `~/` as the home directory, and one with a glob as its
+          literal part before the first `*`, `?` or `[`, which it compares
+          as a credential path's.
+        '';
+      };
+
       deniedEnvVars = mkOption {
         type = types.listOf types.str;
         readOnly = true;
@@ -658,7 +683,11 @@ in {
           Hosts every sandbox's commands may reach, for fetching
           dependencies when building and testing. Commands can send anything
           they can read to these hosts, including uploading to GitHub with
-          credentials available in the workspace or command output.
+          credentials available in the workspace or command output. The
+          managed Lima VM's guest (`wgn.home.mcp-proxy.limaDev`) reaches
+          them too, through its CONNECT relay; an entry the relay's policy
+          refuses as a host name or `*.` pattern stops lima-mcp from
+          starting.
         '';
 
         default = [
@@ -977,12 +1006,43 @@ in {
       })
     ];
 
-    assertions = [
-      {
-        assertion = ngrokAi -> hasNgrokAiKey;
-        message = "wgn.home.llm.gateway is ngrok-ai, but secrets/personal.yaml holds no ngrok-ai-key, which sops-nix would fail every secret for.";
-      }
-    ];
+    assertions =
+      [
+        {
+          assertion = ngrokAi -> hasNgrokAiKey;
+          message = "wgn.home.llm.gateway is ngrok-ai, but secrets/personal.yaml holds no ngrok-ai-key, which sops-nix would fail every secret for.";
+        }
+      ]
+      # A writable root in, or holding, a credential path or a path the
+      # sandbox hides would let a session write a credential. Each entry
+      # is read with ~/ as the home directory, and one with a glob as its
+      # literal part before the first *, ? or [, which every match starts
+      # with. A credential path, and a glob, matches every name it starts;
+      # a denied read without a glob is a whole path. A root with a . or ..
+      # component or a trailing slash is refused, since it is compared as
+      # written, not as the sandboxes resolve it.
+      ++ map (root: let
+        expand = p:
+          if hasPrefix "~/" p
+          then "${config.home.homeDirectory}/${removePrefix "~/" p}"
+          else p;
+        literal = p: head (builtins.split "[*?[]" (expand p));
+        holds = p: hasPrefix "${root}/" p;
+        starts = p: hasPrefix p root || holds p;
+        whole = p: root == p || hasPrefix "${p}/" root || holds p;
+        plain = !hasSuffix "/" root && !any (c: c == "." || c == "..") (splitString "/" root);
+      in {
+        assertion =
+          plain
+          && !any (p: starts (literal p)) cfg.guard.credentialPaths
+          && !any (p:
+            if literal p != expand p
+            then starts (literal p)
+            else whole (expand p))
+          cfg.sandbox.deniedReads;
+        message = "wgn.home.llm.sandbox.writableRoots: ${root} is not written plainly (a . or .. component, or a trailing slash), or is in, or holds, a path of wgn.home.llm.guard.credentialPaths or sandbox.deniedReads";
+      })
+      cfg.sandbox.writableRoots;
 
     # A sandboxed session may write the plans directory and nothing around
     # it, and Linux's sandbox skips a grant whose path does not exist, so

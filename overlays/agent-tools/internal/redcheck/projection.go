@@ -11,10 +11,47 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+// splitter separates the tests a source file holds from its production
+// code: given the file at the parent and at the commit, it returns the
+// parent's bytes with only the commit's tests in place of the parent's,
+// whether the tests changed, and whether the production code did. It
+// refuses a file whose tests it cannot tell apart, rather than guess.
+type splitter func(before, after []byte) (projected []byte, testChanged, codeChanged bool, err error)
+
+// inlineTests is how red-check reads the tests out of a source file that
+// holds its own: split projects them onto the parent's code, and tests
+// returns them alone, empty where the file holds none.
+type inlineTests struct {
+	split splitter
+	tests func(source []byte) ([]byte, error)
+}
+
+// inlineLanguages is how red-check reads inline test files, by file
+// extension. An extension without an entry is refused; another language
+// whose tests live in its source files is one more entry here.
+var inlineLanguages = map[string]inlineTests{
+	// The trailing top-level #[cfg(test)] module.
+	".rs": {split: projectRust, tests: RustTestContent},
+}
+
+// InlineTests are the tests the source file at path holds, read as its
+// extension says, or an error for an extension red-check cannot read.
+func InlineTests(path string, source []byte) ([]byte, error) {
+	lang, ok := inlineLanguages[filepath.Ext(path)]
+	if !ok {
+		return nil, refusal.New("red-check has no way to read the tests of a %q file, %s", filepath.Ext(path), path)
+	}
+	return lang.tests(source)
+}
+
+// testSelection is what a suite tests in one commit: the test files it
+// takes whole, the inline test files whose tests changed, each with its
+// projection, and for each inline test file the commit changes, whether
+// its production code changed.
 type testSelection struct {
 	whole, inline []string
 	projected     map[string][]byte
-	codeChanged   bool
+	inlineCode    map[string]bool
 }
 
 func selectedFiles(top, parent, commit string, globs []string) ([]string, error) {
@@ -28,50 +65,46 @@ func selectedFiles(top, parent, commit string, globs []string) ([]string, error)
 	return changedFiles(top, parent, commit, paths)
 }
 
-func selectTests(top, parent, commit string, opts Options) (*testSelection, error) {
-	changed, err := changedFiles(top, parent, commit, nil)
+// selectTests is what suite tests in commit, whose parent is parent.
+func selectTests(top, parent, commit string, suite Suite) (*testSelection, error) {
+	whole, err := selectedFiles(top, parent, commit, suite.TestFiles)
 	if err != nil {
 		return nil, err
 	}
-	whole, err := selectedFiles(top, parent, commit, opts.TestFiles)
+	inline, err := selectedFiles(top, parent, commit, suite.InlineTestFiles)
 	if err != nil {
 		return nil, err
 	}
-	inline, err := selectedFiles(top, parent, commit, opts.RustTestFiles)
-	if err != nil {
-		return nil, err
-	}
-	selection := &testSelection{whole: whole, projected: map[string][]byte{}}
-	for _, path := range changed {
-		switch {
-		case slices.Contains(whole, path) && slices.Contains(inline, path):
-			return nil, refusal.New("%s matches both test-files and rust-test-files; select it in only one", path)
-		case slices.Contains(whole, path):
-		case slices.Contains(inline, path):
-			before, after, err := rustSources(top, parent, commit, path)
-			if err != nil {
-				return nil, err
-			}
-			projected, testChanged, codeChanged, err := projectRust(before, after)
-			if err != nil {
-				return nil, refusal.New("cannot separate Rust tests in %s: %v; select separate test files or report this check as unproven", path, err)
-			}
-			selection.codeChanged = selection.codeChanged || codeChanged
-			if testChanged {
-				selection.inline = append(selection.inline, path)
-				selection.projected[path] = projected
-			}
-		default:
-			selection.codeChanged = true
+	selection := &testSelection{whole: whole, projected: map[string][]byte{}, inlineCode: map[string]bool{}}
+	for _, path := range inline {
+		if slices.Contains(whole, path) {
+			return nil, refusal.New("suite %q selects %s in both testFiles and inlineTestFiles; select it in only one", suite.Name, path)
+		}
+		lang, ok := inlineLanguages[filepath.Ext(path)]
+		if !ok {
+			return nil, refusal.New("suite %q selects %s as an inline test file, but red-check has no way to split a %q file's tests from its code; select its tests as testFiles, or report this check as unproven",
+				suite.Name, path, filepath.Ext(path))
+		}
+		before, after, err := inlineSources(top, parent, commit, path)
+		if err != nil {
+			return nil, err
+		}
+		projected, testChanged, codeChanged, err := lang.split(before, after)
+		if err != nil {
+			return nil, refusal.New("cannot separate the tests in %s: %v; select separate test files or report this check as unproven", path, err)
+		}
+		selection.inlineCode[path] = codeChanged
+		if testChanged {
+			selection.inline = append(selection.inline, path)
+			selection.projected[path] = projected
 		}
 	}
 	return selection, nil
 }
 
-func rustSources(top, parent, commit, path string) ([]byte, []byte, error) {
-	if filepath.Ext(path) != ".rs" {
-		return nil, nil, refusal.New("rust-test-files selected non-Rust path %s", path)
-	}
+// inlineSources are an inline test file's bytes at parent and at commit,
+// both regular files of one mode.
+func inlineSources(top, parent, commit, path string) ([]byte, []byte, error) {
 	var contents [][]byte
 	var previousMode string
 	for _, revision := range []string{parent, commit} {
@@ -80,7 +113,7 @@ func rustSources(top, parent, commit, path string) ([]byte, []byte, error) {
 			return nil, nil, err
 		}
 		if mode != "100644" && mode != "100755" || previousMode != "" && previousMode != mode {
-			return nil, nil, refusal.New("rust-test-files needs an existing regular file with unchanged mode: %s", path)
+			return nil, nil, refusal.New("an inline test file must be an existing regular file whose mode the commit leaves alone: %s", path)
 		}
 		previousMode = mode
 		data, err := git.Bytes(nil, "-C", top, "cat-file", "blob", revision+":"+path)

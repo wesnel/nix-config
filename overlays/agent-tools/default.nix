@@ -1,4 +1,5 @@
 {
+  bash,
   buildGoModule,
   cacert,
   coreutils,
@@ -39,8 +40,11 @@
     };
 
     # golang.org/x/mod, which reads go.mod and go.work as the go command
-    # does. A change of go.mod's requirements changes this hash.
-    vendorHash = "sha256-kIOJjGSNKkjPBnW9jPORKrxwVuTq2yLTzvbMjeiMx3U=";
+    # does; quic-go, the Lima private-dial broker's HTTP/3, and protobuf's
+    # wire format, in which it reads the guest's requests; and, for its
+    # tests alone, the privatedial client and x/net's DNS messages. A change
+    # of go.mod's requirements changes this hash.
+    vendorHash = "sha256-eLdHNdoFmPy/ORO/vLAII0acRc12yqSb7gRUPV7HUmk=";
     env.CGO_ENABLED = "0";
     ldflags =
       [
@@ -73,14 +77,19 @@
 
     # The rehearsal and signing tests build stacks with the real git, and sign
     # them with throwaway SSH and OpenPGP keys. The page tests run the Agent plans
-    # page's own grammar check with node; without it they skip that one.
-    # Red-check's inline test fixtures compile and run with rustc.
-    nativeCheckInputs = [git gnupg nodejs openssh rustc];
+    # page's own grammar check with node; without it they skip that one. The
+    # lima-mcp tests' stand-in guest runs its scripts with bash, which the
+    # Linux build sandbox does not otherwise have. Red-check's inline test
+    # fixtures compile and run with rustc.
+    nativeCheckInputs = [(lib.getBin bash) git gnupg nodejs openssh rustc];
 
     # The MCP tools the guard lets through (reads) or asks the operator
     # about (confirms), per service, for mcp-proxy's tool filters.
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
     passthru.routinePlanTools = builtins.fromJSON (builtins.readFile ./cmd/pr-loop/plan-tools.json);
+
+    # The managed Lima VM's guest UDP shim, for its linux/arm64 guest.
+    passthru.guestShim = guestShim;
 
     # Each focused review's contract, by route, as `git delegate --reviewer
     # ROUTE` builds it (focus.contract in internal/review): the general
@@ -96,6 +105,20 @@
         (route: builtins.head parts + "\n" + builtins.readFile (./internal/review + "/${route}.md"));
 
     meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-delegate (reviews a range or a pull request with reviewers that did not write it, and keeps their findings), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
+  };
+
+  # Built from the same module and vendored dependencies, which do not
+  # depend on the target; only the build is cross-compiled, so the shim's
+  # tests, which agent-tools runs, are not run here.
+  guestShim = buildGoModule {
+    pname = "lima-udp-shim";
+    inherit (agent-tools) version src vendorHash;
+    subPackages = ["cmd/lima-udp-shim"];
+    env.CGO_ENABLED = "0";
+    preBuild = "export GOOS=linux GOARCH=arm64";
+    ldflags = ["-s" "-w"];
+    doCheck = false;
+    meta.description = "The managed Lima VM's guest UDP shim, for linux/arm64";
   };
 in
   agent-tools
