@@ -59,7 +59,7 @@ with lib; let
       ANTHROPIC_DEFAULT_SONNET_MODEL = models.primary;
       ANTHROPIC_DEFAULT_FABLE_MODEL = models.primary;
       ANTHROPIC_DEFAULT_HAIKU_MODEL = models.fast;
-      CLAUDE_CODE_MAX_CONTEXT_TOKENS = toString gateway.ngrokAi.contextWindow;
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS = toString gateway.contextWindow;
       DISABLE_TELEMETRY = "1";
     };
   });
@@ -81,7 +81,9 @@ with lib; let
   };
 
   # What both Claude Code and the headless reviewers run with.
-  sharedSettings = recursiveUpdate gatewaySettings otelSettings;
+  sharedSettings = recursiveUpdate {
+    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = toString gateway.contextWindow;
+  } (recursiveUpdate gatewaySettings otelSettings);
 
   headlessSkills = filterAttrs (name: _: elem name (attrNames (import ../llm/principles.nix) ++ ["write-tests"])) config.wgn.home.llm.skills;
   # These skills need only their text, without frontmatter or support files.

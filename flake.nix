@@ -1515,6 +1515,15 @@
       checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+        homeFor = gateway: overrides:
+          (self.darwinConfigurations.ngrok.extendModules {
+            modules = [{home-manager.users.${ngrok.username}.wgn.home.llm = overrides // {gateway = pkgs.lib.mkForce gateway;};}];
+          }).config.home-manager.users.${
+            ngrok.username
+          };
+        settingsFor = gateway: (homeFor gateway {}).wgn.home.claude.settings;
+        customGateway = homeFor "ngrok-ai" {contextWindow = 300000;};
+        customSubscription = homeFor "none" {contextWindow = 300000;};
         homeDir = home.home.homeDirectory;
         outbox = "${homeDir}/.local/state/lima-mcp-outbox";
         refusedRoots = [
@@ -1535,10 +1544,27 @@
             ngrok.username
           };
         rootFailures = map (a: a.message) (builtins.filter (a: !a.assertion) probe.assertions);
+        contextChecks = assert pkgs.lib.assertMsg ((settingsFor "none").env.CLAUDE_CODE_AUTO_COMPACT_WINDOW or null == "200000")
+        "subscription: auto-compact window is not 200000";
+        assert pkgs.lib.assertMsg ((settingsFor "ngrok-ai").env.CLAUDE_CODE_AUTO_COMPACT_WINDOW or null == "200000")
+        "gateway: auto-compact window is not 200000";
+        assert pkgs.lib.assertMsg ((settingsFor "none").env.CLAUDE_CODE_MAX_CONTEXT_TOKENS or null == null)
+        "subscription overrides the model context window";
+        assert pkgs.lib.assertMsg ((settingsFor "ngrok-ai").env.CLAUDE_CODE_MAX_CONTEXT_TOKENS or null == "200000")
+        "gateway model context window is not 200000";
+        assert pkgs.lib.assertMsg (customSubscription.wgn.home.claude.settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW == "300000")
+        "subscription: configured auto-compact window is ignored";
+        assert pkgs.lib.assertMsg (customGateway.wgn.home.claude.settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+          == "300000"
+          && customGateway.wgn.home.claude.settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == "300000")
+        "gateway: configured context window is ignored";
+        assert pkgs.lib.assertMsg (!(customSubscription.home.activation ? codexGateway)
+          && pkgs.lib.hasInfix ''"model_context_window":300000'' customGateway.home.activation.codexGateway.data)
+        "Codex context window must follow the configured value only through the gateway"; true;
       in
         pkgs.runCommand "claude-settings" {
           nativeBuildInputs = [pkgs.jq];
-          settings = builtins.toJSON home.wgn.home.claude.settings;
+          settings = assert contextChecks; builtins.toJSON home.wgn.home.claude.settings;
           codex = builtins.toJSON home.wgn.home.codex.sandbox;
           notes = home.wgn.home.llm.plans.repository.path;
           homeDirectory = homeDir;
@@ -1549,6 +1575,10 @@
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
           reviewerSettings = home.wgn.home.llm.delegate.settings;
+          gatewayReviewerSettings = customGateway.wgn.home.llm.delegate.settings;
+          subscriptionReviewerSettings = customSubscription.wgn.home.llm.delegate.settings;
+          gatewayTools = customGateway.xdg.configFile."agent-tools/config.json".source;
+          subscriptionTools = customSubscription.xdg.configFile."agent-tools/config.json".source;
           otelUrl = home.wgn.home.otel-collector.url;
         } ''
           s=$settingsPath
@@ -1562,6 +1592,28 @@
             fi
           }
           failed=
+          for s in "$gatewayReviewerSettings" "$subscriptionReviewerSettings"; do
+            label="reviewer settings: "
+            if [ "$s" = "$gatewayReviewerSettings" ]; then
+              check 'if .env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == "300000" then empty
+                else "gateway model context window is ignored" end'
+            else
+              check 'if .env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == null then empty
+                else "subscription overrides the model context window" end'
+            fi
+            check 'if .env.CLAUDE_CODE_AUTO_COMPACT_WINDOW == "300000" then empty
+              else "configured auto-compact window is ignored" end'
+          done
+          s=$gatewayTools
+          label="gateway reviewer: "
+          check 'if .delegate.codex.contextWindow == 300000 then empty
+            else "Codex context window is ignored" end'
+          s=$subscriptionTools
+          label="subscription reviewer: "
+          check 'if .delegate.codex == null then empty
+            else "Codex gateway configuration is present" end'
+          s=$settingsPath
+          label=
           for domain in rubygems.org api.nuget.org repo.packagist.org repo.hex.pm plugins.gradle.org plugins-artifacts.gradle.org formulae.brew.sh ghcr.io; do
             check --arg domain "$domain" 'if (.sandbox.network.allowedDomains | index($domain)) != null then empty
               else "registry not allowed in Claude: \($domain)" end'

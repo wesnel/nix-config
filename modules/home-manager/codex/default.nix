@@ -726,7 +726,7 @@ in {
           model_provider = provider.id;
           model = ngrokAi.models.primary;
           review_model = ngrokAi.models.review;
-          model_context_window = ngrokAi.contextWindow;
+          model_context_window = config.wgn.home.llm.contextWindow;
           model_providers.${provider.id} = {
             inherit (provider) name;
             base_url = provider.baseURL;
