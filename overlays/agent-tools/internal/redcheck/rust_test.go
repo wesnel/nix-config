@@ -55,7 +55,7 @@ func rustOptions(t *testing.T) Options {
 		t.Skip("real Rust tests require rustc on PATH; the Nix package supplies it")
 	}
 	build := "'" + strings.ReplaceAll(compiler, "'", "'\\''") + "' --test session.rs -o checks"
-	return Options{Test: build + " && ./checks", Build: build, TestFiles: []string{}, RustTestFiles: []string{"*.rs"}}
+	return Options{Suites: []Suite{{Name: "rust", Test: build + " && ./checks", Build: build, InlineTestFiles: []string{"*.rs"}}}}
 }
 
 func TestRustVerdict(t *testing.T) {
@@ -83,8 +83,10 @@ func TestRustVerdict(t *testing.T) {
 			if c.Verdict != tc.verdict {
 				t.Fatalf("verdict %s; want %s: %+v", c.Verdict, tc.verdict, c)
 			}
-			if tc.verdict == FailsAsAsserted && (c.Build.Exit != 0 || c.Without.Exit == 0 || c.With.Exit != 0 || !strings.Contains(c.Without.Output, "assertion")) {
-				t.Fatalf("expected compiled failing assertion then passing test: %+v", c)
+			if tc.verdict == FailsAsAsserted {
+				if s := ran(t, c); s.Build.Exit != 0 || s.Without.Exit == 0 || s.With.Exit != 0 || !strings.Contains(s.Without.Output, "assertion") {
+					t.Fatalf("expected compiled failing assertion then passing test: %+v", s)
+				}
 			}
 		})
 	}
@@ -144,7 +146,7 @@ func TestRustRefusal(t *testing.T) {
 
 func TestRustSupport(t *testing.T) {
 	options := rustOptions(t)
-	options.RustTestFiles = []string{"session.rs"}
+	options.Suites[0].InlineTestFiles = []string{"session.rs"}
 	dir := newRepo(t)
 	before := "use std::cmp::min as choose;\nfn value() -> i32 { choose(2, 3) }\n"
 	write(t, dir, "session.rs", before+"#[cfg(test)] mod test { #[test] fn old() { assert_eq!(super::value(), 2); } }\n")
@@ -156,7 +158,7 @@ func TestRustSupport(t *testing.T) {
 	if result := check(t, dir, "HEAD", options); only(t, result).Verdict != FailsToBuildWithoutChange {
 		t.Fatalf("unselected support should give build-only evidence: %+v", only(t, result))
 	}
-	options.TestFiles = []string{"test-support.txt"}
+	options.Suites[0].TestFiles = []string{"test-support.txt"}
 	if result := check(t, dir, "HEAD", options); only(t, result).Verdict != FailsAsAsserted {
 		t.Fatalf("explicit support should compile and expose assertion: %+v", only(t, result))
 	}
@@ -188,9 +190,9 @@ func TestRustSelectionRefusal(t *testing.T) {
 			} else {
 				commit(t, dir, "Change source")
 			}
-			opts := Options{Dir: dir, Test: "true", RustTestFiles: []string{path}}
+			opts := Options{Dir: dir, Suites: []Suite{{Name: "rust", Test: "true", InlineTestFiles: []string{path}}}}
 			if kind == "overlap" {
-				opts.TestFiles = []string{path}
+				opts.Suites[0].TestFiles = []string{path}
 			}
 			defer untouched(t, dir)()
 			if _, err := Do(t.Context(), "HEAD", opts); err == nil {

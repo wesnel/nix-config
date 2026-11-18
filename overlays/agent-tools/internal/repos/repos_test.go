@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -118,16 +119,58 @@ func TestThreatNotes(t *testing.T) {
 	})
 }
 
+// The old single-suite keys come back as the "suites" key to paste in
+// their place, their shell commands as written, with what that suite lacks
+// to load where it lacks anything.
+func TestOneSuite(t *testing.T) {
+	for _, c := range []struct{ name, data, want, lacks string }{
+		{"a shell command", `{"test": "cd x && go test ./... > /dev/null", "build": "a < b", "testFiles": ["x/*_test.go"]}`,
+			`"suites": [{"name":"NAME","test":"cd x && go test ./... > /dev/null","build":"a < b","testFiles":["x/*_test.go"]}]`, ""},
+		{"Rust test files", `{"test": "cargo test", "rustTestFiles": ["src/**/*.rs"]}`,
+			`"suites": [{"name":"NAME","test":"cargo test","inlineTestFiles":["src/**/*.rs"]}]`, ""},
+		{"no test file globs", `{"test": "go test ./..."}`, `"suites": [{"name":"NAME","test":"go test ./..."}]`,
+			`give it "testFiles" or "inlineTestFiles"`},
+		{"no test command", `{"testFiles": ["*_test.go"]}`, `"suites": [{"name":"NAME","test":"","testFiles":["*_test.go"]}]`,
+			`give it "test"`},
+		{"none of the keys", `{"setup": "make"}`, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, lacks := oneSuite([]byte(c.data))
+			if got != c.want {
+				t.Errorf("got  %s\nwant %s", got, c.want)
+			}
+			switch {
+			case c.lacks == "" && lacks != nil:
+				t.Errorf("a suite that loads is refused: %v", lacks)
+			case c.lacks != "" && (lacks == nil || !strings.Contains(lacks.Error(), c.lacks)):
+				t.Errorf("does not say to %s: %v", c.lacks, lacks)
+			}
+		})
+	}
+}
+
 func TestLookup(t *testing.T) {
-	const full = `{"setup": "make gen", "test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"], "rustTestFiles": ["**/*.rs"]}`
+	// A Go suite, a flake check's and a Rust suite of inline tests.
+	const full = `{"setup": "make gen", "suites": [
+ {"name": "go", "test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"]},
+ {"name": "agent-plan-sync", "test": "nix build --no-link .#checks.aarch64-darwin.agent-plan-sync",
+  "testFiles": ["modules/home-manager/llm/plan-activation-tests.sh"]},
+ {"name": "rust", "test": "cargo test", "inlineTestFiles": ["src/**/*.rs"]}]}`
 	configured := func(s *Settings) bool {
-		return s != nil && s.Setup == "make gen" && s.Test == "go test ./..." && s.Build == "go vet ./..." &&
-			len(s.TestFiles) == 1 && s.TestFiles[0] == "**/*_test.go" && len(s.RustTestFiles) == 1 && s.RustTestFiles[0] == "**/*.rs"
+		if s == nil || s.Setup != "make gen" || len(s.Suites) != 3 {
+			return false
+		}
+		g, f, r := s.Suites[0], s.Suites[1], s.Suites[2]
+		return g.Name == "go" && g.Test == "go test ./..." && g.Build == "go vet ./..." &&
+			slices.Equal(g.TestFiles, []string{"**/*_test.go"}) && f.Name == "agent-plan-sync" &&
+			f.Test == "nix build --no-link .#checks.aarch64-darwin.agent-plan-sync" && f.Build == "" &&
+			slices.Equal(f.TestFiles, []string{"modules/home-manager/llm/plan-activation-tests.sh"}) &&
+			r.Name == "rust" && len(r.TestFiles) == 0 && slices.Equal(r.InlineTestFiles, []string{"src/**/*.rs"})
 	}
 
 	t.Run("without the file", func(t *testing.T) {
 		clone(t)
-		if s, err := Lookup(); err != nil || s.Test != "" || s.Setup != "" || len(s.Routes) != 0 {
+		if s, err := Lookup(); err != nil || len(s.Suites) != 0 || s.Setup != "" || len(s.Routes) != 0 {
 			t.Errorf("without the file: %+v, %v", s, err)
 		}
 	})
@@ -161,7 +204,7 @@ func TestLookup(t *testing.T) {
 		dir, _ := clone(t)
 		put(t, filepath.Join(dir, "info", "agents.json"), full)
 		put(t, filepath.Join(dir, ".agents.json"), full)
-		if s, err := Lookup(); err != nil || s.Test != "" {
+		if s, err := Lookup(); err != nil || len(s.Suites) != 0 {
 			t.Errorf("a worktree's file was read: %+v, %v", s, err)
 		}
 	})
@@ -178,7 +221,7 @@ func TestLookup(t *testing.T) {
 		for _, name := range []string{"GIT_DIR", "GIT_COMMON_DIR"} {
 			t.Run(name, func(t *testing.T) {
 				t.Setenv(name, filepath.Join(other, ".git"))
-				if s, err := Lookup(); err == nil && s.Test != "" {
+				if s, err := Lookup(); err == nil && len(s.Suites) != 0 {
 					t.Errorf("with %s naming another repository, its settings: %+v", name, s)
 				}
 			})
@@ -208,7 +251,7 @@ func TestLookup(t *testing.T) {
 		make func(t *testing.T, settings string)
 	}{
 		{"a key Settings does not have", func(t *testing.T, settings string) {
-			put(t, settings, `{"repo": "o/r", "test": "true"}`)
+			put(t, settings, `{"repo": "o/r"}`)
 		}},
 		{"not JSON", func(t *testing.T, settings string) { put(t, settings, `test = true`) }},
 		{"a symbolic link", func(t *testing.T, settings string) {
@@ -242,13 +285,51 @@ func TestLookup(t *testing.T) {
 		})
 	}
 
+	// A suite red-check could not run is refused with the file, naming the
+	// suite and what it lacks; so are the keys of the one suite the
+	// settings held before they held a list, saying how to move them.
+	for _, c := range []struct {
+		name, settings string
+		says           []string
+	}{
+		{"the old single-suite keys", `{"test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"]}`,
+			[]string{`"suites"`, `"test":"go test ./..."`, `"build":"go vet ./..."`, `"testFiles":["**/*_test.go"]`}},
+		{"the old test key alone", `{"test": "go test ./..."}`,
+			[]string{`"suites"`, `as printed, test suite 1, "NAME", has no test file globs; give it "testFiles" or "inlineTestFiles"`}},
+		{"a suite without a name", `{"suites": [{"test": "true", "testFiles": ["*.sh"]}]}`,
+			[]string{"suite 1", "no name"}},
+		{"a suite without a test command", `{"suites": [{"name": "sh", "testFiles": ["*.sh"]}]}`,
+			[]string{`"sh"`, "no test command"}},
+		{"a suite without test files", `{"suites": [{"name": "sh", "test": "true"}]}`,
+			[]string{`"sh"`, "no test file globs"}},
+		{"two suites of one name", `{"suites": [{"name": "sh", "test": "true", "testFiles": ["*.sh"]},
+ {"name": "sh", "test": "false", "testFiles": ["*.bash"]}]}`, []string{"suite 2", `"sh"`, "suite 1"}},
+		{"a suite key Suite does not have", `{"suites": [{"name": "sh", "test": "true", "testFiles": ["*.sh"], "env": "x"}]}`,
+			[]string{"env"}},
+	} {
+		t.Run("refused: "+c.name, func(t *testing.T) {
+			_, settings := clone(t)
+			put(t, settings, c.settings)
+			var r refusal.Refusal
+			s, err := Lookup()
+			if !errors.As(err, &r) || !strings.Contains(err.Error(), settings) || !refusal.SaysInstead(err.Error()) {
+				t.Fatalf("%s: %+v, %v", c.name, s, err)
+			}
+			for _, want := range c.says {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %s: %v", want, err)
+				}
+			}
+		})
+	}
+
 	// A pull request's clone is bare, and its settings are its own.
 	t.Run("a bare clone", func(t *testing.T) {
 		dir, _ := clone(t)
 		bare := filepath.Join(t.TempDir(), "clone")
 		gitIn(t, dir, "clone", "-q", "--bare", dir, bare)
 		git.Dir = bare
-		if s, err := Lookup(); err != nil || s.Test != "" {
+		if s, err := Lookup(); err != nil || len(s.Suites) != 0 {
 			t.Errorf("a bare clone without the file: %+v, %v", s, err)
 		}
 		put(t, filepath.Join(bare, "info", "agents.json"), full)
