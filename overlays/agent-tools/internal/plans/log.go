@@ -99,6 +99,8 @@ var (
 				"Add one with `agent-plan reference PLAN URL`",
 			carriedKind: "agent-plan carry logs `carried` for each step and follow-up it moves to the next plan. " +
 				"Carry what is left with `agent-plan carry PLAN`",
+			DesignReviewStarted: "a hook logs `design-review-started` when the main thread starts a design-reviewer sub-agent in the background, " +
+				"or one returns in the foreground. Once its report is in, log " + ReviewAnswers,
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +

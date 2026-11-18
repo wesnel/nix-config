@@ -1,0 +1,448 @@
+package guard
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/plans"
+)
+
+// TestPendingPlanReview covers the edits the baseline hook holds while the
+// session's plan has a design review started and not yet answered, as
+// plans.AnswersReview says. Each case starts from a fresh plan, for
+// session s1, and its own scratch root.
+func TestPendingPlanReview(t *testing.T) {
+	// reviewing makes the plan and returns its task worktree, a linked
+	// worktree of a repository on a branch of its own, which the plan names
+	// with the session, as the owner fence lets the main thread edit; a
+	// scratch directory, the plan, and a function that runs the hook on a
+	// call of tool with input and returns its decision and reason.
+	reviewing := func(t *testing.T) (repo, scratch string, p plans.Plan, call func(session, tool string, input map[string]string, agent ...string) (string, string)) {
+		t.Helper()
+		root, _ := filepath.EvalSymlinks(t.TempDir())
+		main := filepath.Join(root, "main")
+		repo, scratch = filepath.Join(root, "repo"), filepath.Join(root, "scratch")
+		os.Mkdir(main, 0o755)
+		os.Mkdir(scratch, 0o755)
+		gitIn(t, main, "init", "-q", "-b", "main")
+		gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
+		gitIn(t, main, "worktree", "add", "-q", "-b", "loop", repo)
+		old := scratchRoots
+		scratchRoots = func() []string { return []string{scratch} }
+		t.Cleanup(func() { scratchRoots = old })
+		c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
+		config := filepath.Join(root, "config.json")
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		made, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Branches: []string{"main..loop"},
+			Worktrees: []string{repo}, Sessions: []string{"claude:s1"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, err = c.Open(made.Plan); err != nil {
+			t.Fatal(err)
+		}
+		call = func(session, tool string, input map[string]string, agent ...string) (string, string) {
+			t.Helper()
+			fields := map[string]any{"session_id": session, "tool_name": tool, "cwd": repo, "tool_input": input}
+			if len(agent) > 0 {
+				fields["agent_id"] = agent[0]
+			}
+			event, _ := json.Marshal(fields)
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			var got struct {
+				Specific struct {
+					Decision string `json:"permissionDecision"`
+					Reason   string `json:"permissionDecisionReason"`
+				} `json:"hookSpecificOutput"`
+			}
+			json.Unmarshal(out.Bytes(), &got)
+			return got.Specific.Decision, got.Specific.Reason
+		}
+		return repo, scratch, p, call
+	}
+	record := func(t *testing.T, p plans.Plan, kind string) {
+		t.Helper()
+		if _, err := p.Record("", plans.Event{Kind: kind, Session: "s1", Summary: "Review plan X7"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	edit := func(path string) map[string]string {
+		return map[string]string{"file_path": path, "content": "x"}
+	}
+
+	t.Run("refused while the review is pending", func(t *testing.T) {
+		repo, _, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		decision, reason := call("s1", "Write", edit(filepath.Join(repo, "a.go")))
+		if decision != "deny" || !strings.Contains(reason, "plan-reviewed") || !strings.Contains(reason, p.File()) ||
+			!strings.Contains(reason, "Review plan X7") || !strings.Contains(reason, "--item "+p.Name+" ") || !saysInstead(reason) {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	t.Run("a shell write refused while pending", func(t *testing.T) {
+		repo, _, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		decision, reason := call("s1", "Bash", map[string]string{"command": "echo x > " + filepath.Join(repo, "b.txt")})
+		if decision != "deny" || !strings.Contains(reason, "plan-reviewed") {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	t.Run("scratch allowed while pending", func(t *testing.T) {
+		_, scratch, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		if decision, reason := call("s1", "Write", edit(filepath.Join(scratch, "notes.md"))); decision == "deny" {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	// A call that touches only open roots never reads the plans for a
+	// pending review, which costs a read of every plan the session names;
+	// one that touches the repository does.
+	t.Run("an open-only call reads no plan", func(t *testing.T) {
+		_, scratch, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		reads := 0
+		old := pendingPlanReview
+		pendingPlanReview = func(c *plans.Config, session string) (plans.Plan, plans.Event, bool) {
+			reads++
+			return old(c, session)
+		}
+		t.Cleanup(func() { pendingPlanReview = old })
+		for _, command := range []string{"echo x > " + filepath.Join(scratch, "a.txt"), "cd " + scratch + " && ./probe.sh"} {
+			if decision, reason := call("s1", "Bash", map[string]string{"command": command}); decision == "deny" || reads != 0 {
+				t.Errorf("%s: decision %q, reason %q, plans read %d times", command, decision, reason, reads)
+			}
+		}
+		if decision, _ := call("s1", "Bash", map[string]string{"command": "./gen.sh"}); decision != "deny" || reads != 1 {
+			t.Errorf("./gen.sh in the repository: decision %q, plans read %d times, want deny after one read", decision, reads)
+		}
+	})
+
+	t.Run("allowed once plan-reviewed is logged", func(t *testing.T) {
+		repo, _, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		if _, err := p.Log(plans.Event{Kind: "plan-reviewed", Item: p.Name, Summary: "no findings"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if decision, reason := call("s1", "Write", edit(filepath.Join(repo, "a.go"))); decision == "deny" {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	t.Run("allowed with no review started", func(t *testing.T) {
+		repo, _, _, call := reviewing(t)
+		if decision, reason := call("s1", "Write", edit(filepath.Join(repo, "a.go"))); decision == "deny" {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	// A command whose code the guard cannot read could write anywhere, so
+	// while the review is pending it is held as writing its working
+	// directory; commands the guard reads, and runs in scratch, are not.
+	t.Run("code the guard cannot read", func(t *testing.T) {
+		for _, c := range []struct {
+			command string
+			held    bool
+		}{
+			{"./gen.sh", true},
+			{"bash gen.sh", true},
+			{"python3 gen.py", true},
+			// Options that give no code, and a script's own arguments.
+			{"python3 -E gen.py", true},
+			{"python3 gen.py -c x", true},
+			{"perl -p gen.pl", true},
+			{"ruby -E UTF-8 gen.rb", true},
+			{"go -C tools run ./cmd/gen", true},
+			{"cargo +nightly run", true},
+			{"cargo r", true},
+			{"source ./setup.sh", true},
+			{". ./setup.sh", true},
+			{"emacsclient-30 --eval '(save-buffer)'", true},
+			// Run from scratch, the script is still the repository's.
+			{"cd SCRATCH && REPO/gen.sh", true},
+			{"cd SCRATCH && python3 REPO/gen.py", true},
+			{"cd SCRATCH && python3 -W ignore REPO/gen.py", true},
+			{"cd SCRATCH && python3 < REPO/gen.py", true},
+			{"cd SCRATCH && bash < REPO/gen.sh", true},
+			{"cd SCRATCH && go -C REPO run ./cmd/gen", true},
+			{"cd SCRATCH && python3 probe.py", false},
+			{"cd SCRATCH && go run REPO/gen.go", true},
+			// Options naming where the code is, before or after the
+			// subcommand, and a script piped or redirected in first.
+			{"cd SCRATCH && go run REPO/cmd/gen", true},
+			{"cd SCRATCH && cargo run --manifest-path REPO/Cargo.toml", true},
+			{"cd SCRATCH && cargo run --manifest-path=REPO/Cargo.toml", true},
+			{"cd SCRATCH && cargo -C REPO run", true},
+			{"cd SCRATCH && cargo run --manifest-path probe/Cargo.toml", false},
+			{"cd SCRATCH && npm --prefix REPO run build", true},
+			{"cd SCRATCH && npm run build --prefix=REPO", true},
+			{"cd SCRATCH && npm --prefix probe run build", false},
+			{"cd SCRATCH && pnpm -C REPO run build", true},
+			{"cd SCRATCH && pnpm --dir REPO build", true},
+			{"cd SCRATCH && yarn --cwd REPO build", true},
+			{"cd SCRATCH && bun --cwd REPO run build", true},
+			{"cd SCRATCH && just --justfile REPO/justfile gen", true},
+			{"cd SCRATCH && just -f REPO/justfile gen", true},
+			{"cd SCRATCH && just -f probe/justfile gen", false},
+			{"cd SCRATCH && task -d REPO gen", true},
+			{"cd SCRATCH && task --taskfile REPO/Taskfile.yml gen", true},
+			{"cd SCRATCH && uv run --directory REPO gen", true},
+			{"cd SCRATCH && uv --project REPO run gen", true},
+			{"cd SCRATCH && poetry -C REPO run gen", true},
+			{"cd SCRATCH && env -C REPO ./gen.sh", true},
+			{"cd SCRATCH && env --chdir=REPO ./gen.sh", true},
+			{"cd SCRATCH && env --chdir REPO python3 gen.py", true},
+			{"cd SCRATCH && env -C probe ./gen.sh", false},
+			{`cd SCRATCH && env -C "$D" ./gen.sh`, true},
+			// A redirection opens where the line is, before env -C moves the
+			// shell it feeds.
+			{"env -C SCRATCH bash < gen.sh", true},
+			{"cd SCRATCH && env -C REPO bash < probe.sh", true},
+			{"cd SCRATCH && env -C probe bash < probe.sh", false},
+			// An inline script runs where env -C moves its shell.
+			{"cd SCRATCH && env -C REPO bash -c './gen.sh'", true},
+			{"cd SCRATCH && env -C REPO sh -c 'python3 gen.py'", true},
+			{"cd SCRATCH && env -C probe bash -c './gen.sh'", false},
+			{`cd SCRATCH && env -C "$D" bash -c './gen.sh'`, true},
+			{"cd SCRATCH && cat REPO/gen.sh | bash", true},
+			{"cd SCRATCH && cat REPO/gen.py | python3", true},
+			{"cd SCRATCH && cat probe.sh | bash", false},
+			// A command between them passes its input on.
+			{"cd SCRATCH && cat REPO/gen.sh | cat | bash", true},
+			{"cd SCRATCH && cat REPO/gen.sh | grep -v '^#' | sh", true},
+			{"cd SCRATCH && cat probe.sh | cat | bash", false},
+			{"cd SCRATCH && < REPO/gen.py python3", true},
+			{"cd SCRATCH && < probe.py python3", false},
+			// A redirection before the command feeding the shell is read as
+			// its operand is.
+			{"cd SCRATCH && < REPO/gen.sh cat | bash", true},
+			{"cd SCRATCH && <REPO/gen.sh cat | bash", true},
+			{"cd SCRATCH && < probe.sh cat | bash", false},
+			{"cd SCRATCH && uv run REPO/gen.py", true},
+			{`cd "$X" && python3 p.py`, true},
+			// Inline code, bundled or after an option's value, or on
+			// standard input from the line itself.
+			{"perl -ne 'print' a.txt", false},
+			{"node -pe '1+1'", false},
+			{"python3 -W ignore -c 'print(1)'", false},
+			{"python3 <<< 'print(1)'", false},
+			{"python3 -I -c 'print(1)'", false},
+			{"perl -W -e 'print 1'", false},
+			{"node --eval='1'", false},
+			{"cd SCRATCH && go -C REPO generate ./...", true},
+			{"bash <<< 'echo hi'", false},
+			{"cargo --config net.offline=true run", true},
+			{"cargo --color always run", true},
+			{"cargo -Z unstable-options run", true},
+			{"python3.12 gen.py", true},
+			{"pypy3 gen.py", true},
+			{"uv run scripts/gen.py", true},
+			{"poetry run gen", true},
+			{"uv pip list", false},
+			{"cargo build", false},
+			{"node -e 'console.log(1)'", false},
+			{"perl -E 'say 1'", false},
+			{"go run ./cmd/x", true},
+			{"cargo run --bin x", true},
+			{"npm run build", true},
+			{"just gen", true},
+			{"emacsclient --eval '(save-buffer)'", true},
+			{"vim -c wq a.go", true},
+			{"$TOOL build", true},
+			{"env FOO=1 ./gen.sh", true},
+			{"git status", false},
+			{"go test ./...", false},
+			{"go vet ./...", false},
+			{"nix build --no-link .#x", false},
+			// nix run of a local flake runs the flake's code, however the
+			// flake is spelled; a registry's package does not.
+			{"nix run .#codegen", true},
+			{"nix run . -- --help", true},
+			{"cd SCRATCH && nix run REPO#codegen", true},
+			{"cd SCRATCH && nix run REPO", true},
+			{"cd SCRATCH && nix run path:REPO#codegen", true},
+			{"cd SCRATCH && nix run git+file://REPO?ref=loop#codegen", true},
+			{"cd SCRATCH && nix run ./probe#gen", false},
+			{"nix run nixpkgs#hello", false},
+			// A program of the system or of an installed profile is judged
+			// by its name; the store holds what nix build makes of the
+			// repository, so a program there is the repository's code.
+			{"/usr/bin/git status", false},
+			{"/run/current-system/sw/bin/git status", false},
+			{"/etc/profiles/per-user/u/bin/git status", false},
+			{"/nix/store/abc-codegen/bin/codegen", true},
+			{"/nix/store/abc-git-2.50/bin/git log", true},
+			{"/etc/profiles/per-user/u/lib/gen", true},
+			{"/usr/bin/python3 gen.py", true},
+			{"cd SCRATCH && /usr/bin/python3 REPO/gen.py", true},
+			{"/usr/local/bin/gen", true},
+			{"python3 --version", false},
+			{"python3 -V", false},
+			{"node --help", false},
+			{"ruby --version", false},
+			{"just --list", false},
+			{"npm --version", false},
+			{"npm --help", false},
+			{"pnpm -h", false},
+			// An information option runs nothing only as the call's sole
+			// argument, with no input given it: ruby -v runs a script
+			// after it, and perl -I takes -v as its value.
+			{"python3 -E --version", true},
+			{"ruby -v gen.rb", true},
+			{"perl -I -v gen.pl", true},
+			{"cat REPO/gen.rb | ruby -v", true},
+			{"cd SCRATCH && ruby -v < REPO/gen.rb", true},
+			// Only the options a program's row declares inform: tclsh
+			// takes --version and -h as its script's arguments and runs
+			// its standard input.
+			{"tclsh --version", true},
+			{"cd SCRATCH && tclsh -h < REPO/gen.tcl", true},
+			{"perl -v", false},
+			{"ruby -v", false},
+			// An option's value is no option: -W takes --version as its
+			// value and runs gen.py.
+			{"python3 -W --version gen.py", true},
+			{"cd SCRATCH && python3 -W --version REPO/gen.py", true},
+			{"agent-plan log PLAN --item S1 --kind started", false},
+			{"bash -c 'git status'", false},
+			{"python3 -c 'print(1)'", false},
+			{"cd SCRATCH && ./probe.sh", false},
+		} {
+			t.Run(c.command, func(t *testing.T) {
+				repo, scratch, p, call := reviewing(t)
+				record(t, p, plans.DesignReviewStarted)
+				// The directories hold the test's name, which may hold && or
+				// spaces: quoted, they stay one word.
+				command := strings.NewReplacer("SCRATCH", "'"+scratch+"'", "REPO", "'"+repo+"'").Replace(c.command)
+				decision, reason := call("s1", "Bash", map[string]string{"command": command})
+				held := decision == "deny" && strings.Contains(reason, "code the guard cannot read")
+				if held != c.held {
+					t.Errorf("held %v, want %v: decision %q, reason %q", held, c.held, decision, reason)
+				}
+				// The reason names where the run is, or says it is unknown.
+				if held && (!strings.Contains(reason, "plan-reviewed") || !saysInstead(reason) || strings.Contains(reason, "from . ")) {
+					t.Errorf("reason %q", reason)
+				}
+			})
+		}
+		// The same run is free once the review is answered: the hold, not
+		// another rule, refused it.
+		_, _, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		if _, err := p.Log(plans.Event{Kind: "plan-reviewed", Item: p.Name, Summary: "no findings"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if decision, reason := call("s1", "Bash", map[string]string{"command": "./gen.sh"}); decision == "deny" {
+			t.Errorf("after plan-reviewed: decision %q, reason %q", decision, reason)
+		}
+	})
+
+	// Monitor and local_shell run a command line as Bash does; write_stdin
+	// types into a session that may be a shell anywhere, so it is held
+	// whatever it types.
+	t.Run("other tools that run a command line", func(t *testing.T) {
+		for _, c := range []struct {
+			tool  string
+			input map[string]string
+			held  string // what the reason names, "" for not held
+		}{
+			{"Monitor", map[string]string{"command": "./gen.sh", "description": "d"}, "code the guard cannot read"},
+			{"Monitor", map[string]string{"command": "cd SCRATCH && ./probe.sh", "description": "d"}, ""},
+			{"local_shell", map[string]string{"command": "./gen.sh"}, "code the guard cannot read"},
+			{"local_shell", map[string]string{"command": "echo x > a.txt"}, "plan-reviewed"},
+			{"local_shell", map[string]string{"command": "./probe.sh", "working_directory": "SCRATCH"}, ""},
+			{"write_stdin", map[string]string{"chars": "ls\n"}, "a directory the guard cannot work out"},
+		} {
+			t.Run(c.tool+" "+c.input["command"]+c.input["chars"], func(t *testing.T) {
+				_, scratch, p, call := reviewing(t)
+				record(t, p, plans.DesignReviewStarted)
+				input := map[string]string{}
+				for k, v := range c.input {
+					input[k] = strings.ReplaceAll(v, "SCRATCH", scratch)
+				}
+				decision, reason := call("s1", c.tool, input)
+				if held := decision == "deny"; held != (c.held != "") || !strings.Contains(reason, c.held) {
+					t.Errorf("decision %q, reason %q, want held naming %q", decision, reason, c.held)
+				}
+			})
+		}
+	})
+
+	// Both sessions are listed in the plan; only the one that started the
+	// review is held.
+	t.Run("another session of the same plan allowed", func(t *testing.T) {
+		repo, _, _, call := reviewing(t)
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		made, err := c.New(plans.NewOptions{Title: "Share the loop", Slug: "shared", Worktrees: []string{repo},
+			Sessions: []string{"claude:s1", "claude:s9"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		shared, err := c.Open(made.Plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record(t, shared, plans.DesignReviewStarted)
+		if decision, reason := call("s9", "Write", edit(filepath.Join(repo, "a.go"))); decision == "deny" {
+			t.Errorf("s9: decision %q, reason %q", decision, reason)
+		}
+		if decision, _ := call("s1", "Write", edit(filepath.Join(repo, "a.go"))); decision != "deny" {
+			t.Errorf("s1, which started it: decision %q, want deny", decision)
+		}
+	})
+
+	// A session listed in several plans is held by a review pending in any
+	// of them: here the older plan, which a lookup of the session's newest
+	// plan alone would miss.
+	t.Run("a review pending in the session's older plan holds", func(t *testing.T) {
+		repo, _, older, call := reviewing(t)
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.New(plans.NewOptions{Title: "Fix the loop", Slug: "fix-loop", Sessions: []string{"claude:s1"}},
+			time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		record(t, older, plans.DesignReviewStarted)
+		decision, reason := call("s1", "Write", edit(filepath.Join(repo, "a.go")))
+		if decision != "deny" || !strings.Contains(reason, older.File()) {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+	})
+
+	// A sub-agent is held to its own worktree already; the coordinator's
+	// pending review does not stall it there.
+	t.Run("a sub-agent's edit in its own worktree allowed", func(t *testing.T) {
+		repo, _, p, call := reviewing(t)
+		if _, err := p.SetOwner(repo, "a1", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		record(t, p, plans.DesignReviewStarted)
+		if decision, reason := call("s1", "Write", edit(filepath.Join(repo, "a.go")), "a1"); decision == "deny" {
+			t.Errorf("decision %q, reason %q", decision, reason)
+		}
+		// The main thread is still held, outside any worktree an agent owns,
+		// so the allowance above is the sub-agent's.
+		other := filepath.Join(filepath.Dir(repo), "other")
+		os.Mkdir(other, 0o755)
+		if decision, reason := call("s1", "Write", edit(filepath.Join(other, "b.go"))); decision != "deny" ||
+			!strings.Contains(reason, "plan-reviewed") {
+			t.Errorf("the main thread's edit: decision %q, reason %q; want this rule's deny", decision, reason)
+		}
+	})
+}

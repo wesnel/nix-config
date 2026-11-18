@@ -287,6 +287,15 @@ in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
 the edit guard's worktree boundary. Other server tools prompt, with file inputs
 confined to the worktree. A Codex review loop preapproves its named agent_ops
 tools for that session. Shell plan writes also prompt.
+Its `git_stage` tool stages literal paths in a task worktree the caller
+owns without giving commands write access to the shared Git metadata: the
+guard's hook adds a one-use grant to the call, the server checks it and
+the worktree's ownership again, stages in a private index and object
+directory with a Git child in a Codex sandbox profile of its own, run
+only once a probe in that sandbox cannot write the repository, and installs only those
+paths' entries and their verified blobs under `index.lock`. It refuses
+every call unless `wgn.home.codex.gitStage` is on; that option says what
+must pass on the machine before turning it on.
 Its GitHub read tools take a repository name without a checkout: `github_pr_view`
 returns a PR's description and discussion, `github_pr_diff` its unified
 diff with base and head SHAs, and `github_file` a text file at a full
@@ -813,8 +822,9 @@ Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
 (`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
 the routine plan-tool catalog and prompts for other calls outside a Codex
-review-loop session. Each refusal says what to do
-instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
+review-loop session. For `git_stage` the guard answers `allow` with the
+call's grant added, after the same ownership check as a file edit. Each
+refusal says what to do instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
 session. The guard also denies starting a
@@ -824,8 +834,10 @@ which are yours.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
 catches a forgotten rule, not a determined one. The rules that need no
-repository state are in `overlays/agent-tools/internal/guard/policy.json`,
-each with a `scope` (`baseline` or `reviewer`) and
+repository state, and those whose state a test fixture holds, are in
+`overlays/agent-tools/internal/guard/policy.json`,
+each with a `scope` (`baseline` or `reviewer`), any `fixture` repository its
+examples run in, and
 commands it must deny and allow, which the guard's tests hold it to, failing
 on a denial whose reason does not go on to say what to do instead; the rest
 are in the guard's Go tests. A call whose input the guard cannot read is
@@ -848,9 +860,11 @@ has the hook alone:
 | Signing commits (touch) | sandbox (~/.gnupg, agent socket) and hook | hook |
 | git push, gh writes, GitHub API/GraphQL writes | sandbox (no credentials), hook, deny rules | hook |
 | git-state rules (main checkout, stash, worktrees, history loss, shared config, shell aliases) | hook | hook |
+| Committing a conflict marker (git commit and the --continue of rebase, cherry-pick, revert, merge and am, with a staged line, or one commit -a, a path or a git add earlier on the command line takes, starting with seven < or >) | hook | hook |
 | Shell edits of tracked files, rm where trash is | hook | hook |
 | Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
 | Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |
+| Edits while a design review the main thread started is unanswered (outside plans and scratch) | hook, from the record agent-plan remind makes when the main thread starts a design-reviewer in the background or one returns in the foreground | none: no design-reviewer type to record |
 | Destroying home, root, store, keys | sandbox and hook | hook |
 | Kills (protected processes, patterns, others' PIDs) | hook | hook |
 | Long foreground sleeps | hook | hook |

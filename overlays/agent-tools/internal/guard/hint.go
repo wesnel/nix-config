@@ -13,8 +13,9 @@ import (
 // the session's last edit; "" otherwise. The session's plan, the one
 // naming the session, else the edit's worktree, logs each change as a
 // branch-changed event, from which the next edit reads the last; a
-// session without a plan gets no hint. It never denies.
-func branchHint(session string, toolInput json.RawMessage, cwd string) string {
+// session without a plan gets no hint. It never denies. c is this host's
+// plans.
+func branchHint(session string, toolInput json.RawMessage, cwd string, c plans.Config) string {
 	var in struct {
 		FilePath string `json:"file_path"`
 	}
@@ -26,18 +27,15 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	if top == "" {
 		return ""
 	}
-	c, err := plans.Load()
-	if err != nil {
-		return ""
-	}
 	p, _, ok := c.Locate(session, "")
 	if !ok {
 		if p, _, ok = c.Locate("", top); !ok {
 			return ""
 		}
 	}
-	// A branch or tip git did not give, as when it stalled, is not noted.
-	branch, ok := g.run("branch", "--show-current")
+	// A branch or tip git did not give, as when it stalled, is not noted. A
+	// rebase in progress is on the branch it rebases (worktreeBranch).
+	branch, ok := worktreeBranch(g)
 	if !ok {
 		return ""
 	}

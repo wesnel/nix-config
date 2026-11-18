@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitgrant"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 var (
@@ -94,10 +96,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	hint := ""
+	var hint string
+	var updatedInput map[string]any
 	reason := judged(func() string {
-		reason, context := judgeInput(in, who)
-		hint = context
+		var reason string
+		reason, hint, updatedInput = judgeCall(in, who)
 		return reason
 	})
 	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason) || in.AgentID == "" && codexTaskOperation(in.ToolName, reason)) {
@@ -105,10 +108,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		reason = ""
 	}
 	if reason == "" {
-		if hint != "" {
-			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
-				"hookEventName": "PreToolUse", "additionalContext": hint}})
-		}
+		writeAllowed(stdout, updatedInput, hint)
 		return 0
 	}
 	if reason == sleeping && in.TurnID == "" {
@@ -132,6 +132,31 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// writeAllowed answers an allowed call: with updatedInput, the input it
+// runs with, where the guard changed it; else with hint, context for the
+// agent; else with nothing.
+func writeAllowed(stdout io.Writer, updatedInput map[string]any, hint string) {
+	switch {
+	case updatedInput != nil:
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": updatedInput}})
+	case hint != "":
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+			"hookEventName": "PreToolUse", "additionalContext": hint}})
+	}
+}
+
+// judgeCall is judgeInput's reason and hint, and for a Codex git_stage
+// call it allows, the input the call runs with, which carries its grant.
+func judgeCall(in input, who role) (string, string, map[string]any) {
+	reason, hint := judgeInput(in, who)
+	if reason != "" || !codexGitStage(in) {
+		return reason, hint, nil
+	}
+	updatedInput, reason := grantGitStage(in)
+	return reason, "", updatedInput
+}
+
 func judgeInput(in input, who role) (string, string) {
 	if handled, reason := checkMirror(in, who); handled {
 		return reason, ""
@@ -143,41 +168,88 @@ func judgeInput(in input, who role) (string, string) {
 	// sets TurnID, and has none, nor has a headless reviewer, whose
 	// hook is --reviewer.
 	claudeShell := in.ToolName == "Bash" && in.TurnID == "" && who == baseline
-	var shell struct {
-		Command string `json:"command"`
-	}
-	json.Unmarshal(in.ToolInput, &shell)
+	shell, _, _ := shellCommand(in.ToolName, in.ToolInput, in.Cwd)
 	if claudeShell {
-		if reason := checkExcludedAlone(shell.Command); reason != "" {
+		if reason := checkExcludedAlone(shell.text); reason != "" {
 			return reason, ""
 		}
 	}
-	if reason := check(in.ToolName, in.ToolInput, who, in.Cwd); reason != "" {
+	// Codex's git_stage is judged by its worktree's owner, as an edit,
+	// rather than by the approval every other agent_ops call gets.
+	if reason := check(in.ToolName, in.ToolInput, who, in.Cwd); reason != "" && (reason != opsCall || !codexGitStage(in)) {
 		return reason, ""
 	}
 	if claudeShell {
-		if reason := checkPlainGh(shell.Command); reason != "" {
+		if reason := checkPlainGh(shell.text); reason != "" {
 			return reason, ""
 		}
 	}
-	if in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-		// Codex alone keeps a command's terminal for write_stdin.
-		var args struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &args)
-		if terminalReader(args.Command) {
-			return readsTerminal, ""
-		}
+	// Codex alone keeps a command's terminal for write_stdin.
+	if in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") && terminalReader(shell.text) {
+		return readsTerminal, ""
 	}
-	if reason := checkOwner(in); reason != "" {
+	return judgeEdits(in)
+}
+
+// judgeEdits is judgeInput's checks of a call's edits, which share its
+// paths and this host's plans: why the call is denied, or the branch
+// hint for a file edit.
+func judgeEdits(in input) (string, string) {
+	edits, runs, reason := editPaths(in)
+	if reason != "" {
+		return reason, ""
+	}
+	if !reviewHolds(in) {
+		runs = nil
+	}
+	// nil where the plans cannot be loaded, confErr saying why.
+	var conf *plans.Config
+	var confErr error
+	if len(edits)+len(runs) > 0 {
+		conf, confErr = loadPlans()
+	}
+	if reason := checkOwner(in, edits, conf, confErr); reason != "" {
+		return reason, ""
+	}
+	if reason := checkPlanReview(in, edits, runs, conf); reason != "" {
 		return reason, ""
 	}
 	// The hint runs git too, so it is judged with the rest.
-	if in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit" {
-		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd)
+	if conf != nil && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
+		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd, *conf)
 	}
 	return "", ""
+}
+
+// gitStageTool is agent_ops' git_stage, which stages files in a worktree
+// only with a grant this hook issues (gitgrant).
+const gitStageTool = "mcp__" + OpsServer + "__git_stage"
+
+// codexGitStage reports whether in is a Codex call of gitStageTool.
+func codexGitStage(in input) bool {
+	return in.TurnID != "" && in.ToolName == gitStageTool
+}
+
+// grantGitStage returns in's arguments with the authorization pr-loop mcp
+// consumes: a one-use grant bound to the call's session, agent, call ID and
+// exact other arguments. It returns why none was issued instead.
+func grantGitStage(in input) (map[string]any, string) {
+	var args map[string]any
+	if json.Unmarshal(in.ToolInput, &args) != nil || args == nil {
+		return nil, "The Git stage arguments could not be read."
+	}
+	delete(args, "authorization")
+	data, err := json.Marshal(args)
+	if err != nil {
+		return nil, "The Git stage arguments could not be authorized."
+	}
+	token, err := gitgrant.Issue(gitgrant.Record{Tool: in.ToolName, Session: in.SessionID,
+		Agent: in.AgentID, Call: in.ToolUseID, Arguments: data})
+	if err != nil {
+		return nil, "The Git stage authorization could not be issued."
+	}
+	args["authorization"] = token
+	return args, ""
 }
 
 // unreadable is why a call is denied whose event or tool input the guard
@@ -221,43 +293,17 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		return checkMCP(service, name, who)
 	}
 	checkout := dir // the hook's directory, wherever a command then runs
-	switch {
-	case tool == "Bash" || tool == "exec_command":
-		// Claude Code's Bash runs the command in the background with
-		// run_in_background.
-		var args struct {
-			Command         string `json:"command"`
-			RunInBackground bool   `json:"run_in_background"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
+	if line, ok, err := shellCommand(tool, toolInput, dir); ok {
+		if err != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
-	case tool == "Monitor":
-		// Claude Code's Monitor runs a command as Bash does.
-		var args struct {
-			Command string `json:"command"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
-			return unreadable
-		}
-		return command(args.Command, 0, who, dir, checkout, true)
-	case tool == "local_shell":
-		return checkLocalShell(toolInput, who, dir, checkout)
-	case tool == "write_stdin":
-		// Codex's write_stdin types chars into a session exec_command
-		// started, which may be a shell; the session runs on its own, so a
-		// sleep there holds nothing.
-		var args struct {
-			Chars string `json:"chars"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
-			return unreadable
-		}
-		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
+		reason := command(line.text, 0, who, line.dir, checkout, line.background)
+		if reason != "" && line.typed {
 			return typed + reason
 		}
-		return ""
+		return reason
+	}
+	switch {
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
@@ -269,32 +315,75 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 	return ""
 }
 
-func checkLocalShell(toolInput json.RawMessage, who role, dir, checkout string) string {
-	// Codex's local_shell runs an argv, which the guard reads as the
-	// command line that would run it.
+// shellLine is the command line a shell tool's call runs: text, run in dir,
+// in the background when background is set. typed marks text written into
+// a running session (write_stdin), which may be a shell anywhere: dir is
+// then the call's own, the guard knowing no better.
+type shellLine struct {
+	text, dir         string
+	background, typed bool
+}
+
+// shellCommand is the command line tool's call runs, from a call made in
+// dir, for every check that reads one: Claude Code's Bash, in the
+// background with run_in_background, and Monitor, which runs a command as
+// Bash does in the background; Codex's exec_command, local_shell
+// (localShellLine), and write_stdin, which types chars into a session
+// exec_command started, where a sleep holds nothing. ok is false for
+// another tool; err says the input could not be read.
+func shellCommand(tool string, toolInput json.RawMessage, dir string) (line shellLine, ok bool, err error) {
+	switch tool {
+	case "Bash", "exec_command":
+		var args struct {
+			Command         string `json:"command"`
+			RunInBackground bool   `json:"run_in_background"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Command, dir: dir, background: args.RunInBackground}, true, err
+	case "Monitor":
+		var args struct {
+			Command string `json:"command"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Command, dir: dir, background: true}, true, err
+	case "local_shell":
+		line, err = localShellLine(toolInput, dir)
+		return line, true, err
+	case "write_stdin":
+		var args struct {
+			Chars string `json:"chars"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Chars, dir: dir, background: true, typed: true}, true, err
+	}
+	return shellLine{}, false, nil
+}
+
+// localShellLine is the command line Codex's local_shell runs: its argv,
+// which the guard reads as the command line that would run it, in its
+// working_directory.
+func localShellLine(toolInput json.RawMessage, dir string) (shellLine, error) {
 	var args struct {
 		Command          json.RawMessage `json:"command"`
 		WorkingDirectory string          `json:"working_directory"`
 	}
-	if json.Unmarshal(toolInput, &args) != nil {
-		return unreadable
+	if err := json.Unmarshal(toolInput, &args); err != nil {
+		return shellLine{}, err
 	}
 	if filepath.IsAbs(args.WorkingDirectory) {
 		dir = args.WorkingDirectory
 	}
 	var argv []string
 	if json.Unmarshal(args.Command, &argv) != nil {
-		var line string
-		if json.Unmarshal(args.Command, &line) != nil {
-			return unreadable
-		}
-		return command(line, 0, who, dir, checkout, false)
+		var text string
+		err := json.Unmarshal(args.Command, &text)
+		return shellLine{text: text, dir: dir}, err
 	}
 	quoted := make([]string, len(argv))
 	for i, a := range argv {
 		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 	}
-	return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
+	return shellLine{text: strings.Join(quoted, " "), dir: dir}, nil
 }
 
 // typed prefixes the reason a command line typed into a running session is
@@ -329,12 +418,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	if envSearch(text, calls) {
 		calls, backgrounds, ends, tops = calls[1:], backgrounds[1:], ends[1:], tops[1:]
 	}
-	// A file a gh call reads is what the guard sees only when nothing else
-	// on the command line can have written it first.
-	files := ""
-	if depth == 0 && len(calls) == 1 {
-		files = dir
-	}
+	files := readableFiles(depth, len(calls), dir)
 	// Where each command may run, as cd moves it; a command is judged in
 	// each of those directories.
 	w := cwds{here: []string{dir}}
@@ -345,6 +429,11 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	// top level (topLevel), and whether the call being judged is there.
 	var assigned []string
 	top := false
+	// The paths a git add earlier on the line stages (stagedPaths), and
+	// whether a call earlier on the line assigned a variable that sends
+	// git elsewhere (gitLocated), in any form: VAR=, export, declare -x.
+	var staged []string
+	moved := false
 	v := visitor{
 		script: func(text string) string {
 			return commandsInDirs(text, depth+1, who, w.here, checkout, bg)
@@ -356,11 +445,16 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			if !bg && longSleep(c.named()) {
 				return sleeping
 			}
-			c.assigned = assigned
+			c.assigned, c.staged = assigned, staged
 			if top {
 				assigned = commandAssignments(c, assigned)
 			}
-			return programInDirs(c, who, files, w.here, checkout)
+			if reason := programInDirs(c, who, files, w.here, checkout); reason != "" {
+				return reason
+			}
+			staged = append(staged, stagedPaths(c, w.here, moved)...)
+			moved = movesGit(c, moved)
+			return ""
 		},
 	}
 	for i, c := range calls {
@@ -370,6 +464,17 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			return reason
 		}
 		w.next(end)
+	}
+	return ""
+}
+
+// readableFiles is the directory whose files a gh call on a line of
+// calls commands, nested depth deep, may read, or "" for none: a file is
+// what the guard sees only when nothing else on the line can have written
+// it first.
+func readableFiles(depth, calls int, dir string) string {
+	if depth == 0 && calls == 1 {
+		return dir
 	}
 	return ""
 }
@@ -479,13 +584,14 @@ func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkSession(c, dir); reason != "" {
 		return reason
 	}
+	staged := c.staged
 	if c = c.named(); c.expands[0] {
 		return ""
 	}
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
+		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed, staged)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -1204,9 +1310,10 @@ func branchWrites(args []string) bool {
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
 // where, with the assignments env made for it, in a call made in checkout,
-// the hook's directory. expands says which words the shell expands, and
-// fed that xargs adds more.
-func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
+// the hook's directory. expands says which words the shell expands, fed
+// that xargs adds more, and staged what a git add earlier on the line
+// stages (stagedPaths).
+func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool, staged []string) string {
 	i, config, located, dir, physical, reason := gitInvocationOptions(words, expands, dir)
 	if reason != "" {
 		return reason
@@ -1236,7 +1343,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
 	}
-	return checkGitOperation(sub, rest, expands[min(i+1, len(expands)):], gitState{dir: dir, config: config, env: env}, fed)
+	return checkGitOperation(sub, rest, expands[min(i+1, len(expands)):], gitState{dir: dir, config: config, env: env}, fed, staged)
 }
 
 func gitInvocationOptions(words []string, expands []bool, dir string) (i int, config []string, located bool, logical, physical, reason string) {
@@ -1273,7 +1380,7 @@ func gitInvocationOptions(words []string, expands []bool, dir string) (i int, co
 	return i, config, located, dir, physical, ""
 }
 
-func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fed bool) string {
+func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fed bool, staged []string) string {
 	switch {
 	case sub == "credential" && len(rest) > 0 && rest[0] == "fill",
 		sub == "credential-osxkeychain" && len(rest) > 0 && rest[0] == "get":
@@ -1298,7 +1405,7 @@ func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fe
 	if reason := checkSigning(sub, rest, g); reason != "" {
 		return reason
 	}
-	return ""
+	return checkConflictMarkers(sub, rest, gitState{dir: g.dir}, staged)
 }
 
 func checkGitConfigWrite(rest []string, expands []bool, fed bool) string {
@@ -1330,6 +1437,33 @@ func checkGitConfigWrite(rest []string, expands []bool, fed bool) string {
 	return ""
 }
 
+// movesGit reports whether git is sent elsewhere for the rest of a line:
+// moved already, or c assigns a variable that does (gitLocated), for
+// itself or as the words of export, declare or typeset.
+func movesGit(c call, moved bool) bool {
+	if moved || gitLocated(c.env) {
+		return true
+	}
+	n := c.named()
+	return len(n.words) > 0 && exporters[n.words[0]] && gitLocated(n.words[1:])
+}
+
+// exporters are the builtins whose words assign and export variables.
+var exporters = set("export", "declare", "typeset")
+
+// gitLocated reports whether the assignments env name a git directory,
+// work tree, index or object store, so git works somewhere other than
+// where it runs.
+func gitLocated(env []string) bool {
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
+			return true
+		}
+	}
+	return false
+}
+
 // scratchRepo reports whether a reviewer's git command sub, with these
 // arguments (expands saying which the shell expands) and the assignments
 // env made for it, run in dir as git reaches it, works only in a
@@ -1345,11 +1479,8 @@ func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string
 	if dir == "" || checkout == "" || set("push", "send-pack", "receive-pack")[sub] {
 		return "", false
 	}
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
-			return "", false
-		}
+	if gitLocated(env) {
+		return "", false
 	}
 	// The checkout, and the repository it belongs to, wherever that is.
 	reviewed := []string{checkout}

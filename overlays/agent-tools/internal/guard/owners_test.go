@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -22,9 +23,12 @@ func TestSessionEdits(t *testing.T) {
 		// rebase stops a rebase of the linked worktree onto base on a
 		// conflict in a.go: "merge" or "apply" names its backend; the
 		// branch field, applied first, says what it rebases.
-		rebase                                       string
-		noPlan, newer, sessionOnly, fixture, reclaim bool
-		deny                                         bool
+		rebase                                            string
+		noPlan, newer, sessionOnly, fixture, reclaim, mcp bool
+		deny                                              bool
+
+		// A part of the reason that must not appear.
+		without string
 	}{
 		{name: "own task worktree", session: "s1"},
 		{name: "remove requires absolute worktree path", session: "s1", command: "git worktree remove linked", deny: true},
@@ -80,10 +84,28 @@ func TestSessionEdits(t *testing.T) {
 		{name: "repository flags require explicit cwd", session: "s1", command: "git --git-dir=MAIN/.git --work-tree=MAIN checkout -- a.go", deny: true},
 		{name: "repository environment requires explicit cwd", session: "s1", command: "GIT_DIR=MAIN/.git GIT_WORK_TREE=MAIN git checkout -- a.go", deny: true},
 		{name: "stage in another session worktree", session: "s2", command: "git add a.go", deny: true},
+		{name: "MCP stage in own worktree", session: "s1", mcp: true},
+		{name: "MCP stage in another session worktree", session: "s2", mcp: true, deny: true},
 		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
+		// env -C to a directory the shell decides is judged where the line
+		// is too, as a call env runs without -C is.
+		{name: "commit through env -C to a variable from the main checkout", session: "s1", target: "MAIN", association: "LINKED", command: `env -C "$D" git commit -m x`, deny: true, reason: "This edits the repository's main checkout"},
+		{name: "commit in an inline script through env -C to a variable from the main checkout", session: "s1", target: "MAIN", association: "LINKED", command: `env -C "$D" bash -c 'git commit -m x'`, deny: true, reason: "This edits the repository's main checkout"},
+		// The guard judges a git command after a command substitution in
+		// the directory the line started in as well as where the cd took
+		// it, so it still refuses; the refusal names the form it accepts.
+		{name: "commit after cd into own worktree and a substitution points at git -C", session: "s1", target: "MAIN", association: "LINKED", command: `cd LINKED && before=$(git rev-parse HEAD) && git -c commit.gpgsign=false commit --allow-empty -m x`, deny: true, reason: "`git -C 'LINKED' ...`", without: "Create a task worktree"},
+		{name: "commit after cd into the main checkout and a substitution keeps the worktree advice", session: "s1", command: `cd MAIN && before=$(git rev-parse HEAD) && git commit --allow-empty -m x`, deny: true, reason: "This edits the repository's main checkout. Create a task worktree", without: "git -C"},
+		{name: "commit in the main checkout keeps the worktree advice", session: "s1", target: "MAIN", association: "LINKED", command: "git commit --allow-empty -m x", deny: true, reason: "This edits the repository's main checkout. Create a task worktree", without: "git -C"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.mcp {
+				// The grant directory refuses a state home through a
+				// symlink, as $TMPDIR may be.
+				state, _ := filepath.EvalSymlinks(t.TempDir())
+				hostpaths.Bake(t, "", state)
+			}
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
 			os.MkdirAll(scratch, 0o755)
@@ -200,14 +222,81 @@ func TestSessionEdits(t *testing.T) {
 			if tc.command != "" {
 				event["tool_name"], event["tool_input"] = "Bash", map[string]any{"command": paths.Replace(tc.command)}
 			}
+			if tc.mcp {
+				event["tool_name"] = "mcp__agent_ops__git_stage"
+				event["turn_id"] = "turn"
+				event["tool_use_id"] = "call"
+				event["tool_input"] = map[string]any{"worktree": target, "paths": []string{"a.go"}}
+			}
 			data, _ = json.Marshal(event)
 			var out bytes.Buffer
 			Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"deny"`); denied != tc.deny {
 				t.Fatalf("deny=%v, want %v: %s", denied, tc.deny, out.String())
 			}
-			if tc.reason != "" && !strings.Contains(out.String(), tc.reason) {
-				t.Fatalf("want reason containing %q: %s", tc.reason, out.String())
+			if tc.mcp && !tc.deny {
+				var response struct {
+					Output struct {
+						Input struct {
+							Authorization string `json:"authorization"`
+						} `json:"updatedInput"`
+					} `json:"hookSpecificOutput"`
+				}
+				if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Output.Input.Authorization == "" {
+					t.Fatalf("authorized MCP call did not receive a grant: %s (%v)", out.String(), err)
+				}
+			}
+			if reason := paths.Replace(tc.reason); reason != "" && !strings.Contains(out.String(), reason) {
+				t.Fatalf("want reason containing %q: %s", reason, out.String())
+			}
+			if without := paths.Replace(tc.without); without != "" && strings.Contains(out.String(), without) {
+				t.Fatalf("want reason without %q: %s", without, out.String())
+			}
+		})
+	}
+}
+
+func TestLinkedWorktreeOf(t *testing.T) {
+	// A repository, main, with linked worktrees linked and second, and
+	// another repository, other, with its own linked worktree, otherlinked.
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	dir := func(name string) string { return filepath.Join(root, name) }
+	for _, repo := range []string{"main", "other"} {
+		os.Mkdir(dir(repo), 0o755)
+		gitIn(t, dir(repo), "init", "-q", "-b", "base")
+		gitIn(t, dir(repo), "commit", "-q", "--allow-empty", "-m", "base")
+	}
+	gitIn(t, dir("main"), "worktree", "add", "-q", "-b", "linked", dir("linked"))
+	gitIn(t, dir("main"), "worktree", "add", "-q", "-b", "second", dir("second"))
+	gitIn(t, dir("other"), "worktree", "add", "-q", "-b", "otherlinked", dir("otherlinked"))
+	os.Mkdir(dir("plain"), 0o755)
+	opened, ok := openedRepo(dir("main"))
+	if !ok {
+		t.Fatal("openedRepo(main) failed")
+	}
+	for _, tc := range []struct {
+		name string
+		dirs []string
+		want string
+	}{
+		{"a linked worktree of the same repository", []string{"linked"}, "linked"},
+		{"the main checkout itself", []string{"main"}, ""},
+		{"a linked worktree of another repository", []string{"otherlinked"}, ""},
+		{"two linked worktrees", []string{"linked", "second"}, ""},
+		{"no repository beside one linked worktree", []string{"plain", "linked"}, "linked"},
+		{"nothing", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dirs []string
+			for _, d := range tc.dirs {
+				dirs = append(dirs, dir(d))
+			}
+			want := ""
+			if tc.want != "" {
+				want = dir(tc.want)
+			}
+			if got := linkedWorktreeOf(dirs, opened); got != want {
+				t.Fatalf("linkedWorktreeOf(%v) = %q, want %q", tc.dirs, got, want)
 			}
 		})
 	}
@@ -357,6 +446,30 @@ func TestOwners(t *testing.T) {
 		{"owner's chmod in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"chmod +x MAIN/a.sh"}}`, nil},
 		{"owner's mkdir in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"mkdir -p MAIN/new"}}`, []string{"LINKED"}},
 		{"owner's go generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go generate ./..."}}`, []string{"LINKED"}},
+		// Options before the subcommand, read by the program's grammar: go
+		// writes in the directory -C names, not where it runs.
+		{"owner's go -C generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN generate ./..."}}`, []string{"LINKED"}},
+		{"owner's go -C build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN build ./cmd/x"}}`, []string{"LINKED"}},
+		{"owner's go -C fmt in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go -C LINKED fmt ./..."}}`, nil},
+		{"owner's cargo +nightly fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt"}}`, []string{"LINKED"}},
+		{"owner's cargo --color fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo --color never fmt"}}`, []string{"LINKED"}},
+		// Every tool that runs a command line is fenced as Bash is.
+		{"owner's Monitor write into the main checkout", true, `{"tool_name":"Monitor","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > MAIN/a.go","description":"d"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","MAIN/a.go"]}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its working directory, the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","a.go"],"working_directory":"MAIN"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its worktree", false, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"MAIN","tool_input":{"command":["touch","a.go"],"working_directory":"LINKED"}}`, nil},
+		{"owner's write_stdin touch in the main checkout", true, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch MAIN/a.go\n"}}`, []string{"LINKED"}},
+		{"owner's write_stdin touch in its worktree", false, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch a.go\n"}}`, nil},
+		{"owner's env -C touch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN touch a.go"}}`, []string{"LINKED"}},
+		// The case's name, in its directories' paths, holds no =, which
+		// OWNERS reads as its separator.
+		{"owner's env --chdir touch, its value attached, in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --chdir=../main touch a.go"}}`, []string{"LINKED"}},
+		{"owner's env -C touch in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED touch a.go"}}`, nil},
+		// The shell opens a redirection where the line is, before env -C
+		// moves the command.
+		{"owner's env -C into its worktree, redirected in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED true > new-file"}}`, []string{"LINKED"}},
+		{"owner's env -C into the main checkout, redirected in its worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN true > new-file"}}`, nil},
+		{"owner's cargo +nightly fmt --check in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt --check"}}`, nil},
 		{"owner's go test profile in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go test -coverprofile=MAIN/c.out ./..."}}`, []string{"LINKED"}},
 		{"owner's go test in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go test -count=1 ./..."}}`, nil},
 		{"owner's nix build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"nix build .#x"}}`, []string{"LINKED"}},

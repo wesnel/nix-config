@@ -2066,6 +2066,14 @@ func formatWrites(name string, args, positional []string) []string {
 	has := func(flags ...string) bool {
 		return slices.ContainsFunc(args, func(a string) bool { return contains(flags, a) })
 	}
+	if g, ok := programs[name]; ok {
+		// Its grammar finds the subcommand past its options and toolchain.
+		i := g.command(args)
+		if i >= len(args) || !g.writes[args[i]] {
+			return nil
+		}
+		positional = slices.DeleteFunc(slices.Clone(args[i+1:]), func(a string) bool { return strings.HasPrefix(a, "-") })
+	}
 	switch {
 	case has("--check", "--diff", "-l", "--list-different", "--help", "--version"),
 		name == "alejandra" && has("-c"),
@@ -2073,11 +2081,10 @@ func formatWrites(name string, args, positional []string) []string {
 		name == "shfmt" && !has("-w", "--write"),
 		name == "gofumpt" && !has("-w"),
 		name == "sops" && !has("-i", "--in-place"),
-		name == "cargo" && (len(positional) == 0 || positional[0] != "fmt"),
 		name == "ruff" && (len(positional) == 0 || positional[0] != "format") && !has("--fix"):
 		return nil
 	}
-	if (name == "cargo" || name == "ruff") && len(positional) > 0 {
+	if name == "ruff" && len(positional) > 0 {
 		positional = positional[1:] // the subcommand
 	}
 	if len(positional) == 0 {
@@ -2123,15 +2130,31 @@ func tarExtracts(args []string) bool {
 
 // goWrites are the files and directories a go command writes: its -o
 // output, its test profiles, and "." for the commands that rewrite source
-// or go.mod in the package it runs in.
+// or go.mod in the package it runs in, each relative one in the directory
+// -C names, where go runs.
 func goWrites(args []string) []string {
+	g := programs["go"]
+	out := goCommandWrites(args[g.command(args):])
+	if in := g.workDir(args); in != "" {
+		for i, p := range out {
+			if !filepath.IsAbs(p) {
+				out[i] = filepath.Join(in, p)
+			}
+		}
+	}
+	return out
+}
+
+// goCommandWrites are goWrites from the subcommand on.
+func goCommandWrites(args []string) []string {
 	if len(args) == 0 {
 		return nil
 	}
 	out, output := goOutputFiles(args)
-	switch args[0] {
-	case "generate", "fmt", "fix", "get", "work":
+	if programs["go"].writes[args[0]] {
 		out = append(out, ".")
+	}
+	switch args[0] {
 	case "mod":
 		if len(args) > 1 && (args[1] == "tidy" || args[1] == "edit" || args[1] == "vendor" || args[1] == "init") {
 			out = append(out, ".")
@@ -2334,7 +2357,6 @@ func editTargets(name string, args, redirected []string) []string {
 }
 
 var (
-	interpreter = regexp.MustCompile(`^(python[0-9.]*|node|ruby)$`)
 	// openForWriting is Python's or Ruby's open of a literal path with a
 	// literal mode, which writes when the mode has w, a, x or +.
 	openForWriting = regexp.MustCompile(`\bopen\(\s*['"]([^'"]+)['"]\s*,\s*(?:mode\s*=\s*)?['"]([^'"]*)['"]`)
@@ -2344,17 +2366,16 @@ var (
 		`\bFile\.(?:write|binwrite)\(\s*['"]([^'"]+)['"]`)
 )
 
-// oneLinerWrites are the files a Python, Node or Ruby one-liner (-c, -e,
-// --eval) writes, as it names them in string literals: a narrow reading of
-// the usual calls, not of every way code can write.
+// oneLinerWrites are the files a Python, Node or Ruby one-liner, the code
+// an inline option of its grammar gives (-c, -e, --eval), writes, as it
+// names them in string literals: a narrow reading of the usual calls, not
+// of every way code can write.
 func oneLinerWrites(name string, args []string) []string {
-	if !interpreter.MatchString(name) {
+	program, g, _ := programOf(name)
+	if program != "python" && program != "node" && program != "ruby" {
 		return nil
 	}
-	flags := set("-e", "--eval", "-p", "--print")
-	if strings.HasPrefix(name, "python") {
-		flags = set("-c")
-	}
+	flags := g.inline
 	var targets []string
 	for i, a := range args {
 		code, ok := "", false
@@ -2423,6 +2444,9 @@ var trashOnPath = func() bool {
 
 const useTrash = "`trash` is on PATH here, and moves files to the Trash, where they can be got back. " +
 	"Use `trash PATH...` in place of rm, unlink or find -delete (`find ... -print0 | xargs -0 trash`)."
+
+// scratchPlaces names scratchRoots in a refusal.
+const scratchPlaces = "scratch ($TMPDIR, /tmp)"
 
 // scratchRoots are the directories a shell command may write files in,
 // tracked or not: the session's temporary directories.
@@ -2938,6 +2962,230 @@ func checkSigning(sub string, rest []string, g gitState) string {
 		return ""
 	}
 	return fmt.Sprintf(signingOn, sub, sub)
+}
+
+const conflictMarkers = "`%s` has a line to be committed that starts with a conflict marker, seven < or > then a space or the line's end, " +
+	"so this `git %s` would commit an unresolved conflict. Resolve the conflict in the file, removing the marker lines, " +
+	"`git add` it, and run the command again; if the file is meant to hold such a line, put the commit in your report for the operator."
+
+// conflictMarker is a line that opens or closes a conflict git wrote.
+var conflictMarker = regexp.MustCompile(`^(<{7}|>{7})( |$)`)
+
+// commitValues are git commit's options whose value is the next word, or
+// the rest of a group of short flags (-am MSG, -mMSG).
+var commitValues = set("-m", "--message", "-F", "--file", "-C", "--reuse-message", "-c", "--reedit-message",
+	"--author", "--date", "-t", "--template", "--cleanup", "--trailer", "--fixup", "--squash", "--pathspec-from-file")
+
+// commitFlags are git commit's options, in full, that take no value and
+// change nothing of what it commits beyond what readCommitScope reads;
+// commitLetters their short letters, with a, i and o.
+var (
+	commitFlags = set("-q", "--quiet", "-v", "--verbose", "-s", "--signoff", "--no-signoff", "--no-verify", "--verify",
+		"--amend", "--no-edit", "-e", "--edit", "--allow-empty", "--allow-empty-message", "--no-gpg-sign", "--reset-author",
+		"--status", "--no-status", "--no-post-rewrite", "-z", "--null", "--short", "--branch", "--porcelain", "--long",
+		"-o", "--only")
+	commitLetters = "qvsenzaio"
+)
+
+// checkConflictMarkers denies a git command that commits, git commit or
+// the --continue of the other commitWriters but pull, while an added line
+// of what it commits is a conflict marker, naming the file: the index;
+// for commit -a, the worktree against HEAD too; for commit with paths,
+// those paths alone, staged and in the worktree, or with -i the whole
+// index and those paths' worktree. It narrows to paths, or lets --dry-run
+// and help through, only where it knows every word of the commit in full:
+// git takes an abbreviated long option (--inc for --include), so any other
+// word scans the whole index and worktree. git records no path as resolved
+// once it is staged, so a staged marker line is read as an unresolved
+// conflict wherever it is. staged are the paths a git add earlier on the
+// same command line stages (stagedPaths), which the index does not hold
+// yet when the guard runs: their worktree against HEAD is read as the
+// index, as far as they lie in the repository.
+func checkConflictMarkers(sub string, rest []string, g gitState, staged []string) string {
+	if _, writes := commitWriters[sub]; !writes || sub == "pull" || sub != "commit" && !contains(rest, "--continue") {
+		return ""
+	}
+	diff := []string{"diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"}
+	diffs := [][]string{append(slices.Clone(diff), "--cached")}
+	if paths := stagedIn(staged, g); len(paths) > 0 {
+		diffs = append(diffs, append(append(slices.Clone(diff), "HEAD", "--"), paths...))
+	}
+	if sub == "commit" {
+		scope := readCommitScope(rest)
+		switch {
+		case scope.unknown:
+			diffs = append(diffs, append(slices.Clone(diff), "HEAD", "--"))
+		case scope.none:
+			return ""
+		case len(scope.paths) > 0 && !scope.include:
+			diffs = [][]string{append(append(slices.Clone(diff), "--cached", "--"), scope.paths...)}
+			fallthrough
+		case scope.all || len(scope.paths) > 0:
+			diffs = append(diffs, append(append(slices.Clone(diff), "HEAD", "--"), scope.paths...))
+		}
+	}
+	for _, args := range diffs {
+		out, _ := g.run(args...)
+		if file := markedFile(out); file != "" {
+			return fmt.Sprintf(conflictMarkers, file, sub)
+		}
+	}
+	return ""
+}
+
+// wholeWorktree is the pathspec of every path of a worktree, from its top.
+const wholeWorktree = ":/"
+
+// stagedPaths are the paths that c, a git add or git stage run in one of
+// dirs, stages, as absolute paths, or wholeWorktree for one that names no
+// path (git add -A), reads them from a file or standard input, or names
+// one the shell expands or the guard cannot place, and for any add where
+// moved, or the call's own assignments, send git elsewhere (gitLocated),
+// whatever -C or env -C it names: git then stages in the work tree they
+// name. A wrapper's directory change (env -C) applies first (callDirs).
+// None for any other call.
+func stagedPaths(c call, dirs []string, moved bool) []string {
+	n := c.named()
+	if len(n.words) == 0 || n.expands[0] || base(n.words[0]) != "git" {
+		return nil
+	}
+	located := moved || gitLocated(c.env) || gitLocated(c.assigned)
+	var out []string
+	for _, line := range dirs {
+		for _, dir := range callDirs(n.chdir, line) {
+			i, _, optionLocated, at, _, _ := gitInvocationOptions(n.words, n.expands, dir)
+			if i >= len(n.words) || n.words[i] != "add" && n.words[i] != "stage" {
+				return nil
+			}
+			if located || optionLocated {
+				return []string{wholeWorktree}
+			}
+			out = append(out, addedPaths(n.words[i+1:], n.expands[i+1:], at, n.fed)...)
+		}
+	}
+	return out
+}
+
+// addedPaths is stagedPaths for git add's arguments args, run in dir, fed
+// more by xargs where fed is set.
+func addedPaths(args []string, expands []bool, dir string, fed bool) []string {
+	var out []string
+	whole, opts := fed, true
+	for j, a := range args {
+		switch {
+		case opts && a == "--":
+			opts = false
+		case opts && strings.HasPrefix(a, "--pathspec-from-file"):
+			whole = true
+		case opts && strings.HasPrefix(a, "-"):
+		case expands[j] || strings.HasPrefix(a, ":") || !filepath.IsAbs(rawPath(a, dir)):
+			whole = true
+		default:
+			out = append(out, physical(expandPath(a, dir)))
+		}
+	}
+	if whole || len(out) == 0 {
+		return []string{wholeWorktree}
+	}
+	return out
+}
+
+// stagedIn is the paths of staged that lie in g's worktree, wholeWorktree
+// among them, whichever repository staged it: a directory the guard reads
+// for an add can differ from the one git stages in (a symlink, an
+// expansion, a nested repository), so it scans too much rather than too
+// little. None where g has no worktree.
+func stagedIn(staged []string, g gitState) []string {
+	if len(staged) == 0 {
+		return nil
+	}
+	top, ok := g.run("rev-parse", "--show-toplevel")
+	if !ok {
+		return nil
+	}
+	top = physical(strings.TrimSpace(top))
+	return slices.DeleteFunc(slices.Clone(staged), func(p string) bool {
+		return p != wholeWorktree && p != top && !strings.HasPrefix(p, top+"/")
+	})
+}
+
+// commitScope is what git commit, given rest, commits beyond the index,
+// read with its options' values (commitValues) so that a value is no
+// option: all for -a or --all, include for -i or --include, the paths it
+// names, none where it commits nothing (--dry-run, -h, --help), and
+// unknown where a word starting with - is no full spelling it knows, so
+// none of the rest holds.
+type commitScope struct {
+	all, include, none, unknown bool
+	paths                       []string
+}
+
+func readCommitScope(rest []string) commitScope {
+	var s commitScope
+	for i := 0; i < len(rest); i++ {
+		w := rest[i]
+		switch {
+		case w == "--":
+			s.paths = append(s.paths, rest[i+1:]...)
+			return s
+		case w == "--dry-run" || w == "-h" || w == "--help":
+			s.none = true
+		case w == "-a" || w == "--all":
+			s.all = true
+		case w == "-i" || w == "--include":
+			s.include = true
+		case commitValues[w]:
+			i++
+		case commitFlags[w]:
+		case strings.HasPrefix(w, "--"):
+			if name, _, attached := strings.Cut(w, "="); !attached || !commitValues[name] {
+				s.unknown = true
+			}
+		case strings.HasPrefix(w, "-") && len(w) > 1:
+			if s.readLetters(w) {
+				i++ // the value is the next word
+			}
+		default:
+			s.paths = append(s.paths, w)
+		}
+	}
+	return s
+}
+
+// readLetters reads w, a word of bundled short options (-am), into s, and
+// reports whether its last letter takes the next word as its value.
+func (s *commitScope) readLetters(w string) bool {
+	for j, letter := range w[1:] {
+		s.all = s.all || letter == 'a'
+		s.include = s.include || letter == 'i'
+		if commitValues["-"+string(letter)] {
+			return j == len(w)-2
+		}
+		if !strings.ContainsRune(commitLetters, letter) {
+			s.unknown = true
+		}
+	}
+	return false
+}
+
+// markedFile is the first file of a git diff -U0 whose added lines hold a
+// conflict marker, or "".
+func markedFile(diff string) string {
+	file, body := "", false
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff "):
+			body = false
+		case !body && strings.HasPrefix(line, "+++ "):
+			file = strings.Trim(strings.TrimPrefix(line, "+++ "), `"`)
+			file = strings.TrimPrefix(file, "b/")
+		case strings.HasPrefix(line, "@@"):
+			body = true
+		case body && strings.HasPrefix(line, "+") && conflictMarker.MatchString(line[1:]):
+			return file
+		}
+	}
+	return ""
 }
 
 // run runs git in g.dir without the command's configuration, as the guard

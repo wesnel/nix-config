@@ -869,21 +869,23 @@
       checks.${darwinOnly "codex-rules"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
       in
-        pkgs.runCommand "codex-rules" {
-          nativeBuildInputs = [pkgs.python3 pkgs.bash];
-          activation = ngrok.home.activation.codexRules.data;
-          opsActivation = ngrok.home.activation.codexOpsServer.data;
-          statusLineActivation = ngrok.home.activation.codexStatusLine.data;
-          otelActivation = ngrok.home.activation.codexOtel.data;
-          otelUrl = ngrok.wgn.home.otel-collector.url;
-          passAsFile = ["activation" "opsActivation" "statusLineActivation" "otelActivation"];
-        } ''
-          python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
-          python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
-          python3 ${./modules/home-manager/codex/statusline-tests.py} "$statusLineActivationPath"
-          python3 ${./modules/home-manager/codex/otel-tests.py} "$otelActivationPath" "$otelUrl"
-          touch $out
-        '';
+        assert pkgs.lib.assertMsg (builtins.elem "${ngrok.xdg.stateHome}/agent-tools/git-authorizations" ngrok.wgn.home.llm.sandbox.deniedReads)
+        "Git authorization grants must be inaccessible to sandboxed commands";
+          pkgs.runCommand "codex-rules" {
+            nativeBuildInputs = [pkgs.python3 pkgs.bash];
+            activation = ngrok.home.activation.codexRules.data;
+            opsActivation = ngrok.home.activation.codexOpsServer.data;
+            statusLineActivation = ngrok.home.activation.codexStatusLine.data;
+            otelActivation = ngrok.home.activation.codexOtel.data;
+            otelUrl = ngrok.wgn.home.otel-collector.url;
+            passAsFile = ["activation" "opsActivation" "statusLineActivation" "otelActivation"];
+          } ''
+            python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
+            python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
+            python3 ${./modules/home-manager/codex/statusline-tests.py} "$statusLineActivationPath"
+            python3 ${./modules/home-manager/codex/otel-tests.py} "$otelActivationPath" "$otelUrl"
+            touch $out
+          '';
 
       checks.${darwinOnly "plan-mirrors"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};

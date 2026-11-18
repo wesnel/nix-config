@@ -80,6 +80,17 @@ func TestHardening(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
+	t.Run("refuses malformed repository config", func(t *testing.T) {
+		dir := t.TempDir()
+		gitIn(t, dir, "init", "-q", "-b", "main")
+		if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("[invalid\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckConfigStrict(dir); err == nil {
+			t.Fatal("malformed repository config was accepted")
+		}
+	})
+
 	t.Run("hooks and the fsmonitor do not run", func(t *testing.T) {
 		dir, marker := planted(t)
 		if _, err := Run("worktree", "add", "-q", filepath.Join(dir, "wt"), "feature"); err != nil {

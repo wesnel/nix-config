@@ -306,6 +306,58 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", "", bySession, "")
 		locate(t, c, "", w[1], byWorktree, "")
 	})
+
+	// Plans made the same day order by slug alone, so the one handed back
+	// may come first; the one under way is the session's.
+	t.Run("the plan under way over one handed back the same day", func(t *testing.T) {
+		for _, handedBack := range []string{"zzz", "aaa"} {
+			t.Run(handedBack+" handed back", func(t *testing.T) {
+				c := testConfig(t)
+				files := map[string]string{}
+				for _, slug := range []string{"aaa", "zzz"} {
+					status := "working"
+					if slug == handedBack {
+						status = "handed-back"
+					}
+					made, err := c.New(NewOptions{Title: "Add " + slug, Slug: slug, Sessions: []string{"claude:s1"},
+						Status: status}, day)
+					if err != nil {
+						t.Fatal(err)
+					}
+					files[slug] = made.Plan
+				}
+				underWay := map[string]string{"zzz": "aaa", "aaa": "zzz"}[handedBack]
+				locate(t, c, "s1", "", files[underWay], "")
+			})
+		}
+	})
+
+	// Between plans the session's rank ties, the one it logged in last is
+	// under way; another session's later event in the other says nothing
+	// of this one.
+	t.Run("the plan of the session's latest event", func(t *testing.T) {
+		c := testConfig(t)
+		files := map[string]Plan{}
+		for _, slug := range []string{"aaa", "zzz"} {
+			p, err := c.Open(locatePlan(t, c, slug, day, nil, []string{"claude:s1", "claude:s2"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			files[slug] = p
+		}
+		for _, e := range []struct {
+			plan, session string
+			at            time.Duration
+		}{{"zzz", "s1", time.Hour}, {"aaa", "s1", 2 * time.Hour}, {"zzz", "s2", 3 * time.Hour}} {
+			if _, err := files[e.plan].Record("", Event{Kind: "committed", Session: e.session, Commit: "Add " + e.plan},
+				day.Add(e.at)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		locate(t, c, "s1", "", files["aaa"].File(), "")
+		locate(t, c, "claude:s1", "", files["aaa"].File(), "")
+		locate(t, c, "s2", "", files["zzz"].File(), "")
+	})
 }
 
 // What tools record is theirs alone to log: an agent's `agent-plan log` of
