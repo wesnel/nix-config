@@ -226,7 +226,7 @@ var mcpTools = []mcpTool{
 			{name: "plan", kind: text, desc: "the plan, its file or name, whose Goal is the goal statement; required for a range"},
 			{name: "part", kind: text, desc: "the plan's part whose Goal to read, as P1"},
 			{name: "items", kind: file, desc: "the items the change answers, a file in the worktree"},
-			{name: "red_check", kind: file, desc: "git red-check BASE..TIP's JSON, a file in the worktree"},
+			{name: "red_check", kind: file, desc: "Author-run git red-check BASE..TIP JSON in the worktree; required for configured named checks, passed to every reviewer with exact endpoint and command validation"},
 			{name: "description", kind: file, desc: "the PR description, a file in the worktree"},
 			{name: "timeout", kind: number, desc: "seconds before a reviewer is stopped; default 1800"}},
 		argv: func(a mcpArgs) []string {

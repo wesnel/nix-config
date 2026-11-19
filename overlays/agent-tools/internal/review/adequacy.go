@@ -34,6 +34,7 @@ type adequacy struct {
 	// whether red-check's JSON came with --red-check.
 	configured, given bool
 	text              string
+	tipChecks         string
 	findings          []*Finding
 	dropped           []Dropped
 	// buildOnly are the commits whose tests only fail to build without
@@ -59,15 +60,13 @@ func usableSettings(r *span) error {
 func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, error) {
 	settings, err := r.settings()
 	if err != nil {
-		if file != "" {
-			return nil, err
-		}
-		// Main refused unusable settings; they changed since.
-		fmt.Fprintf(log, "%s: test adequacy is left out: %v\n", name, err)
-		return &adequacy{configured: true}, nil
+		return nil, err
 	}
 	suites := settings.Suites
 	a := &adequacy{configured: len(suites) > 0, given: file != ""}
+	if len(settings.Checks) > 0 && !a.given {
+		return nil, missingChecks(r)
+	}
 	switch {
 	case !a.given:
 		if a.configured {
@@ -75,7 +74,7 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 				"pass its JSON with `--red-check FILE`\n", name)
 		}
 		return a, nil
-	case !a.configured:
+	case !a.configured && len(settings.Checks) == 0:
 		return nil, refusal.New("--red-check %s needs the clone's test suites, which name the test files its findings "+
 			"are placed at, and this clone has none; review without `--red-check`, or ask the operator to set them in "+
 			"the clone's agent settings, %s", file, settings.File())
@@ -85,12 +84,21 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		return nil, refusal.New("--red-check %s is not git red-check's JSON: %v. Pass the file `git red-check %s..%s` "+
 			"writes on stdout", file, err, r.base, r.tip)
 	}
+	if a.tipChecks, err = checkEvidence(r, result.TipChecks, settings.Checks); err != nil {
+		return nil, err
+	}
 	// The verdicts say what this repository's tests show only where red-check
 	// ran this repository's suites.
 	if !slices.EqualFunc(result.Suites, suites, redcheck.Suite.Equal) {
 		return nil, refusal.New("--red-check %s ran the suites %s, not this repository's, %s. Run `git red-check %s..%s` "+
 			"without --test, --build or --test-files, and pass what it writes", file, suitesText(result.Suites),
 			suitesText(suites), r.base, r.tip)
+	}
+	if !a.configured {
+		if len(result.Commits) > 0 {
+			return nil, refusal.New("--red-check has commits but no configured suites; run `git red-check %s..%s` again", r.base, r.tip)
+		}
+		return a, nil
 	}
 	bySuite := map[string]redcheck.Suite{}
 	for _, s := range suites {
@@ -119,7 +127,9 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 	}
 	// Redacted before the cut, which could split a secret's shape and leave
 	// its end unrecognised.
-	a.text = fenced("json", cut([]byte(redact.Secrets(string(data))), redCheckCap))
+	result.TipChecks = nil
+	adequacyJSON, _ := json.Marshal(result)
+	a.text = fenced("json", cut([]byte(redact.Secrets(string(adequacyJSON))), redCheckCap))
 	for _, c := range result.Commits {
 		for _, s := range c.Suites {
 			a.addVerdict(r, bySuite[s.Suite], c.Commit, s.Verdict, log)

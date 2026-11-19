@@ -72,6 +72,7 @@ func drawSchema() []byte {
 func drawPrompt(in inputs, redraw string) string {
 	var b strings.Builder
 	b.WriteString(drawContract)
+	b.WriteString(in.tipChecks)
 	fmt.Fprintf(&b, "\n# This change\n\n## Range\n\nBASE..TIP is %s..%s. Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.r.tip, in.r.commits, in.where)
 	if g := strings.TrimSpace(in.goal); g != "" {
@@ -93,15 +94,16 @@ func diagramFallback(in inputs) string {
 		"A critique covers every node and edge ID. Return findings for triage and redraw a faulted diagram at most once, then use another fresh critic. " +
 		"Record the actual harness and that this was a same-family fallback; an unavailable or unfinished stage is not a clean review.\n\n" +
 		"# Drawing task\n\n" + drawPrompt(in, "") + "\n## Drawing schema\n\n" + fenced("json", string(drawSchema())) +
-		"\n# Critique task\n\n" + generalRules() + diagramChecks
+		"\n# Critique task\n\n" + generalRules() + diagramChecks + in.tipChecks
 }
 
 // critiqueInputs are what a critic is given.
 type critiqueInputs struct {
-	r       *span
-	d       *diagram.Diagram
-	checked diagram.Result
-	where   string
+	r         *span
+	d         *diagram.Diagram
+	checked   diagram.Result
+	where     string
+	tipChecks string
 }
 
 // critiquePrompt is the reviewer's rules and the diagram's checks, then
@@ -110,6 +112,7 @@ func critiquePrompt(in critiqueInputs) string {
 	var b strings.Builder
 	b.WriteString(generalRules())
 	b.WriteString(diagramChecks)
+	b.WriteString(in.tipChecks)
 	fmt.Fprintf(&b, "\n# This critique\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.d.At, in.r.given, in.r.commits, in.where)
 	fmt.Fprintf(&b, "\n## Diagram\n\nA %s diagram.\n\n```json\n%s\n```\n", in.d.Kind, in.d.JSON())
@@ -176,7 +179,7 @@ type DiagramResult struct {
 // JSON is kept.
 func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model string, timeout time.Duration,
 	log io.Writer) *typeRun {
-	run := &typeRun{name: "diagram"}
+	run := &typeRun{name: "diagram", tipChecks: base.tipChecks != ""}
 	// The diagrammer draws on Claude; the critic is Codex.
 	if run.why = runnable(base.availability, reviewerTypes["claude"]); run.why == "" {
 		run.why = runnable(base.availability, reviewerTypes["codex"])
@@ -207,7 +210,7 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 			out.dropDiagram(raw, why)
 			continue
 		}
-		findings, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d, checked: res, where: in.where}, critic)
+		findings, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d, checked: res, where: in.where, tipChecks: in.tipChecks}, critic)
 		var unconfined Unconfined
 		var unavailable providerUnavailable
 		if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
@@ -388,7 +391,7 @@ func redrawDiagram(ctx context.Context, s *source, in inputs, run *typeRun, out 
 		out.keepDiagram(d, "unresolved", "the critic found it untrue, and its redraw does not hold to the code at TIP", findings)
 		return nil
 	}
-	again, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d2, checked: res2, where: in.where}, critic)
+	again, inconclusive, err := critiqueDiagram(ctx, s, out, critiqueInputs{r: r, d: d2, checked: res2, where: in.where, tipChecks: in.tipChecks}, critic)
 	if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
 		return err
 	}

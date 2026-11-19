@@ -410,7 +410,7 @@ func (p *parser) rounds(r *Range) error {
 		if err != nil {
 			return err
 		}
-		rd := Round{ID: id, Reviewer: props["REVIEWER"], Model: props["MODEL"], RedCheck: props["RED_CHECK"]}
+		rd := Round{ID: id, Reviewer: props["REVIEWER"], Model: props["MODEL"], RedCheck: props["RED_CHECK"], TipChecks: props["TIP_CHECKS"]}
 		if rd.At, err = p.when(props, "AT"); err != nil {
 			return err
 		}

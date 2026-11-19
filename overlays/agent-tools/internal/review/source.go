@@ -136,6 +136,7 @@ func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*
 	r := &span{given: s.given, base: s.pr.Base, tip: s.pr.Head, top: s.pr.Clone, common: s.pr.Clone,
 		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own}
 	if home != "" {
+		r.authorTop = home
 		if r.common, err = gitRun(ctx, home, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 			return nil, err
 		}

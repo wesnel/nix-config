@@ -23,6 +23,40 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestNamedChecks(t *testing.T) {
+	_, settings := clone(t)
+	for _, tc := range []struct{ name, checks, want string }{
+		{"accepted", `[{"name":"lint","command":"make lint"}]`, ""},
+		{"empty", `[]`, ""},
+		{"missing name", `[{"command":"true"}]`, "name"},
+		{"blank name", `[{"name":" ","command":"true"}]`, "name"},
+		{"missing command", `[{"name":"lint"}]`, "command"},
+		{"blank command", `[{"name":"lint","command":" "}]`, "command"},
+		{"duplicate", `[{"name":"lint","command":"true"},{"name":"lint","command":"false"}]`, "duplicate"},
+		{"unknown key", `[{"name":"lint","command":"true","other":true}]`, "unknown field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			put(t, settings, `{"checks":`+tc.checks+`}`)
+			s, err := Lookup()
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want refusal containing %q, got %v", tc.want, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "accepted" {
+				data, _ := json.Marshal(s)
+				if !strings.Contains(string(data), `"command":"make lint"`) {
+					t.Fatalf("lost configured check: %s", data)
+				}
+			}
+		})
+	}
+}
+
 // clone makes a repository with one commit and points the package's git at
 // it, and returns it with the path of its settings, which do not exist
 // until the test writes them.

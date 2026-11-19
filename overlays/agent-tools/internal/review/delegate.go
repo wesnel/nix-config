@@ -135,6 +135,15 @@ repository's test suites, and the round records RED_CHECK session, or
 absent. A printed prompt, whose reply delegate never sees, lists those
 findings instead, for the reviewer to report itself.
 
+When the clone configures named checks, --red-check is required for every
+reviewer, including focused reviews, guide and diagram. Its tipChecks
+envelope must cover the configured name/command set at the exact resolved
+base and tip, with a completed exit and output for every command. A
+completed failing check is valid evidence. Run the command the refusal
+prints in the author session; delegate never executes checks. Every
+reviewer receives compact statuses and bounded redacted logs. Each new
+round records TIP_CHECKS session or absent; older records may omit it.
+
 An upgrade prompt adds the pins BASE..TIP sets, moves or drops in lock
 files (flake.lock nodes, by each node's locked and original objects
 whole, and its input paths, as hm/nixpkgs, that resolve to another node;
@@ -390,7 +399,7 @@ func reviewChange(ctx context.Context, s *source, r *span, opts reviewOptions, s
 	if err != nil {
 		return report(nil, err, 0)
 	}
-	goal := goalFlags(opts.plan, opts.part)
+	goal := opts.inputFlags()
 
 	if opts.printPrompt {
 		t := generalReviewer()
@@ -489,6 +498,7 @@ func reviewInputs(s *source, r *span, opts reviewOptions, stdin io.Reader, stder
 	if err != nil {
 		return base, "", nil, err
 	}
+	base.tipChecks = tests.tipChecks
 
 	return base, path, tests, nil
 }
@@ -510,7 +520,7 @@ func printReview(ctx context.Context, base inputs, t string, tests *adequacy, st
 func runChosen(ctx context.Context, s *source, base inputs, tests *adequacy, opts reviewOptions, chosen []string, result *RunResult, stderr io.Writer) []*typeRun {
 	r := base.r
 	explicit := len(opts.reviewers) > 0
-	goal := goalFlags(opts.plan, opts.part)
+	goal := opts.inputFlags()
 	var runs []*typeRun
 	for i, t := range chosen {
 		run := runType(ctx, s, r, base, t, tests, opts.model, opts.timeout, stderr)
@@ -575,6 +585,7 @@ func (base *inputs) readDescription(s *source, description string, stdin io.Read
 // once its reviewer is sure to read them.
 func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log io.Writer) (inputs, error) {
 	in := base
+	in.tipChecks = tests.tipChecks
 	ty := reviewerTypes[t]
 	if ty.guide {
 		in.contract, in.prior = guideContract, ""
@@ -644,6 +655,14 @@ func goalFlags(plan, part string) string {
 	return flags
 }
 
+func (opts reviewOptions) inputFlags() string {
+	flags := goalFlags(opts.plan, opts.part)
+	if opts.redCheckFile != "" {
+		flags += "--red-check " + shellWord(opts.redCheckFile) + " "
+	}
+	return flags
+}
+
 var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
 
 // shellWord is s as one shell word: as it is where nothing in it is special
@@ -703,7 +722,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 	if ty.diagram {
 		return runDiagrams(ctx, s, r, base, model, timeout, log)
 	}
-	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
+	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.configured && tests.given, tipChecks: tests.tipChecks != ""}
 	if run.why = runnable(base.availability, ty); run.why != "" {
 		return run
 	}

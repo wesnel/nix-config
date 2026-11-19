@@ -1,10 +1,11 @@
-// Package redcheck checks that the tests a commit adds or changes fail
-// without the commit's other changes and pass with them.
+// Package redcheck runs named checks at a tip and checks that changed tests
+// fail without their commit's other changes and pass with them.
 package redcheck
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -46,6 +48,9 @@ const (
 
 // DefaultLines is how many lines of each run's output are kept.
 const DefaultLines = 40
+
+// OutputCap bounds each command's redacted output in bytes.
+const OutputCap = 16 << 10
 
 // Exit statuses for a completed check, worst verdict first.
 const (
@@ -95,6 +100,29 @@ type Suite struct {
 	InlineTestFiles []string `json:"inlineTestFiles,omitempty"`
 }
 
+// NamedCheck runs once at the reviewed tip, independently of test suites.
+type NamedCheck struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+// CheckNamed refuses unnamed, duplicate or empty commands.
+func CheckNamed(checks []NamedCheck) error {
+	seen := map[string]bool{}
+	for _, c := range checks {
+		switch {
+		case strings.TrimSpace(c.Name) == "":
+			return refusal.New("a check has no name; ask the operator to give each check a unique name")
+		case seen[c.Name]:
+			return refusal.New("duplicate check name %q; ask the operator to give each check a unique name", c.Name)
+		case strings.TrimSpace(c.Command) == "":
+			return refusal.New("check %q has no command; ask the operator to give it a command", c.Name)
+		}
+		seen[c.Name] = true
+	}
+	return nil
+}
+
 // Equal reports whether s and o are the same suite, every field alike.
 func (s Suite) Equal(o Suite) bool {
 	return s.Name == o.Name && s.Test == o.Test && s.Build == o.Build && slices.Equal(s.TestFiles, o.TestFiles) &&
@@ -137,6 +165,7 @@ type Options struct {
 	// Suites are the tests to run, each where a commit changes its test
 	// files; CheckSuites must accept them.
 	Suites []Suite
+	Checks []NamedCheck
 	// Fixups keeps only a range's fixup!, amend! and squash! commits.
 	Fixups bool
 	// Lines is how much of the end of each run's output to keep; zero
@@ -182,11 +211,46 @@ type Check struct {
 	Suites []*SuiteCheck `json:"suites"`
 }
 
-// Result is the outcome for every checked commit, oldest first.
+// Result holds per-commit test adequacy, oldest first, and named tip checks.
 type Result struct {
 	// Suites are the suites the check was given.
-	Suites  []Suite  `json:"suites"`
-	Commits []*Check `json:"commits"`
+	Suites    []Suite    `json:"suites"`
+	Commits   []*Check   `json:"commits"`
+	TipChecks *TipChecks `json:"tipChecks,omitempty"`
+}
+
+// TipChecks records completed named commands at exact resolved endpoints.
+type TipChecks struct {
+	Base   string        `json:"base"`
+	Tip    string        `json:"tip"`
+	Checks []CheckResult `json:"checks"`
+}
+
+type CheckResult struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Run     *Run   `json:"run"`
+}
+
+// UnmarshalJSON requires a completed run; an omitted exit is not a pass.
+func (c *CheckResult) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Name    string `json:"name"`
+		Command string `json:"command"`
+		Run     *struct {
+			Exit   *int    `json:"exit"`
+			Output *string `json:"output"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Run == nil || raw.Run.Exit == nil || raw.Run.Output == nil || *raw.Run.Exit < 0 || *raw.Run.Exit > 255 {
+		return fmt.Errorf("named check %q has no complete command result", raw.Name)
+	}
+	c.Name, c.Command = raw.Name, raw.Command
+	c.Run = &Run{Exit: *raw.Run.Exit, Output: *raw.Run.Output}
+	return nil
 }
 
 // worse reports whether verdict calls for a worse exit status than than
@@ -198,6 +262,13 @@ func worse(verdict, than string) bool {
 
 // Exit is the exit status the worst of the result's verdicts calls for.
 func (r *Result) Exit() int {
+	if r.TipChecks != nil {
+		for _, c := range r.TipChecks.Checks {
+			if c.Run.Exit != 0 {
+				return ExitDisproven
+			}
+		}
+	}
 	verdict := FailsAsAsserted
 	for _, c := range r.Commits {
 		if worse(c.Verdict, verdict) {
@@ -209,14 +280,21 @@ func (r *Result) Exit() int {
 
 // Do checks rev: a commit, against its parent, or a range A..B, each
 // non-merge commit in it against its own parent, with each suite whose test
-// files it changes.
+// files it changes. Named checks run once at the resolved tip independently
+// of suites and Fixups, each in a fresh checkout. Completed failures do not
+// stop later checks; execution errors return no result.
 //
 // Each suite of each commit is checked in its own detached worktree under the repository's
 // git directory, which a sandbox that lets git create a worktree at all lets
 // it write. The worktree is removed afterwards, also on error or when ctx is
 // cancelled. No ref, index or file of the caller's worktrees is touched.
 func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
-	if err := CheckSuites(opts.Suites); err != nil {
+	if len(opts.Suites) > 0 || len(opts.Checks) == 0 {
+		if err := CheckSuites(opts.Suites); err != nil {
+			return nil, err
+		}
+	}
+	if err := CheckNamed(opts.Checks); err != nil {
 		return nil, err
 	}
 	if opts.Log == nil {
@@ -247,6 +325,9 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 		return nil, err
 	}
 	result := &Result{Suites: opts.Suites, Commits: []*Check{}}
+	if len(opts.Suites) == 0 {
+		commits = nil
+	}
 	for _, c := range commits {
 		check, err := checkCommit(ctx, top, common, c, opts)
 		if err != nil {
@@ -254,7 +335,56 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 		}
 		result.Commits = append(result.Commits, check)
 	}
+	if len(opts.Checks) > 0 {
+		result.TipChecks, err = runChecks(ctx, top, common, rev, opts)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+func runChecks(ctx context.Context, top, common, rev string, opts Options) (*TipChecks, error) {
+	base, tip, ranged := strings.Cut(rev, "..")
+	if !ranged {
+		base, tip = rev+"^", rev
+	}
+	if base == "" || tip == "" || strings.HasPrefix(tip, ".") {
+		return nil, refusal.New("named checks need a commit or BASE..TIP; pass an explicit range such as `origin/main..HEAD`")
+	}
+	resolve := func(ref string) (string, error) {
+		return git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+	}
+	var err error
+	if base, err = resolve(base); err != nil {
+		return nil, err
+	}
+	if tip, err = resolve(tip); err != nil {
+		return nil, err
+	}
+	result := &TipChecks{Base: base, Tip: tip, Checks: []CheckResult{}}
+	for _, check := range opts.Checks {
+		fmt.Fprintf(opts.Log, "git-red-check: %s: check %s\n", short(tip), check.Name)
+		out, err := runCheck(ctx, top, common, tip, check.Command, opts.Lines)
+		if err != nil {
+			return nil, fmt.Errorf("check %q: %w", check.Name, err)
+		}
+		result.Checks = append(result.Checks, CheckResult{Name: check.Name, Command: check.Command, Run: out})
+	}
+	return result, nil
+}
+
+func runCheck(ctx context.Context, top, common, tip, command string, lines int) (*Run, error) {
+	wt, err := addWorktree(top, common, tip)
+	if err != nil {
+		return nil, err
+	}
+	defer wt.remove(top)
+	out, err := run(ctx, wt.path, command, lines)
+	if err == nil && out.Exit < 0 {
+		return nil, fmt.Errorf("command terminated by a signal")
+	}
+	return out, err
 }
 
 // Worst is the verdict of the worst of checks, by the exit status each
@@ -513,7 +643,11 @@ func run(ctx context.Context, dir, command string, lines int) (*Run, error) {
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("interrupted: %w", ctx.Err())
 	}
-	r := &Run{Output: tail(out.String(), lines)}
+	output := tail(redact.Secrets(out.String()), lines)
+	if len(output) > OutputCap {
+		output = output[len(output)-OutputCap:]
+	}
+	r := &Run{Output: output}
 	var exit *exec.ExitError
 	switch {
 	case errors.As(err, &exit):

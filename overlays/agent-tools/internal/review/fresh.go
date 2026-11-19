@@ -38,6 +38,8 @@ type span struct {
 	slug                          string
 	pr                            int
 	home                          bool
+	// authorTop survives cleanup of a pull request's temporary checkout.
+	authorTop string
 	// own is whether the change is the operator's: a range of this
 	// repository, or a pull request whose author is the gh login's user.
 	own bool
@@ -210,6 +212,7 @@ type inputs struct {
 	availability                 *availability
 	r                            *span
 	goal, items, prior, redCheck string
+	tipChecks                    string
 	// adequacy is what the reviewer is told of test adequacy, beside
 	// red-check's results.
 	adequacy string
@@ -260,6 +263,7 @@ func prompt(in inputs) string {
 			redact.Secrets(s))
 	}
 	b.WriteString(in.focused)
+	b.WriteString(in.tipChecks)
 	if in.redCheck != "" {
 		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s", in.r.base, in.r.tip, redact.Secrets(in.redCheck))
 	}

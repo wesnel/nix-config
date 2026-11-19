@@ -121,8 +121,12 @@ func (r *Range) Render() ([]byte, error) {
 	w.line("** Rounds")
 	for _, rd := range r.Rounds {
 		w.line("*** " + rd.ID)
-		w.props("REVIEWER", value(rd.Reviewer, ValueCap), "MODEL", value(rd.Model, ValueCap), "AT", stamp(rd.At),
-			"RED_CHECK", rd.RedCheck)
+		props := []string{"REVIEWER", value(rd.Reviewer, ValueCap), "MODEL", value(rd.Model, ValueCap), "AT", stamp(rd.At),
+			"RED_CHECK", rd.RedCheck}
+		if rd.TipChecks != "" {
+			props = append(props, "TIP_CHECKS", rd.TipChecks)
+		}
+		w.props(props...)
 		if len(rd.Unverified) > 0 {
 			w.line("**** Unverified")
 			for _, u := range rd.Unverified {
@@ -228,6 +232,9 @@ func (r *Range) check() error {
 		}
 		if rd.RedCheck != "session" && rd.RedCheck != "absent" {
 			return fmt.Errorf("record: round %s's red-check is %q, not session or absent", rd.ID, rd.RedCheck)
+		}
+		if rd.TipChecks != "" && rd.TipChecks != "session" && rd.TipChecks != "absent" {
+			return fmt.Errorf("record: round %s's tip checks are %q, not session or absent", rd.ID, rd.TipChecks)
 		}
 	}
 	return nil

@@ -114,11 +114,13 @@ type Finding struct {
 // the session whose change is reviewed passed red-check's results, and
 // "absent" otherwise.
 type Round struct {
-	ID         string
-	Reviewer   string
-	Model      string
-	At         time.Time
-	RedCheck   string
+	ID       string
+	Reviewer string
+	Model    string
+	At       time.Time
+	RedCheck string
+	// TipChecks is session or absent for new rounds; empty in older records.
+	TipChecks  string
 	Unverified []string
 	Dropped    []string
 }

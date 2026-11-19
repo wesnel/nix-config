@@ -27,10 +27,11 @@ type typeRun struct {
 	why  string
 	// refused is whether why is a refusal of its inputs, which no other
 	// host or sub-agent would get past.
-	refused  bool
-	model    string
-	redCheck bool
-	failures []string
+	refused   bool
+	model     string
+	redCheck  bool
+	tipChecks bool
+	failures  []string
 }
 
 // numbered is the next number after the highest of prefix's IDs in ids.
@@ -74,10 +75,13 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 func appendRuns(rec *record.Range, runs []*typeRun, now time.Time, findings, rounds []string) {
 	for _, run := range runs {
 		n := numbered("R", rounds)
-		round := record.Round{ID: "R" + strconv.Itoa(n), Reviewer: run.name, Model: run.model, At: now, RedCheck: "absent"}
+		round := record.Round{ID: "R" + strconv.Itoa(n), Reviewer: run.name, Model: run.model, At: now, RedCheck: "absent", TipChecks: "absent"}
 		rounds = append(rounds, round.ID)
 		if run.redCheck {
 			round.RedCheck = "session"
+		}
+		if run.tipChecks {
+			round.TipChecks = "session"
 		}
 		findings = addRunOutput(rec, &round, run, n, findings)
 		round.Dropped = append(round.Dropped, run.failures...)
@@ -270,6 +274,7 @@ type ShowRound struct {
 	Model      string   `json:"model"`
 	At         string   `json:"at"`
 	RedCheck   string   `json:"redCheck"`
+	TipChecks  string   `json:"tipChecks"`
 	Unverified []string `json:"unverified"`
 	Dropped    []string `json:"dropped"`
 }
@@ -357,7 +362,7 @@ func showRange(path string, rec *record.Range) *ShowRange {
 		Findings: []ShowFinding{}, Rounds: []ShowRound{}, Counts: rec.Counts()}
 	for _, rd := range rec.Rounds {
 		out.Rounds = append(out.Rounds, ShowRound{Round: rd.ID, Reviewer: rd.Reviewer, Model: rd.Model, At: stamp(rd.At),
-			RedCheck: rd.RedCheck, Unverified: nonNil(rd.Unverified), Dropped: nonNil(rd.Dropped)})
+			RedCheck: rd.RedCheck, TipChecks: rd.TipChecks, Unverified: nonNil(rd.Unverified), Dropped: nonNil(rd.Dropped)})
 	}
 	for _, c := range rec.Walkthrough {
 		chunk := ShowChunk{Chunk: c.ID, Title: c.Title, Summary: c.Summary, Hunks: []ShowHunk{}}
