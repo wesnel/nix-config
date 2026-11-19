@@ -230,12 +230,19 @@ func (r *Range) check() error {
 		if err := ids.add(rd.ID); err != nil {
 			return err
 		}
-		if rd.RedCheck != "session" && rd.RedCheck != "absent" {
-			return fmt.Errorf("record: round %s's red-check is %q, not session or absent", rd.ID, rd.RedCheck)
+		if err := rd.check(); err != nil {
+			return err
 		}
-		if rd.TipChecks != "" && rd.TipChecks != "session" && rd.TipChecks != "absent" {
-			return fmt.Errorf("record: round %s's tip checks are %q, not session or absent", rd.ID, rd.TipChecks)
-		}
+	}
+	return nil
+}
+
+func (rd Round) check() error {
+	if rd.RedCheck != "session" && rd.RedCheck != "absent" {
+		return fmt.Errorf("record: round %s's red-check is %q, not session or absent", rd.ID, rd.RedCheck)
+	}
+	if rd.TipChecks != "" && rd.TipChecks != "session" && rd.TipChecks != "absent" {
+		return fmt.Errorf("record: round %s's tip checks are %q, not session or absent", rd.ID, rd.TipChecks)
 	}
 	return nil
 }

@@ -100,30 +100,12 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		}
 		return a, nil
 	}
+	if err := checkAdequacyCommits(r, file, result); err != nil {
+		return nil, err
+	}
 	bySuite := map[string]redcheck.Suite{}
 	for _, s := range suites {
 		bySuite[s.Name] = s
-	}
-	// Oldest first, and without merges, as red-check checks them.
-	out, err := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
-	if err != nil {
-		return nil, err
-	}
-	var got []string
-	for _, c := range result.Commits {
-		if c == nil {
-			return nil, refusal.New("--red-check %s has a commit that is null. Pass the file `git red-check %s..%s` "+
-				"writes on stdout", file, r.base, r.tip)
-		}
-		if why := badCommit(c, bySuite); why != "" {
-			return nil, refusal.New("--red-check %s gives commit %q %s. Pass the file `git red-check %s..%s` writes on "+
-				"stdout", file, c.Commit, why, r.base, r.tip)
-		}
-		got = append(got, c.Commit)
-	}
-	if why := mismatch(strings.Fields(out), got); why != "" {
-		return nil, refusal.New("--red-check %s is not git red-check's JSON on %s..%s: %s. Run `git red-check %s..%s` "+
-			"on this range and pass what it writes", file, r.base, r.tip, why, r.base, r.tip)
 	}
 	// Redacted before the cut, which could split a secret's shape and leave
 	// its end unrecognised.
@@ -136,6 +118,35 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		}
 	}
 	return a, nil
+}
+
+func checkAdequacyCommits(r *span, file string, result redcheck.Result) error {
+	bySuite := map[string]redcheck.Suite{}
+	for _, s := range result.Suites {
+		bySuite[s.Name] = s
+	}
+	// Oldest first, and without merges, as red-check checks them.
+	out, err := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
+	if err != nil {
+		return err
+	}
+	var got []string
+	for _, c := range result.Commits {
+		if c == nil {
+			return refusal.New("--red-check %s has a commit that is null. Pass the file `git red-check %s..%s` "+
+				"writes on stdout", file, r.base, r.tip)
+		}
+		if why := badCommit(c, bySuite); why != "" {
+			return refusal.New("--red-check %s gives commit %q %s. Pass the file `git red-check %s..%s` writes on "+
+				"stdout", file, c.Commit, why, r.base, r.tip)
+		}
+		got = append(got, c.Commit)
+	}
+	if why := mismatch(strings.Fields(out), got); why != "" {
+		return refusal.New("--red-check %s is not git red-check's JSON on %s..%s: %s. Run `git red-check %s..%s` "+
+			"on this range and pass what it writes", file, r.base, r.tip, why, r.base, r.tip)
+	}
+	return nil
 }
 
 // addVerdict records what suite's verdict on commit means for the review:
