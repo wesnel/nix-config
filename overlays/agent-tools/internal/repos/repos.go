@@ -182,7 +182,7 @@ func SettingsFile() (string, error) {
 // file SettingsFile names: empty where it does not exist. A file that is
 // a symbolic link, not a regular file, writable by anyone but its owner,
 // or not a JSON object of Settings' keys alone is refused, as is one whose
-// test suites, route rules or threat notes cannot be used.
+// test suites, named checks, route rules or threat notes cannot be used.
 func Lookup() (*Settings, error) {
 	file, err := SettingsFile()
 	if err != nil {

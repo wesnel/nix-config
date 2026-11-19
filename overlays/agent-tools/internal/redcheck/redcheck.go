@@ -260,7 +260,8 @@ func worse(verdict, than string) bool {
 	return rank[Exit(verdict)] > rank[Exit(than)]
 }
 
-// Exit is the exit status the worst of the result's verdicts calls for.
+// Exit is 3 if any named check failed, otherwise the exit status of the
+// worst test-adequacy verdict.
 func (r *Result) Exit() int {
 	if r.TipChecks != nil {
 		for _, c := range r.TipChecks.Checks {

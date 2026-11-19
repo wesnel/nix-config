@@ -50,13 +50,11 @@ func usableSettings(r *span) error {
 	return err
 }
 
-// testAdequacy reads data, git red-check's JSON on r from file, the
-// --red-check file ("" where none was given), and turns each suite of a
-// commit that passes without the rest of it into an `untested` finding. It
-// refuses JSON that does not parse, that ran other suites than the
-// repository's, that holds a verdict red-check does not give or a suite it
-// was not given, whose commits are not r's own in order, or that comes for
-// a repository without test suites, whose test files the findings need.
+// testAdequacy reads the author's red-check JSON on r from file (empty
+// where none was given). Configured named checks require complete matching
+// evidence. Suite results must match the configured suites and the range's
+// commits; each suite that passes without its commit's other changes raises
+// an untested finding.
 func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, error) {
 	settings, err := r.settings()
 	if err != nil {
