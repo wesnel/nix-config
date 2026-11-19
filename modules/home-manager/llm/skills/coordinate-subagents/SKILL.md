@@ -80,13 +80,17 @@ A review loop over a stack, which the operator starts with
 - In Claude Code and Codex, once the harness gives a sub-agent its ID, make
   it the worktree's owner, and the guard denies every other agent's edits
   there, yours included. The `plan-work` skill defines the owner identities.
-  Assign the worktree before the sub-agent starts writing:
+  Assign the worktree before the sub-agent starts writing. In Codex, call
+  `agent_plan_own` with `plan`, the coordinator's `worktree`, the assigned
+  `target_worktree`, and `agent` set to the sub-agent's ID. In Claude Code:
 
   ```sh
   agent-plan own PLAN --worktree ~/.claude/worktrees/<repo>/<branch> --agent <agent ID>
   ```
 
   Once the sub-agent has stopped, hand the worktree back to yourself:
+  in Codex, call `agent_plan_own` with the same target and `agent` set to
+  `main`; in Claude Code:
 
   ```sh
   agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent main
@@ -270,7 +274,7 @@ When a cheaper sub-agent's report fails Check every report, or review finds
 real defects, the original coordinator stops that worker and spawns a fresh
 one with its own session model. A follow-up retains the cheap model. Give
 the replacement the failed checks and existing worktree, transfer ownership
-with `agent-plan own`, and have it inspect and preserve partial work before
+with the ownership operation above, and have it inspect and preserve partial work before
 continuing.
 
 Keep briefs and reports small: a task points at files, such as the rules

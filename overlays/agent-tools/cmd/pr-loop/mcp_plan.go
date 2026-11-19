@@ -101,6 +101,9 @@ func planTools() []mcpTool {
 		}
 	}
 	return []mcpTool{
+		makeTool("own", []string{"plan"}, plan,
+			p("target_worktree", text, true, "the worktree whose owner is assigned"),
+			p("agent", text, true, "the harness agent ID, or main")),
 		makeTool("new", nil, title, flag("slug"), list("repo"), list("branch"),
 			p("target_worktrees", texts, false, "plan worktrees; defaults to the execution worktree"), list("session"),
 			flag("harness"), flag("template"), flag("workstream"), flag("parent"), part),

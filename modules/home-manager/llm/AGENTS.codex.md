@@ -33,11 +33,12 @@ use that server's preapproved `agent_plan_X` tools, dashes as underscores;
 `agent_plan_workstream_list`. Pass prose inline as `text` or `context`.
 The `worktree` field is where the command runs; `target_worktree` (or
 `target_worktrees` for `new`) names the worktree the operation records.
-Other reads remain shell commands. Ownership changes (`agent-plan own`)
-remain shell commands because they control the edit guard. Shell plan
-writes require explicit escalation. Other server tools ask before each call,
-except the named tools preapproved in a review-loop session; a declined
-one is a refusal.
+Ownership changes use `agent_plan_own`, with `target_worktree` and `agent`;
+the CLI validates and records the assignment that the edit guard enforces.
+Other reads remain shell commands. Shell plan writes require explicit
+escalation. The routine plan and operations catalogs preapprove their named
+server tools. Other tools ask before each call, including `pr_loop_open`
+and `pr_loop_link`; a declined call is a refusal.
 
 ## Referring to people
 

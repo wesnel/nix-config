@@ -11,11 +11,18 @@ import tomllib
 EXPECTED = {
     "agent_plan_" + name
     for name in (
-        "new log set unfile ask decide followup step part edit after section "
+        "own new log set unfile ask decide followup step part edit after section "
         "visual digest brag reference link postpone carry pickup sign_id workstream_new workstream_list find status "
         "waiting acknowledge audit"
     ).split()
 }
+EXPECTED.update((
+    "pr_loop_stack pr_loop_threads pr_loop_status pr_loop_ci pr_loop_logs "
+    "pr_loop_wait pr_loop_next pr_loop_sign_check pr_loop_draft pr_loop_reply "
+    "pr_loop_request pr_loop_end pr_loop_push git_delegate git_delegate_ask "
+    "git_delegate_settle git_delegate_show github_file github_pr_diff "
+    "github_pr_view github_profile"
+).split())
 
 
 def check(config):

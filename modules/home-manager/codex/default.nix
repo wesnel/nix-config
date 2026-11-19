@@ -646,13 +646,13 @@ in {
     # starts it as a process of its own, outside that sandbox, with only
     # its core environment (HOME, PATH, TMPDIR and the like) and the
     # variables env_vars names, a review loop's, which pr-loop holds its
-    # writes to. Named routine plan tools are preapproved; review-loop
-    # preapproves its own tools for its session. Other calls prompt. A
+    # writes to. The routine plan and operations catalogs are preapproved.
+    # Other calls prompt, including opening and linking pull requests. A
     # PermissionRequest hook cannot answer those prompts.
     # tool_timeout_sec covers a git delegate run of several reviewers.
     # Merged into the config.toml Codex writes, the entry replaced whole.
     (let
-      planApprovals = genAttrs config.wgn.home.llm.agentTools.routinePlanTools (_: {approval_mode = "approve";});
+      routineApprovals = genAttrs (config.wgn.home.llm.agentTools.routinePlanTools ++ config.wgn.home.llm.agentTools.routineOpsTools) (_: {approval_mode = "approve";});
       opsServer = {
         command = getExe' config.wgn.home.llm.agentTools "pr-loop";
         args = ["mcp"];
@@ -662,7 +662,7 @@ in {
         env = optionalAttrs cfg.gitStage {PR_LOOP_CODEX = "${codexBin}/codex";};
         env_vars = ["PR_LOOP_SESSION" "PR_LOOP_MODE"];
         default_tools_approval_mode = "prompt";
-        tools = planApprovals;
+        tools = routineApprovals;
         tool_timeout_sec = 7200;
       };
       servers = builtins.toJSON {agent_ops = opsServer;};
@@ -680,12 +680,12 @@ in {
           assertion =
             opsServer.default_tools_approval_mode
             == "prompt"
-            && opsServer.tools == planApprovals
+            && opsServer.tools == routineApprovals
             && !(hooks.hooks ? PermissionRequest)
             # hasInfix takes no string naming a store path.
             && hasInfix (unsafeDiscardStringContext (escapeShellArg servers))
             (unsafeDiscardStringContext config.home.activation.codexOpsServer.data);
-          message = "wgn.home.codex: only the routine plan tool catalog is preapproved; other agent_ops tools require prompt and no PermissionRequest hook";
+          message = "wgn.home.codex: only the routine plan and operations catalogs are preapproved; other agent_ops tools require prompt and no PermissionRequest hook";
         }
       ];
     })

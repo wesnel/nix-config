@@ -281,12 +281,12 @@ command, approved or not, so in Codex `pr-loop`'s GitHub commands and
 starts as a process of its own outside that sandbox, registered as
 `agent_ops`. Its command tools take typed arguments and run in the
 worktree their call names. Routine `agent-plan` tools use inline text and
-the CLI's plan-directory checks; Codex preapproves their explicit catalog
-in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
-(`agent-plan own`) remains an approved shell command because it changes
-the edit guard's worktree boundary. Other server tools prompt, with file inputs
-confined to the worktree. A Codex review loop preapproves its named agent_ops
-tools for that session. Shell plan writes also prompt.
+the CLI's plan-directory checks. Codex preapproves the explicit catalogs
+in `overlays/agent-tools/cmd/pr-loop/plan-tools.json` and `ops-tools.json`.
+Ownership reassignment uses `agent_plan_own`, which validates and records
+the assignment the edit guard enforces. Other server tools prompt, including
+`pr_loop_open` and `pr_loop_link`, with file inputs confined to the worktree.
+Shell plan writes also prompt.
 Its `git_stage` tool stages literal paths in a task worktree the caller
 owns without giving commands write access to the shared Git metadata: the
 guard's hook adds a one-use grant to the call, the server checks it and
@@ -821,8 +821,8 @@ listed server's inventory are denied until reviewed.
 Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
 (`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
-the routine plan-tool catalog and prompts for other calls outside a Codex
-review-loop session. For `git_stage` the guard answers `allow` with the
+the routine plan and operations catalogs and prompts for other calls.
+For `git_stage` the guard answers `allow` with the
 call's grant added, after the same ownership check as a file edit. Each
 refusal says what to do instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
