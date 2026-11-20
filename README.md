@@ -439,7 +439,12 @@ it, at that suite's test files. When the clone configures named checks,
 every reviewer requires their complete results at the exact base and tip,
 matching the configured names and commands. Completed failures are valid
 evidence. Each prompt carries the statuses and bounded, redacted logs;
-each round records `TIP_CHECKS` as `session` or `absent`. A refusal gives
+each round records `TIP_CHECKS` as `session` or `absent`. Older records
+without this property still read. Older binaries refuse records containing
+it as format drift: before rolling back, back up affected records and have
+the operator remove their `:TIP_CHECKS:` property lines. This loses only
+the named-check presence marker. Remove `checks` from the clone's settings
+before using an older settings reader. A refusal gives
 the command to regenerate the evidence in the author session. With only
 test suites configured, missing `--red-check` produces a warning. For
 someone else's pull request, the session fetches it from delegate's clone, a local read,
@@ -490,7 +495,9 @@ tracked, with the keys `setup`, `suites`, `checks`, `routes` and
 command, and `testFiles` or `inlineTestFiles` globs, or both, and may have
 a `build` command; the settings are refused at load otherwise. Each named
 check has a unique nonblank `name` and a nonblank `command`. Suite flags
-leave configured named checks in place. A flake check is a suite whose test
+leave configured named checks in place and still validate the settings;
+invalid settings, including legacy single-suite keys, must be corrected by
+the operator before running with flags. A flake check is a suite whose test
 command builds the check and whose test files are the check's own test script. For
 example, settings in the ngrok Mac's clone of this repository, where the
 `aarch64-darwin` checks build, could name the Go tests and the
