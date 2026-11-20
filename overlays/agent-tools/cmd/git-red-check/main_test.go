@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -78,5 +81,53 @@ func TestSuites(t *testing.T) {
 				t.Errorf("%+v, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestCLIConfiguredChecks(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "git-red-check")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v: %s", err, out)
+	}
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v: %s", err, out)
+		}
+	}
+	git("init", "-q")
+	git("-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "base")
+	git("-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "tip")
+	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "agents.json"), []byte(`{"checks":[{"name":"lint","command":"echo named-result; exit 7"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{{"HEAD^..HEAD"}, {"--test", "true", "--test-files", "*.test", "HEAD^..HEAD"}} {
+		cmd := exec.Command(bin, argv...)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+			t.Fatalf("want exit 3: %v, %s", err, out)
+		}
+		var got struct {
+			TipChecks struct {
+				Checks []struct {
+					Name string
+					Run  struct {
+						Exit   int
+						Output string
+					}
+				}
+			}
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.TipChecks.Checks) != 1 || got.TipChecks.Checks[0].Run.Exit != 7 || got.TipChecks.Checks[0].Run.Output != "named-result" {
+			t.Fatalf("flags bypassed checks: %s", out)
+		}
 	}
 }

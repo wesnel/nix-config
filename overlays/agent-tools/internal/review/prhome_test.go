@@ -23,6 +23,26 @@ func operatorClone(t *testing.T, r *remote, origin string) string {
 	return home
 }
 
+func TestCheckRecoveryAfterPRCleanup(t *testing.T) {
+	r := newRemote(t, nil)
+	setUpPR(t, r)
+	home := operatorClone(t, r, "")
+	write(t, filepath.Join(home, ".git", "info", "agents.json"), `{"checks":[{"name":"lint","command":"true"}]}`)
+	var log bytes.Buffer
+	sp, err := resolveSource(t.Context(), must(parseSource("o/r#7")), true, &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = testAdequacy(sp, "", nil, &log)
+	sp.release()
+	if err == nil || !strings.Contains(err.Error(), "git -C "+shellWord(home)+" red-check "+r.base+".."+r.head) || strings.Contains(err.Error(), sp.top) {
+		t.Fatalf("recovery uses removed checkout: %v", err)
+	}
+	if _, err := os.Stat(home); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A pull request reviewed from a clone of its repository is fetched into
 // that clone and reviewed in a worktree of it under the cache, so the
 // clone's agent settings apply; the clone's own checkout and branches are

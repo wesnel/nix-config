@@ -46,7 +46,8 @@ checks each non-merge commit in it against its own parent.
                      extensions, overlapping --test-files selection and
                      layouts it cannot split are refused. Build Rust tests
                      with cargo test --no-run, not cargo build
-  --fixups           check only the range's fixup!, amend! and squash! commits
+  --fixups           check suites only for fixup!, amend! and squash! commits;
+                     named checks still run once at TIP
   --lines N          lines kept from the end of each run's output (default 40)
 
 Every changed path that no suite takes as a test file, and every inline
@@ -56,8 +57,12 @@ The suites come from "suites" in the clone's agent settings,
 .git/info/agents.json in its common git directory, which the operator
 writes, and never from the repository. --test, --test-files,
 --inline-test-files and --build make one suite, named flags, in their
-place, and need --test and test file globs both. Without suites from
-either, nothing runs. A test command runs the commit's code: run it in a
+place, and need --test and test file globs both. Named checks come from
+"checks": [{"name":"lint","command":"make lint"}] in the same protected
+settings. Each runs once at resolved TIP in its own fresh checkout, even
+after another check fails. Suite flags do not override checks or bypass
+settings validation. Checks-only clones work; without suites or checks,
+nothing runs. A command runs the commit's code: run it in a
 sandbox when the commit is not trusted. Nothing is committed, signed or
 pushed, and no ref or file of the caller's worktrees changes; each
 throwaway worktree, under the git directory's red-check/, is removed
@@ -66,11 +71,16 @@ afterwards.
 Writes JSON on stdout: the suites, and each commit's verdict, the worst of
 its suites', with each suite it ran: that suite's verdict, why it falls
 short if it does, its test files, and the exit status and output of each
-run. Exit status:
+run. The optional tipChecks envelope holds resolved base and tip hashes
+and every named check's name, command, exit and output. Output is redacted
+before line trimming and capped at 16 KiB per run. An interrupted command
+or execution error produces no completed evidence. Pass the JSON with
+git delegate --red-check FILE BASE..TIP; delegate never runs checks.
+Exit status:
   0  every suite of every commit builds its tests and fails without the
-     change and passes with it (fails-as-asserted)
+     change and passes with it (fails-as-asserted), and all named checks pass
   3  a suite of a commit passes without its change (passes-without-change)
-     or fails with it (fails-with-change)
+     or fails with it (fails-with-change), or a named check exits nonzero
   4  otherwise, a commit lacks evidence: a suite's tests fail only to build
      without the change (fails-to-build-without-change), or fail without
      it with no build command to say whether they built
@@ -98,11 +108,15 @@ func main() {
 	if err := git.CheckConfig(""); err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
-	suites, err := a.suites(repos.Lookup)
+	settings, err := repos.Lookup()
 	if err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
-	opts := redcheck.Options{Suites: suites, Fixups: a.fixups, Lines: a.lines, Log: os.Stderr}
+	suites, err := a.suites(func() (*repos.Settings, error) { return settings, nil })
+	if err != nil {
+		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
+	}
+	opts := redcheck.Options{Suites: suites, Checks: settings.Checks, Fixups: a.fixups, Lines: a.lines, Log: os.Stderr}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()

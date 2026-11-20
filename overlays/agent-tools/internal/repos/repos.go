@@ -40,6 +40,9 @@ type Settings struct {
 	// which redcheck.CheckSuites must accept. git delegate never runs them,
 	// since they run the reviewed commits' code.
 	Suites []redcheck.Suite `json:"suites,omitempty"`
+	// Checks run once at TIP in the author's red-check invocation. Delegate
+	// requires their results and never executes their commands.
+	Checks []redcheck.NamedCheck `json:"checks,omitempty"`
 	// Routes are rules that route this repository's changes to focused
 	// reviews beside the built-in ones, which they only add to. One that
 	// fails routes.Rule.Check makes the lookup refuse.
@@ -179,7 +182,7 @@ func SettingsFile() (string, error) {
 // file SettingsFile names: empty where it does not exist. A file that is
 // a symbolic link, not a regular file, writable by anyone but its owner,
 // or not a JSON object of Settings' keys alone is refused, as is one whose
-// test suites, route rules or threat notes cannot be used.
+// test suites, named checks, route rules or threat notes cannot be used.
 func Lookup() (*Settings, error) {
 	file, err := SettingsFile()
 	if err != nil {
@@ -205,13 +208,16 @@ func Lookup() (*Settings, error) {
 				"they held before they held a list; ask the operator to replace those keys with %s, NAME a name for the "+
 				"suite%s", file, suites, also)
 		}
-		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, suites, routes and "+
+		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, suites, checks, routes and "+
 			"threatNotes (%v); ask the operator to fix them", file, err)
 	}
 	if len(s.Suites) > 0 {
 		if err := redcheck.CheckSuites(s.Suites); err != nil {
 			return nil, refusal.New("the test suites in %s: %v; ask the operator to fix them", file, err)
 		}
+	}
+	if err := redcheck.CheckNamed(s.Checks); err != nil {
+		return nil, refusal.New("the checks in %s: %v; ask the operator to fix them", file, err)
 	}
 	for _, r := range s.Routes {
 		if err := r.Check(); err != nil {

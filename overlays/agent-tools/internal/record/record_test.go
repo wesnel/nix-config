@@ -25,6 +25,38 @@ const (
 
 var at = time.Date(2026, 10, 20, 14, 5, 0, 0, time.UTC)
 
+func TestTipCheckRecord(t *testing.T) {
+	legacy, err := fixtureRange().Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"", "session", "absent", "passed"} {
+		t.Run(state, func(t *testing.T) {
+			data := legacy
+			if state != "" {
+				data = []byte(strings.Replace(string(legacy), ":RED_CHECK: session", ":RED_CHECK: session\n:TIP_CHECKS: "+state, 1))
+			}
+			r, err := ParseRange(data)
+			if state == "passed" {
+				if err == nil {
+					t.Fatal("invalid evidence state accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := r.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state != "" && !strings.Contains(string(out), ":TIP_CHECKS: "+state) {
+				t.Fatalf("lost evidence presence: %s", out)
+			}
+		})
+	}
+}
+
 // fixtureRange is a range reviewed for a pull request, with every kind of
 // section and outcome. EC's review-guide tests read its golden file.
 func fixtureRange() *Range {

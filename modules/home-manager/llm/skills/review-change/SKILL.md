@@ -144,7 +144,7 @@ starts, such as `origin/main` or the parent branch in a stack.
    from its merge base with the default branch, wrong for a stacked
    branch), `/review` against BASE in Codex, or a fresh read-only
    `adversarial-reviewer` given the goal and range as alternatives, not
-   additional passes. Where the clone's settings have test suites, run
+   additional passes. Where the clone's settings have test suites or named checks, run
    `git -C WORKTREE red-check BASE..TIP > FILE`, FILE being
    `WORKTREE/red-check.json`, or `red-check.json` in the directory
    `echo $TMPDIR` prints where WORKTREE is not one the sandbox can write (a
@@ -152,10 +152,15 @@ starts, such as `origin/main` or the parent branch in a stack.
    absolute path in every command that names it, and never as `$TMPDIR`
    in delegate's line: delegate runs outside the sandbox, where `$TMPDIR`
    is another directory. Every file you pass delegate goes the same way.
-   Then run
+   Named checks run once at TIP independently of test suites; a completed
+   failure is evidence to read, while an interruption or execution error
+   needs another run. Delegate requires every configured check's complete
+   results at the exact range and configured commands, and never runs
+   checks itself. Then run
    `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check FILE] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
-   from any worktree of the repository. Remove FILE after it.
+   from any worktree of the repository. Keep FILE through focused reviews
+   and fallback prompts for this range, then remove it.
    It runs one general review, as Harness choice says, reports focused
    review candidates, and keeps findings in the range's review record.
    Select focused reviews as Review selection says. It exits 0 with
@@ -189,7 +194,10 @@ starts, such as `origin/main` or the parent branch in a stack.
 ## Focused reviews
 
 Run a selected focused review with
-`git delegate --reviewer ROUTE --plan PLAN --items ITEMS BASE..TIP`.
+`git delegate --reviewer ROUTE --plan PLAN --items ITEMS [--red-check FILE] BASE..TIP`.
+Pass the same evidence file used for the general review; each reviewer
+receives the named check statuses and bounded redacted logs. A changed
+range or command configuration needs fresh evidence.
 `security` reviews what the change lets someone do;
 `compat` reviews what outlives the commit (stored state, flags, output
 others parse, config keys and options, what another host or branch reads),
@@ -277,7 +285,8 @@ in pr-review.
   operator reports recovery and you run
   `git delegate availability --clear claude` (or `codex`).
 - Each review in `notRun` (exit 4): run `git delegate --print-prompt
-  --reviewer TYPE` with the same plan, range and files, and give what it
+  --reviewer TYPE` with the same plan, range and files, including
+  `--red-check FILE` for configured checks, and give what it
   prints to a new read-only sub-agent of the agent type stderr names, with
   none of your own reasoning; for `git delegate ask`, add `--print-prompt`
   to the same command. A diagram's prompt holds a drawing task and a

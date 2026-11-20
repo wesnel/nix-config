@@ -435,10 +435,19 @@ file under the working directory. delegate refuses JSON whose commits are
 not the range's, or that ran other test suites than the repository's,
 records the round's red-check as the session's, and raises an `untested`
 finding of its own, `RC-…`, for each suite of a commit that passes without
-it, at that suite's test files. Where the repository has test suites and
-no `--red-check` is given, it
-says on stderr that the review has no red-check results. For someone else's
-pull request, the session fetches it from delegate's clone, a local read,
+it, at that suite's test files. When the clone configures named checks,
+every reviewer requires their complete results at the exact base and tip,
+matching the configured names and commands. Completed failures are valid
+evidence. Each prompt carries the statuses and bounded, redacted logs;
+each round records `TIP_CHECKS` as `session` or `absent`. Older records
+without this property still read. Older binaries refuse records containing
+it as format drift: before rolling back, back up affected records and have
+the operator remove their `:TIP_CHECKS:` property lines. This loses only
+the named-check presence marker. Remove `checks` from the clone's settings
+before using an older settings reader. A refusal gives
+the command to regenerate the evidence in the author session. With only
+test suites configured, missing `--red-check` produces a warning. For
+someone else's pull request, the session fetches it from delegate's clone, a local read,
 and runs red-check on it there.
 
 ### `git red-check`
@@ -468,16 +477,28 @@ say whether they built. So a suite needs a build command for a commit to
 exit 0. See `git red-check -h` (git turns `--help` into a manual-page
 lookup).
 
+Named checks run once at TIP, each in a fresh throwaway checkout, even
+with `--fixups` or without test suites. They run with `sh` from the checkout
+root, so each command must prepare its own prerequisites. Every command
+runs after a completed failure; any failing named check gives exit 3.
+An interruption or execution error gives no complete evidence. The JSON's
+`tipChecks` holds resolved base and tip commits and each name, command,
+exit status and output. Output is redacted before its line and byte caps.
+
 The suites come from `suites` in the clone's agent settings, never from the
 repository; `--test`, `--test-files`, `--inline-test-files` and `--build`
 make one suite, named `flags`, in their place. The settings are a JSON
 object in `.git/info/agents.json` under the clone's common git directory
 (`git rev-parse --git-common-dir`), shared by all its worktrees and never
-tracked, with the keys `setup`, `suites`, `routes` and `threatNotes` that
-`internal/repos` describes. Each suite has a `name` of its own, a `test`
+tracked, with the keys `setup`, `suites`, `checks`, `routes` and
+`threatNotes` that `internal/repos` describes. Each suite has a `name` of its own, a `test`
 command, and `testFiles` or `inlineTestFiles` globs, or both, and may have
-a `build` command; the settings are refused at load otherwise. A flake check is a suite whose test command
-builds the check and whose test files are the check's own test script. For
+a `build` command; the settings are refused at load otherwise. Each named
+check has a unique nonblank `name` and a nonblank `command`. Suite flags
+leave configured named checks in place and still validate the settings;
+invalid settings, including legacy single-suite keys, must be corrected by
+the operator before running with flags. A flake check is a suite whose test
+command builds the check and whose test files are the check's own test script. For
 example, settings in the ngrok Mac's clone of this repository, where the
 `aarch64-darwin` checks build, could name the Go tests and the
 `agent-plan-sync` check:
@@ -497,6 +518,9 @@ example, settings in the ngrok Mac's clone of this repository, where the
       "build": "nix eval --raw .#checks.aarch64-darwin.agent-plan-sync.drvPath",
       "testFiles": ["modules/home-manager/llm/plan-activation-tests.sh"]
     }
+  ],
+  "checks": [
+    {"name": "vet", "command": "cd overlays/agent-tools && go vet ./..."}
   ]
 }
 ```
@@ -504,8 +528,8 @@ example, settings in the ngrok Mac's clone of this repository, where the
 The flake suite's build command evaluates the check without building it,
 which tells a flake that fails to evaluate from a test that fails. The
 operator writes the file; the guard refuses every agent's write, and a
-clone without it has no suites, so `git red-check` there runs nothing
-until given flags. A test command runs the commit's code, so run it in a
+clone without it has no suites or named checks, so `git red-check` there
+runs nothing until given flags. A test command runs the commit's code, so run it in a
 sandbox when the commit is not trusted.
 
 A suite's `testFiles` hold only tests, and red-check copies each whole.
