@@ -439,6 +439,7 @@ in {
         ++ optional ngrokAi config.sops.secrets.ngrok-ai-key.path
         # The managed Lima VM's home: its SSH key and the broker CA's key.
         ++ optional proxy.limaDev.enable proxy.limaDev.home
+        ++ optional proxy.limaDebug.enable proxy.limaDebug.home
         # sops-nix decrypts into the per-user temporary directory on macOS
         # and /run/user on Linux; ~/.config/sops-nix/secrets links there.
         # The sandbox matches the path a link resolves to, and denying the
@@ -878,7 +879,7 @@ in {
           plan-mirrors = ./skills/plan-mirrors/SKILL.md;
           questions = ./skills/questions/SKILL.md;
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
-          diagnose-failure = ./skills/diagnose-failure/SKILL.md;
+          diagnose-failure = ./skills/diagnose-failure;
           retro = ./skills/retro/SKILL.md;
           brag = ./skills/brag/SKILL.md;
           # A directory, so the agent reading it can read the templates

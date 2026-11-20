@@ -13,7 +13,10 @@ with lib; let
 
   toolFilter = id: {
     mode = "allow";
-    list = pkgs.agent-tools.mcpTools.${id}.reads ++ pkgs.agent-tools.mcpTools.${id}.confirms;
+    list =
+      pkgs.agent-tools.mcpTools.${id}.reads
+      ++ pkgs.agent-tools.mcpTools.${id}.confirms
+      ++ (pkgs.agent-tools.mcpTools.${id}.preapprovedWrites or []);
   };
 
   # Remote servers are reached with short-lived OAuth tokens that the proxy
@@ -68,6 +71,15 @@ with lib; let
         args = optionals cfg.limaDev.enable ["--config" "${cfg.limaDev.configFile}"];
         timeout = "6m";
         options.toolFilter = toolFilter "lima";
+      };
+    }
+    // optionalAttrs cfg.limaDebug.enable {
+      debug = {
+        transportType = "stdio";
+        command = getExe' config.wgn.home.llm.agentTools "lima-mcp";
+        args = ["--config" "${cfg.limaDebug.configFile}"];
+        timeout = "6m";
+        options.toolFilter = toolFilter "debug";
       };
     };
 
@@ -155,7 +167,7 @@ with lib; let
     '';
   };
 in {
-  imports = [./lima-dev.nix];
+  imports = [(import ./lima-dev.nix {}) (import ./lima-dev.nix {debug = true;})];
 
   options.wgn.home.mcp-proxy = {
     enable = mkEnableOption ''

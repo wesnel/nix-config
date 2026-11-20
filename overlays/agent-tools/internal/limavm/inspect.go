@@ -143,7 +143,7 @@ func CheckTemplate(c *Config) (string, error) {
 		return "", err
 	}
 	if err != nil || !bytes.Equal(have, want) {
-		return fmt.Sprintf("instance %s was not made from the current template %s: the operator deletes it with `lima-dev delete %s`, and the next start makes it again", c.Instance, c.Template, c.Instance), nil
+		return fmt.Sprintf("instance %s in Lima home %s was not made from the current template %s: the operator deletes this instance with that profile's wrapper, and the next start makes it again", c.Instance, c.LimaHome, c.Template), nil
 	}
 	return "", nil
 }

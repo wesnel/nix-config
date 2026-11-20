@@ -51,6 +51,7 @@
           parallels = true;
           lima = true;
           limaDev.enable = true;
+          limaDebug.enable = true;
         };
 
         otel-collector.enable = true;

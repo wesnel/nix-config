@@ -1052,6 +1052,31 @@
           touch $out
         '';
 
+      checks.${darwinOnly "lima-debug-template"} = let
+        hm = self.darwinConfigurations.ngrok.config.home-manager.users.wgn;
+        guest = hm.wgn.home.mcp-proxy.limaDebug;
+        overlapping =
+          (self.darwinConfigurations.ngrok.extendModules {
+            modules = [{home-manager.users.wgn.wgn.home.mcp-proxy.limaDebug.home = hm.wgn.home.mcp-proxy.limaDev.home;}];
+          }).config.home-manager.users.wgn;
+        isolationChecks = map (a: a.assertion) (builtins.filter
+          (a: a.message == "wgn.home.mcp-proxy.limaDebug requires its own Lima home and outbox, separate from limaDev")
+          overlapping.assertions);
+      in
+        assert pkgs.lib.assertMsg (isolationChecks == [false]) "A debugging guest sharing the development Lima home must fail evaluation";
+          pkgs.runCommand "lima-debug-template" {
+            nativeBuildInputs = [pkgs.python3 pkgs.bash];
+            template = guest.template;
+            templateJSON = builtins.toJSON guest.template.value;
+            configJSON = guest.configFile.text;
+            passAsFile = ["templateJSON" "configJSON"];
+            limactl = pkgs.lib.getExe' self.darwinConfigurations.ngrok.pkgs.lima "limactl";
+          } ''
+            python ${./modules/home-manager/mcp-proxy/lima-debug-tests.py} "$templateJSONPath" "$configJSONPath"
+            HOME="$TMPDIR" "$limactl" validate "$template"
+            touch $out
+          '';
+
       # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
       # its plist when kickstart finds it loaded in no domain; a failed load
       # fails it.
@@ -1610,7 +1635,10 @@
                 | select(. as $t | $s.permissions.allow | index([$t]) == null) | "read not allowed: \(.)"),
               ((.confirms // [])[] | "mcp__\($server)__\(.)"
                 | (select(. as $t | $s.permissions.ask | index([$t]) == null) | "confirm not asked: \(.)"),
-                  (select(. as $t | $s.permissions.allow | index([$t]) != null) | "confirm allowed: \(.)"))'
+                  (select(. as $t | $s.permissions.allow | index([$t]) != null) | "confirm allowed: \(.)")),
+              ((.preapprovedWrites // [])[] | "mcp__\($server)__\(.)"
+                | (select(. as $t | $s.permissions.allow | index([$t]) == null) | "preapproved write not allowed: \(.)"),
+                  (select(. as $t | $s.permissions.ask | index([$t]) != null) | "preapproved write asks: \(.)"))'
           # A deny rule covers an allow rule its pattern matches, with `*`
           # any text; one with no parentheses covers its whole tool, or
           # every tool of its MCP server.

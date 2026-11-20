@@ -2,9 +2,24 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestCancelledJobError(t *testing.T) {
+	js := newJobs(t.Context())
+	j := js.start(time.Hour, func(ctx context.Context, _ string) (string, bool, *int, error) {
+		<-ctx.Done()
+		return "", false, nil, fmt.Errorf("%w; guest cleanup failed", ctx.Err())
+	})
+	j.cancel()
+	<-j.done
+	if j.status != "cancelled" || !strings.Contains(j.err, "guest cleanup failed") {
+		t.Fatalf("cancelled status %q error %q", j.status, j.err)
+	}
+}
 
 func TestJobEviction(t *testing.T) {
 	js := newJobs(t.Context())

@@ -198,7 +198,7 @@ func TestMCPListsMatchServer(t *testing.T) {
 				offered[tool.Name] = true
 			}
 			listed := map[string]bool{}
-			for _, names := range [][]string{l.Reads, l.Confirms, l.Refuses} {
+			for _, names := range [][]string{l.Reads, l.Confirms, l.PreapprovedWrites, l.Refuses} {
 				for _, name := range names {
 					listed[name] = true
 					if !offered[name] {
@@ -215,12 +215,12 @@ func TestMCPListsMatchServer(t *testing.T) {
 	}
 }
 
-// mcpLists is each service's three lists as mcp.json writes them, refuses
+// mcpLists is each service's lists as mcp.json writes them, refuses
 // included, which the guard does not read: a refused tool is refused as
 // any tool in neither of the others is.
-func mcpLists(t *testing.T) map[string]struct{ Reads, Confirms, Refuses []string } {
+func mcpLists(t *testing.T) map[string]struct{ Reads, Confirms, PreapprovedWrites, Refuses []string } {
 	t.Helper()
-	var lists map[string]struct{ Reads, Confirms, Refuses []string }
+	var lists map[string]struct{ Reads, Confirms, PreapprovedWrites, Refuses []string }
 	if err := json.Unmarshal(mcpJSON, &lists); err != nil {
 		t.Fatal(err)
 	}
@@ -267,12 +267,12 @@ func TestLinearRefuses(t *testing.T) {
 }
 
 // TestMCPListsDisjoint holds every listed server to tools that are in at
-// most one of reads, confirms and refuses, and to lists mcp-proxy can use:
+// most one approval class, and to lists mcp-proxy can use:
 // an empty allow list there exposes every tool.
 func TestMCPListsDisjoint(t *testing.T) {
 	for id, l := range mcpLists(t) {
 		in := map[string]string{}
-		for list, names := range map[string][]string{"reads": l.Reads, "confirms": l.Confirms, "refuses": l.Refuses} {
+		for list, names := range map[string][]string{"reads": l.Reads, "confirms": l.Confirms, "preapprovedWrites": l.PreapprovedWrites, "refuses": l.Refuses} {
 			for _, name := range names {
 				if other, ok := in[name]; ok {
 					t.Errorf("%s: %s is in both %s and %s", id, name, other, list)
@@ -332,6 +332,7 @@ func TestMCPLookalike(t *testing.T) {
 		{"ngrok", "mcp__ngrok-dev__list_endpoints", "mcp__ngrok__", false},
 		{"parallels", "mcp__parallels-direct__parallels_vm_info", "mcp__parallels__", false},
 		{"lima", "mcp__lima-direct__lima_list", "mcp__lima__", false},
+		{"debug", "mcp__debug-direct__lima_dev_status", "mcp__debug__", false},
 	} {
 		covered[c.key] = true
 		for _, h := range []struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,34 @@ import (
 )
 
 func TestLimaDev(t *testing.T) {
+	t.Run("HTTPS only creates no private dial CA", func(t *testing.T) {
+		v := newVM(t)
+		data, err := os.ReadFile(v.configFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			t.Fatal(err)
+		}
+		delete(raw, "quic")
+		delete(raw, "shim")
+		raw["egress"].(map[string]any)["quicServers"] = []any{}
+		data, err = json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(v.configFile, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		executed := false
+		if err := devMain([]string{"--config", v.configFile, "--", "list"}, func(string, []string, []string) error { executed = true; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(v.cfg.CACert()); !executed || !os.IsNotExist(err) {
+			t.Fatalf("executed %v, CA stat %v", executed, err)
+		}
+	})
 	v := newVM(t)
 	var argv, env []string
 	execute := func(path string, a, e []string) error {

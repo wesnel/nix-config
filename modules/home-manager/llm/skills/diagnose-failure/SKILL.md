@@ -72,9 +72,14 @@ Some failures put one hypothesis first:
 
 - Each probe tests one prediction and changes one thing. Record its result
   against its hypothesis.
-- Prefer a debugger or a REPL (`dlv`, `edebug`, `nix repl`) to logging.
-  Where logging is needed, log at the boundaries that tell the hypotheses
-  apart.
+- Before adding diagnostic logging, choose an external trace, debugger or
+  REPL that can distinguish the hypotheses. Read [PROBES.md](PROBES.md)
+  for syscall failures, CPU or waiting time, native program state, and
+  privileged Linux probes in the isolated debugging guest. Record the
+  observation, or why those tools cannot expose it, before adding logs.
+  For Emacs Lisp use `edebug` in an isolated batch/test environment; for
+  Nix evaluation use `nix repl`. Where logging is needed, log at the
+  boundaries that tell the hypotheses apart.
 - Mark every temporary log line `DEBUG-` and four hex digits chosen for this
   diagnosis, so `git grep` on the marker finds them all. Nothing carrying
   the marker is committed.

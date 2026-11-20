@@ -44,7 +44,7 @@ var tools = []tool{
 	{
 		name: "lima_dev_status",
 		description: "Report the managed VM's state: absent, stopped, running-unattested, attested or mismatch. " +
-			"Attesting checks the running QEMU against the launch guard; a VM that fails is stopped. " +
+			"Inspection checks the running QEMU against the launch guard without changing the VM. " +
 			"The call fails, leaving the VM as it is, when what attestation reads cannot be read.",
 		approval: read,
 		schema:   object(nil),
@@ -102,7 +102,7 @@ var tools = []tool{
 	},
 	{
 		name: "lima_dev_import",
-		description: "Import a repository into the managed VM's configured working directory as a job. First run `lima-dev-export NAME` in the repository, " +
+		description: "Import a repository into the managed VM's configured working directory as a job. First run this endpoint's configured export wrapper with NAME in the repository, " +
 			"which writes NAME.bundle (HEAD, origin/main, the index and the worktree, untracked files included but the ignored) into the outbox. " +
 			"The import refuses a bundle whose history holds a credential's path, then makes the guest's branch work, index, worktree and untracked files the repository's. " +
 			"Changes made only in the guest are discarded: its edits, staged or not, its untracked files and its commits on work; only its ignored files stay. " +

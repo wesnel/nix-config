@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,18 @@ func holdSlots(t *testing.T, dir string, n int) {
 }
 
 func TestEgressConnect(t *testing.T) {
+	t.Run("HTTPS only refuses private dial before opening its state", func(t *testing.T) {
+		c := managedConfig(t)
+		c.QUIC = netip.AddrPort{}
+		relay, _ := guestPair(t)
+		err := runEgress(t.Context(), "quic", c, relay, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "private dial is disabled") {
+			t.Fatalf("disabled QUIC: %v", err)
+		}
+		if _, err := os.Stat(c.QUICSlots()); !os.IsNotExist(err) {
+			t.Fatalf("opened QUIC slots: %v", err)
+		}
+	})
 	for _, tc := range []struct {
 		name, host string
 		held       int

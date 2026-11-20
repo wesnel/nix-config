@@ -15,6 +15,14 @@
     "confirms": ["create_thread", "create_worktree", "fork_thread", "send_message_to_thread", "set_thread_archived", "set_thread_title"],
     "refuses": []
   },
+  "debug": {
+    "service": "Isolated Linux debugging",
+    "servers": ["debug"],
+    "verify": "The debug proxy runs lima-mcp with the separate limaDebug configuration and exposes only managed-guest tools. Preapproved writes are for baseline agents; reviewers may only inspect status and results.",
+    "reads": ["lima_dev_status", "lima_dev_job_result"],
+    "confirms": [],
+    "preapprovedWrites": ["lima_dev_start", "lima_dev_stop", "lima_dev_exec_start", "lima_dev_import", "lima_dev_job_cancel"]
+  },
   "lima": {
     "service": "Lima",
     "servers": ["lima"],

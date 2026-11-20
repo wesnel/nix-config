@@ -39,7 +39,7 @@ type GuardConfig struct {
 	// component, that QEMU and its relays may not read.
 	DeniedReads []string
 	// Connect and QUIC are the guest addresses QEMU forwards to the
-	// CONNECT relay and the QUIC broker.
+	// CONNECT relay and the QUIC broker. An invalid QUIC disables private dial.
 	Connect, QUIC netip.AddrPort
 }
 
@@ -162,11 +162,13 @@ func (r rawGuard) parse(what string) (GuardConfig, error) {
 	if g.Connect, err = guestAddr(what, "connect", r.Connect); err != nil {
 		return g, err
 	}
-	if g.QUIC, err = guestAddr(what, "quic", r.QUIC); err != nil {
-		return g, err
-	}
-	if g.QUIC.Addr() == g.Connect.Addr() {
-		return g, fmt.Errorf("%s: quic and connect share an address", what)
+	if r.QUIC != "" {
+		if g.QUIC, err = guestAddr(what, "quic", r.QUIC); err != nil {
+			return g, err
+		}
+		if g.QUIC.Addr() == g.Connect.Addr() {
+			return g, fmt.Errorf("%s: quic and connect share an address", what)
+		}
 	}
 	return g, nil
 }
@@ -220,7 +222,7 @@ func ParseConfig(data []byte) (*Config, error) {
 		Template: raw.Template, Shim: raw.Shim, Git: raw.Git, Outbox: raw.Outbox, EgressJSON: raw.Egress,
 	}
 	if err := checkPaths("lima config", [2]string{"limactl", c.Limactl}, [2]string{"guard", c.Guard},
-		[2]string{"limaMcp", c.LimaMCP}, [2]string{"template", c.Template}, [2]string{"shim", c.Shim},
+		[2]string{"limaMcp", c.LimaMCP}, [2]string{"template", c.Template},
 		[2]string{"git", c.Git}, [2]string{"outbox", c.Outbox}); err != nil {
 		return nil, err
 	}
@@ -230,8 +232,18 @@ func ParseConfig(data []byte) (*Config, error) {
 	if c.Egress, err = limaegress.ParsePolicy(raw.Egress); err != nil {
 		return nil, fmt.Errorf("lima config: egress: %w", err)
 	}
-	if c.QUICServers = c.Egress.QUICServers(); len(c.QUICServers) == 0 {
-		return nil, errors.New("lima config: egress quicServers is empty")
+	c.QUICServers = c.Egress.QUICServers()
+	if !c.QUIC.IsValid() {
+		if c.Shim != "" || len(c.QUICServers) != 0 || len(raw.PrivateDialEndpoints) != 0 {
+			return nil, errors.New("lima config: disabled private dial requires no shim, quicServers or privateDialEndpoints")
+		}
+		return c, nil
+	}
+	if err := checkPaths("lima config", [2]string{"shim", c.Shim}); err != nil {
+		return nil, err
+	}
+	if len(c.QUICServers) == 0 {
+		return nil, errors.New("lima config: enabled private dial requires egress quicServers")
 	}
 	for _, s := range raw.PrivateDialEndpoints {
 		e, err := limaegress.ParseEndpoint(s)

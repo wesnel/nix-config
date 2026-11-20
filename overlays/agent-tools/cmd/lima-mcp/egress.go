@@ -92,6 +92,9 @@ func runEgress(ctx context.Context, mode string, c *limavm.Config, guest net.Con
 		}
 		return relay.Serve(ctx, stream)
 	case "quic":
+		if !c.QUIC.IsValid() {
+			return errors.New("private dial is disabled")
+		}
 		release, err := limaegress.FlockSlots{Dir: c.QUICSlots(), N: quicSlots}.Acquire()
 		if err != nil {
 			return err
