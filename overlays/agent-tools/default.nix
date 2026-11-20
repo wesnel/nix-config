@@ -87,6 +87,7 @@
     # about (confirms), per service, for mcp-proxy's tool filters.
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
     passthru.routinePlanTools = builtins.fromJSON (builtins.readFile ./cmd/pr-loop/plan-tools.json);
+    passthru.routineOpsTools = builtins.fromJSON (builtins.readFile ./cmd/pr-loop/ops-tools.json);
 
     # The managed Lima VM's guest UDP shim, for its linux/arm64 guest.
     passthru.guestShim = guestShim;

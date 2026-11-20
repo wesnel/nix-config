@@ -15,6 +15,34 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
+func TestRoutineOpsCatalog(t *testing.T) {
+	data, err := os.ReadFile("ops-tools.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	if err := json.Unmarshal(data, &names); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] || !slices.ContainsFunc(mcpTools, func(tool mcpTool) bool { return tool.name == name }) {
+			t.Errorf("duplicate or unregistered routine operation: %s", name)
+		}
+		seen[name] = true
+	}
+	for _, name := range []string{"pr_loop_open", "pr_loop_link", "git_stage"} {
+		if seen[name] {
+			t.Errorf("operation requiring approval in routine catalog: %s", name)
+		}
+	}
+	for _, tool := range mcpTools {
+		if strings.HasPrefix(tool.name, "github_") && !seen[tool.name] {
+			t.Errorf("GitHub read missing from routine catalog: %s", tool.name)
+		}
+	}
+}
+
 func TestMCPPlan(t *testing.T) {
 	bin := t.TempDir()
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin+string(filepath.Separator), ".", "../agent-plan")
@@ -93,6 +121,37 @@ func TestMCPPlan(t *testing.T) {
 		}
 		return strings.TrimSpace(string(got))
 	}
+	t.Run("ownership round trip", func(t *testing.T) {
+		target, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, agent := range []string{"builder-1", "main", "main"} {
+			owners := call(t, "own", map[string]any{"target_worktree": target, "agent": agent})
+			data, err := os.ReadFile(f.plan)
+			if err != nil || owners[target] != agent || !strings.Contains(string(data), ":OWNERS: "+target+"="+agent+"\n") {
+				t.Fatalf("ownership: %v, %v\n%s", owners, err, data)
+			}
+		}
+		before, err := os.ReadFile(f.plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range []map[string]any{
+			{"target_worktree": "relative", "agent": "main"},
+			{"target_worktree": target, "agent": "bad agent"},
+		} {
+			args["worktree"], args["plan"] = f.repo, f.plan
+			r := c.tool(t, "agent_plan_own", args)
+			if !r.isError || !strings.Contains(r.text, "exit 2") {
+				t.Fatalf("ownership refusal: %s", r.text)
+			}
+			after, err := os.ReadFile(f.plan)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("refused ownership changed plan: %v", err)
+			}
+		}
+	})
 	t.Run("section round trip", func(t *testing.T) {
 		goal := "- Keep literal prose.\nA second line with `code` and $(literal).\nBuilds on: the section tool.\nLikely next changes: none."
 		r := c.tool(t, "agent_plan_section", map[string]any{"worktree": f.repo, "plan": f.plan, "section": "Goal", "text": goal})
@@ -243,7 +302,7 @@ func TestMCPPlan(t *testing.T) {
 			says string
 		}{
 			{"sync", nil, "no tool"}, {"reseal", nil, "no tool"}, {"init", nil, "no tool"},
-			{"own", map[string]any{"target_worktree": f.repo, "agent": "worker-1"}, "no tool"},
+			{"own", map[string]any{"target_worktree": f.repo}, "agent"},
 			{"set", map[string]any{"property": "OWNERS", "values": []string{f.repo + "=worker-1"}}, "takes one of"},
 			{"unfile", map[string]any{"property": "OWNERS", "value": f.repo + "=main", "reason": "Reassign"}, "takes one of"},
 			{"section", map[string]any{"section": "Goal", "text": "x", "text_file": f.plan}, "text_file"},

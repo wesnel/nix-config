@@ -8,32 +8,6 @@
   lib,
   pkgs,
 }: let
-  loopTools = [
-    "pr_loop_ci"
-    "pr_loop_draft"
-    "pr_loop_end"
-    "pr_loop_link"
-    "pr_loop_logs"
-    "pr_loop_next"
-    "pr_loop_open"
-    "pr_loop_push"
-    "pr_loop_reply"
-    "pr_loop_request"
-    "pr_loop_sign_check"
-    "pr_loop_stack"
-    "pr_loop_status"
-    "pr_loop_threads"
-    "pr_loop_wait"
-    "git_delegate"
-    "git_delegate_ask"
-    "git_delegate_settle"
-    "git_delegate_show"
-    "github_file"
-    "github_pr_diff"
-    "github_pr_view"
-    "github_profile"
-  ];
-  approvalArgs = lib.concatMapStringsSep " " (tool: "-c ${lib.escapeShellArg "mcp_servers.agent_ops.tools.${tool}.approval_mode=\"approve\""}") loopTools;
   # "$defaults" is literal: Claude Code splices its own auto-mode rules in
   # there.
   claudeSettings = builtins.toJSON {
@@ -88,7 +62,6 @@
           exec codex --no-daemon \
             -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
             -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"" \
-            ${approvalArgs} \
             "\$review-loop Run the operator's $mode-mode review loop on these pull requests: $*"
           ;;
       esac
@@ -128,12 +101,6 @@
         expected=$(printf '%s\n' 1 "$mode" --no-daemon \
           -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
           -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")
-        for tool in pr_loop_ci pr_loop_draft pr_loop_end pr_loop_link pr_loop_logs pr_loop_next \
-          pr_loop_open pr_loop_push pr_loop_reply pr_loop_request pr_loop_sign_check pr_loop_stack \
-          pr_loop_status pr_loop_threads pr_loop_wait git_delegate git_delegate_ask git_delegate_settle \
-          git_delegate_show github_file github_pr_diff github_pr_view github_profile; do
-          expected+=$(printf '\n%s\n%s' -c "mcp_servers.agent_ops.tools.$tool.approval_mode=\"approve\"")
-        done
         expected+=$(printf '\n%s' "\$review-loop Run the operator's $mode-mode review loop on these pull requests: 12 #13")
         [[ "$out_" == "$expected" ]] || { echo "Codex launcher arguments differ" >&2; exit 1; }
         [[ ! -s err ]] || { cat err >&2; exit 1; }

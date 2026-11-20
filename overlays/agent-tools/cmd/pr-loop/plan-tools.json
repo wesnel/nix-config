@@ -1,5 +1,5 @@
 [
-  "agent_plan_new", "agent_plan_log", "agent_plan_set", "agent_plan_unfile",
+  "agent_plan_own", "agent_plan_new", "agent_plan_log", "agent_plan_set", "agent_plan_unfile",
   "agent_plan_ask", "agent_plan_decide", "agent_plan_followup", "agent_plan_step",
   "agent_plan_part", "agent_plan_edit", "agent_plan_after", "agent_plan_section",
   "agent_plan_visual", "agent_plan_digest", "agent_plan_brag",
