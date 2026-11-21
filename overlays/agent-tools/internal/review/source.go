@@ -27,14 +27,24 @@ var refreshThreads = loop.RefreshThreads
 // source is what a review reviews: a range of the current repository, or a
 // pull request, by its GitHub repository.
 type source struct {
-	given       string
+	given string
+	// owner and repo are the pull request's GitHub name, or, for a range,
+	// origin's, by which record.FindRange also finds a record kept under
+	// OWNER/NAME, or "" where origin is not on GitHub.
 	owner, repo string
 	// number is the pull request's, or 0 for a range.
 	number int
 	pr     *PR
 }
 
-func (s *source) slug() string { return s.owner + "/" + s.repo }
+// slug is owner/repo, or "" for a range of a repository with no GitHub
+// name.
+func (s *source) slug() string {
+	if s.owner == "" {
+		return ""
+	}
+	return s.owner + "/" + s.repo
+}
 
 var (
 	prSource  = regexp.MustCompile(`^([^/#\s]+)/([^/#\s]+)#([0-9]+)$`)
@@ -42,8 +52,8 @@ var (
 )
 
 // parseSource reads SOURCE: BASE..TIP, OWNER/NAME#N, or N for origin's
-// repository. A range's repository is origin's GitHub name, under which its
-// record is kept.
+// repository. A range needs no GitHub origin: its record is keyed by its
+// commits.
 func parseSource(given string) (*source, error) {
 	s := &source{given: given}
 	if m := prSource.FindStringSubmatch(given); m != nil {
@@ -54,10 +64,19 @@ func parseSource(given string) (*source, error) {
 		if err := s.fromOrigin(); err != nil {
 			return nil, err
 		}
+		if s.owner == "" {
+			return nil, refusal.New("a pull request's number names one of origin's GitHub repository, and this "+
+				"repository has no GitHub origin; name the pull request as OWNER/NAME#N instead, as `git delegate "+
+				"OWNER/NAME#%d`", s.number)
+		}
 	} else if strings.Contains(given, "..") {
 		if err := s.fromOrigin(); err != nil {
 			return nil, err
 		}
+		if !record.ValidName(s.owner) || !record.ValidName(s.repo) {
+			s.owner, s.repo = "", ""
+		}
+		return s, nil
 	} else {
 		return nil, refusal.New("%q is not a SOURCE; pass a range BASE..TIP, such as `origin/main..HEAD`, or a pull "+
 			"request, as OWNER/NAME#N or N", given)
@@ -72,7 +91,8 @@ func parseSource(given string) (*source, error) {
 	return s, nil
 }
 
-// fromOrigin names s's repository by the current repository's origin.
+// fromOrigin names s's repository by the current repository's origin on
+// GitHub, leaving it "" where origin is elsewhere or there is none.
 func (s *source) fromOrigin() error {
 	top, err := git.Toplevel()
 	if err != nil {
@@ -84,12 +104,7 @@ func (s *source) fromOrigin() error {
 	if err != nil {
 		return err
 	}
-	slug := remotes["origin"]
-	if slug == "" {
-		return refusal.New("a review is kept under its repository's GitHub name, from origin, and this repository has " +
-			"no GitHub origin; review it as a pull request, OWNER/NAME#N, or ask the operator to add its GitHub origin")
-	}
-	s.owner, s.repo, _ = strings.Cut(slug, "/")
+	s.owner, s.repo, _ = strings.Cut(remotes["origin"], "/")
 	return nil
 }
 
@@ -268,10 +283,14 @@ func prInputs(s *source, in *inputs, log io.Writer) error {
 
 // worktree is a checkout of r's TIP for one reviewer, under the review's
 // directory in the cache, made through the isolated environment of
-// prgit.go, with the function that removes it. A reviewer may write in its
-// checkout, so each gets one of its own.
+// prgit.go, with the function that removes it: OWNER/NAME/work for a pull
+// request, and ranges/work for a range, which needs no GitHub name. A
+// reviewer may write in its checkout, so each gets one of its own.
 func worktree(ctx context.Context, s *source, r *span) (string, func(), error) {
-	parent := filepath.Join(Root(), s.owner, s.repo, "work")
+	parent := filepath.Join(Root(), "ranges", "work")
+	if s.number != 0 {
+		parent = filepath.Join(Root(), s.owner, s.repo, "work")
+	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", nil, err
 	}

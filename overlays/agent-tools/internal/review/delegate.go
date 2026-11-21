@@ -32,10 +32,12 @@ const Usage = `usage: git delegate [--reviewer TYPE]... [--plan PLAN [--part P]]
                     [--red-check FILE] [--description FILE] SOURCE
 
 Reviews SOURCE with reviewers that did not write it, and keeps what they
-found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
-OWNER/NAME/, which git delegate show prints and settle changes. SOURCE is
-a range BASE..TIP of this repository, its record named by origin's GitHub
-repository, or a pull request: OWNER/NAME#N, or N for origin's. A pull
+found in its review record, $XDG_STATE_HOME/agent-tools/reviews/ranges/
+BASE..HEAD.org by the range's full commit IDs, which git delegate show
+prints and settle changes; a record kept under reviews/OWNER/NAME/ is read
+there, and a change to it is written under ranges/, which then wins.
+SOURCE is a range BASE..TIP of this repository, whatever its remotes, or a
+pull request: OWNER/NAME#N, or N for origin's on GitHub. A pull
 request is fetched, pinned to the head GitHub reports, with neither the
 user's nor the system's git configuration, no hook, no LFS filter and no
 submodule. Run from a clone of OWNER/NAME whose config names no program,
@@ -413,7 +415,7 @@ func reviewChange(ctx context.Context, s *source, r *span, opts reviewOptions, s
 	}
 	chosen = slices.Compact(chosen)
 
-	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
+	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
 	runs := runChosen(ctx, s, base, tests, opts, chosen, result, stderr)
 	for _, rt := range result.Routes {
@@ -428,10 +430,11 @@ func reviewChange(ctx context.Context, s *source, r *span, opts reviewOptions, s
 	} else if subject, err := git.Run("-C", r.top, "log", "-1", "--format=%s", r.tip); err == nil {
 		title = subject
 	}
-	rec, err := writeRuns(path, s, r, title, runs, time.Now())
+	rec, written, err := writeRuns(path, s, r, title, runs, time.Now())
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	result.Record = written
 	result.Counts = rec.Counts()
 	code := 0
 	switch {
@@ -472,7 +475,7 @@ func reviewInputs(s *source, r *span, opts reviewOptions, stdin io.Reader, stder
 			return base, "", nil, err
 		}
 	}
-	path, err := record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	path, err := record.FindRange(s.owner, s.repo, r.base, r.tip)
 	if err != nil {
 		return base, "", nil, err
 	}

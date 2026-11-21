@@ -106,6 +106,43 @@ func TestRecordCommit(t *testing.T) {
 		}
 	})
 
+	// The session's plan takes a commit only in a repository it names, by
+	// git common dir, in its WORKTREES: any worktree of it, the main
+	// checkout included. A commit elsewhere is unplanned work, in a plan
+	// that does not name the session, so it takes none of the session's
+	// later work.
+	t.Run("the session's plan names another repository", func(t *testing.T) {
+		c := testConfig(t)
+		main, linked := checkouts(t, 1)
+		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{linked[0]}, Sessions: []string{"s1"}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, _, err := c.RecordCommit("s1", main, Event{Commit: "Add x", Summary: "Add x"}, day); err != nil || p.File() != made.Plan {
+			t.Errorf("commit in the plan's repository went to %s, %v; want %s", p.File(), err, made.Plan)
+		}
+		other := commitRepo(t)
+		p, created, err := c.RecordCommit("s1", other, Event{Commit: "Probe", Summary: "Probe"}, day)
+		if err != nil || !created || p.File() == made.Plan {
+			t.Fatalf("commit in another repository went to %s, created %v, %v", p.File(), created, err)
+		}
+		items, _ := p.items()
+		if props := items[p.Name].Props; props["SESSIONS"] != "" || props["WORKTREES"] != other {
+			t.Errorf("unplanned plan names sessions %q, worktrees %q", props["SESSIONS"], props["WORKTREES"])
+		}
+		again, created, err := c.RecordCommit("s1", other, Event{Commit: "Probe again", Summary: "Probe again"}, day)
+		if err != nil || created || again.File() != p.File() {
+			t.Errorf("second commit there: %s, created %v, %v; want %s", again.File(), created, err, p.File())
+		}
+		if got := strings.Join(commitsOf(t, p), "\n"); got != "Probe by s1\nProbe again by s1" {
+			t.Errorf("unplanned commits %q", got)
+		}
+		planned, _ := c.Open(made.Plan)
+		if got := strings.Join(commitsOf(t, planned), "\n"); got != "Add x by s1" {
+			t.Errorf("the session's plan's commits %q", got)
+		}
+	})
+
 	// Hooks of the same session running at once make one plan between them.
 	t.Run("concurrent commits", func(t *testing.T) {
 		c := testConfig(t)

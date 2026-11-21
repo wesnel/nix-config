@@ -1,6 +1,9 @@
 package plans
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -145,7 +148,10 @@ func TestCommitAssociations(t *testing.T) {
 			t.Fatalf("intermediate revision: %+v, %v", got, err)
 		}
 	})
-	t.Run("legacy and repository boundaries", func(t *testing.T) {
+	// A commit is its object ID: a rewrite applies to it whatever label
+	// either event carries, an exact revision ignores --repo, and a label
+	// only narrows a listing.
+	t.Run("labels neither identify nor scope rewrites", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "identity")
 		a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
@@ -153,6 +159,7 @@ func TestCommitAssociations(t *testing.T) {
 			{Kind: "committed", Commit: "Same subject"},
 			{Kind: "committed", Commit: "Same subject", Repository: "o/r", Revision: a},
 			{Kind: "committed", Commit: "Same subject", Repository: "other/r", Revision: a},
+			{Kind: "committed", Commit: "Same subject", Revision: a},
 			{Kind: "commit-rewritten", Repository: "o/r", OldRevision: a, Revision: b},
 		} {
 			if _, err := p.Record("", e, day); err != nil {
@@ -160,13 +167,25 @@ func TestCommitAssociations(t *testing.T) {
 			}
 		}
 		got, err := c.Commits(CommitOptions{})
-		if err != nil || len(got) != 2 {
+		if err != nil || len(got) != 3 {
 			t.Fatalf("associations: %+v, %v", got, err)
 		}
 		for _, x := range got {
-			if x.Repository == "other/r" && x.Revision != a || x.Repository == "o/r" && x.Revision != b {
-				t.Fatalf("repository crossed: %+v", x)
+			if x.Revision != b || x.OriginalRevision != a {
+				t.Errorf("%q not resolved through the rewrite: %+v", x.Repository, x)
 			}
+		}
+		got, err = c.Commits(CommitOptions{Repository: "other/r", Revision: b})
+		if err != nil || len(got) != 3 {
+			t.Errorf("an exact revision with --repo other/r: %+v, %v; want all three", got, err)
+		}
+		got, err = c.Commits(CommitOptions{Repository: "other/r"})
+		if err != nil || len(got) != 2 || got[0].Repository != "other/r" || got[1].Repository != "" {
+			t.Errorf("listing narrowed to other/r and the unlabelled: %+v, %v", got, err)
+		}
+		resolved, err := c.ResolveCommit("", a)
+		if err != nil || resolved.Revision != b {
+			t.Errorf("resolved without a label: %+v, %v", resolved, err)
 		}
 	})
 	t.Run("invalid alias maps", func(t *testing.T) {
@@ -192,4 +211,85 @@ func TestCommitAssociations(t *testing.T) {
 			})
 		}
 	})
+}
+
+// A commit's label is origin's GitHub owner/name, else local/ and the
+// repository's directory name, made an owner/name part: an agent-plan
+// that refuses an event whose label is not an owner/name reads every
+// committed and commit-rewritten event this writes.
+func TestCommitIdentityLabel(t *testing.T) {
+	t.Parallel()
+	// ownerName is the pattern an agent-plan that needs a label holds
+	// REPOSITORY to, refusing the whole log read where one fails it.
+	ownerName := regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	for _, test := range []struct {
+		name, dir, origin, want string
+		linked, bare            bool
+	}{
+		{name: "a GitHub origin", dir: "r", origin: "git@github.com:o/r.git", want: "o/r"},
+		{name: "no remote", dir: "nix-config", want: "local/nix-config"},
+		{name: "an origin off GitHub", dir: "r", origin: "https://git.sr.ht/~o/r", want: "local/r"},
+		{name: "a directory name no owner/name holds", dir: "my repo+é", want: "local/my-repo--"},
+		// Every worktree of a repository gives its commits one label, the
+		// main checkout's, as an agent-plan that keys rewrites by label
+		// needs.
+		{name: "a linked worktree", dir: "nix-config", want: "local/nix-config", linked: true},
+		// A bare repository has no checkout: its own directory names it.
+		{name: "a bare repository", dir: "work", want: "local/store.git", bare: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			repo := filepath.Join(t.TempDir(), test.dir)
+			if err := os.Mkdir(repo, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			gitIn(t, repo, "init", "-q", "-b", "main")
+			if test.origin != "" {
+				gitIn(t, repo, "remote", "add", "origin", test.origin)
+			}
+			gitIn(t, repo, "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
+				"commit", "-q", "--allow-empty", "-m", "One")
+			if test.linked {
+				linked := filepath.Join(filepath.Dir(repo), "linked")
+				gitIn(t, repo, "worktree", "add", "-q", "-b", "linked", linked)
+				repo = linked
+			}
+			if test.bare {
+				bare := filepath.Join(filepath.Dir(repo), "store.git")
+				gitIn(t, repo, "clone", "-q", "--bare", repo, bare)
+				repo = bare
+			}
+			identity, err := CommitIdentity(repo, "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := testConfig(t)
+			p := newPlan(t, c, "label")
+			identity.Kind = "committed"
+			if _, err := p.Record("", identity, day); err != nil {
+				t.Fatal(err)
+			}
+			rewritten := strings.Repeat("b", 40)
+			if err := c.RecordRewrites("", repo, identity.Repository, map[string]string{identity.Revision: rewritten}, day); err != nil {
+				t.Fatal(err)
+			}
+			events, err := p.Events()
+			if err != nil {
+				t.Fatal(err)
+			}
+			kinds := map[string]bool{}
+			for _, e := range events {
+				if e.Revision == "" {
+					continue
+				}
+				kinds[e.Kind] = true
+				if e.Repository != test.want || !ownerName.MatchString(e.Repository) {
+					t.Errorf("%s event labelled %q; want %q, an owner/name", e.Kind, e.Repository, test.want)
+				}
+			}
+			if !kinds["committed"] || !kinds["commit-rewritten"] {
+				t.Errorf("events with a revision: %v; want committed and commit-rewritten", kinds)
+			}
+		})
+	}
 }

@@ -411,7 +411,7 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 	if list := run(t, f.repo, "git", "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
 		t.Errorf("worktrees left behind:\n%s", list)
 	}
-	for _, dir := range []string{filepath.Join(f.repo, ".git", "delegate"), filepath.Join(Root(), "o", "r", "work")} {
+	for _, dir := range []string{filepath.Join(f.repo, ".git", "delegate"), filepath.Join(Root(), "ranges", "work")} {
 		if left, _ := os.ReadDir(dir); len(left) != 0 {
 			t.Errorf("files left under %s: %v", dir, left)
 		}

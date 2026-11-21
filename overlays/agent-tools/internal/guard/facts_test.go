@@ -143,10 +143,10 @@ func testPostLinksPlans(t *testing.T) {
 // git printed nothing for it (-q) and the shell ran in another checkout,
 // reaching the worktree through git -C or cd, as an agent whose guard
 // refuses cd before most commands commits. A quiet commit that made
-// nothing logs nothing, nor logs again a commit already logged.
+// nothing logs nothing, nor logs again a commit already logged. The
+// repository has no remote: plain git is enough to find the commits.
 func testPostRecordsQuietCommits(t *testing.T) {
 	main, linked, p := planned(t)
-	gitOut(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
 	// s2 is a session no plan names, so the worktree alone finds the part.
 	post := func(command, stdout string) {
 		t.Helper()
@@ -346,6 +346,37 @@ func testPostSkipsScratchRepos(t *testing.T) {
 			}
 		})
 	}
+	// Nor is a commit there filed anywhere: not in the session's plan, nor
+	// in a plan made for it. The same commit outside scratch is logged.
+	t.Run("commit", func(t *testing.T) {
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, _, _ := c.Plans()
+		if out := postHook(t, claudeEvent("s1", probe, "git commit --allow-empty -m 'Probe'",
+			gitOut(t, probe, "commit", "--allow-empty", "-m", "Probe"))); out != "" {
+			t.Errorf("printed %s", out)
+		}
+		after, _, _ := c.Plans()
+		if len(after) != len(before) {
+			t.Errorf("%d plans after the commit, %d before", len(after), len(before))
+		}
+		if out := postHook(t, claudeEvent("s1", main, "git commit --allow-empty -m 'Kept'",
+			gitOut(t, main, "commit", "--allow-empty", "-m", "Kept"))); !strings.Contains(out, "is logged in") {
+			t.Errorf("a commit outside scratch: %s", out)
+		}
+		events, _ := p.Events()
+		var got []string
+		for _, e := range events {
+			if e.Kind == "committed" {
+				got = append(got, e.Commit)
+			}
+		}
+		if strings.Join(got, ",") != "Kept" {
+			t.Errorf("committed events %q, want only Kept", got)
+		}
+	})
 }
 
 // A worktree of a repository outside scratch is the plan's wherever it

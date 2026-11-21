@@ -1,15 +1,18 @@
 // Package record keeps review records as Org files: one per reviewed range,
-// `<owner>/<repo>/<base>..<head>.org`, and one per pull request's threads,
-// `<owner>/<repo>/pr-<n>.org`, under Dir. Agents, Emacs and the Agent plans
-// page read them; only Update writes them, through the renderer, which keeps
-// every piece of text from a model, GitHub or a test run from forming Org
-// syntax Emacs would act on (see text.go).
+// `ranges/<base>..<head>.org`, and one per pull request's threads,
+// `<owner>/<repo>/pr-<n>.org`, under Dir. A range's record at
+// `<owner>/<repo>/<base>..<head>.org` is read where it is (FindRange).
+// Agents, Emacs and the Agent plans page read them; only Update and
+// UpdateRange write them, through the renderer, which keeps every piece of
+// text from a model, GitHub or a test run from forming Org syntax Emacs
+// would act on (see text.go).
 //
 // Nothing derived is stored: Counts are computed from the sections when read.
 package record
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -53,7 +56,7 @@ var Outcomes = []string{"fix", "rebut", "defer", "duplicate-of", "belongs-in", "
 // Range is the record of one reviewed range, BASE..HEAD. A rerun of the same
 // range adds a round to it.
 type Range struct {
-	Repo    string // owner/repo, GitHub's name from origin
+	Repo    string // owner/repo, GitHub's name from origin, or "" where it has none
 	Base    string // full SHA
 	Head    string // full SHA
 	PR      int    // the pull request it was reviewed for, or 0
@@ -216,15 +219,47 @@ func ValidName(s string) bool { return name.MatchString(s) }
 
 var sha = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
-// RangeFile is the record of base..head in owner/repo, both full SHAs.
-func RangeFile(owner, repo, base, head string) (string, error) {
-	if err := checkRepo(owner, repo); err != nil {
-		return "", err
-	}
+// RangesDir holds every range record written, keyed by its commits' IDs
+// alone, so a repository needs no GitHub name to have one.
+func RangesDir() string { return filepath.Join(Dir(), "ranges") }
+
+// RangeFile is where the record of base..head, both full SHAs, is
+// written: ranges/BASE..HEAD.org under Dir.
+func RangeFile(base, head string) (string, error) { return rangeFile(Dir(), base, head) }
+
+// rangeFile is RangeFile with the records kept under dir in place of Dir,
+// as are the other unexported functions taking a dir, so a test passes a
+// directory of its own.
+func rangeFile(dir, base, head string) (string, error) {
 	if !sha.MatchString(base) || !sha.MatchString(head) {
 		return "", fmt.Errorf("a range's record needs full SHAs, got %q..%q", base, head)
 	}
-	return filepath.Join(Dir(), owner, repo, base+".."+head+".org"), nil
+	return filepath.Join(dir, "ranges", base+".."+head+".org"), nil
+}
+
+// FindRange is the record of base..head to read: RangeFile's where that
+// exists, else the one at owner/repo/BASE..HEAD.org, owner/repo being
+// origin's GitHub name, where that exists, else RangeFile's. owner and
+// repo are "" for a repository with no GitHub name. A record under
+// owner/repo is never moved; UpdateRange writes a change to one at
+// RangeFile's path.
+func FindRange(owner, repo, base, head string) (string, error) {
+	return findRange(Dir(), owner, repo, base, head)
+}
+
+func findRange(dir, owner, repo, base, head string) (string, error) {
+	path, err := rangeFile(dir, base, head)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(path); err == nil || checkRepo(owner, repo) != nil {
+		return path, nil
+	}
+	old := filepath.Join(dir, owner, repo, filepath.Base(path))
+	if _, err := os.Stat(old); err == nil {
+		return old, nil
+	}
+	return path, nil
 }
 
 // PRFile is the record of pull request n's threads in owner/repo.

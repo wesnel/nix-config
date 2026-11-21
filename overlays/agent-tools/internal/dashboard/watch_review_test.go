@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,12 +28,18 @@ func TestWatchReviews(t *testing.T) {
 		g.Mine = append([]export.PR(nil), gh.Mine...)
 		return g, nil
 	}
-	base, head := strings.Repeat("0", 40), strings.Repeat("1", 40)
-	writeRecord := func(owner, repo string, pr int, title string) func() {
+	base := strings.Repeat("0", 40)
+	// writeRecord writes a record of owner/repo's pull request pr under
+	// ranges/, or, where legacy is set, under owner/repo, where records
+	// were kept before.
+	writeRecord := func(legacy bool, owner, repo string, pr int, head, title string) func() {
 		return func() {
-			path, err := record.RangeFile(owner, repo, base, head)
+			path, err := record.RangeFile(base, head)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if legacy {
+				path = filepath.Join(record.Dir(), owner, repo, filepath.Base(path))
 			}
 			if err := record.Update(path, func(r *record.Range) error {
 				*r = record.Range{Repo: owner + "/" + repo, Base: base, Head: head, PR: pr, Title: title, Updated: now}
@@ -46,12 +53,14 @@ func TestWatchReviews(t *testing.T) {
 	for i := range steps {
 		steps[i] = nothing
 	}
-	steps[0] = func() { gh.Mine[0].RecordThreads = 3 }         // read at poll 10, records only: no line
-	steps[11] = writeRecord("o", "r", 7, "Add the loop")       // a record appears
-	steps[12] = writeRecord("o", "r", 7, "Add the loop again") // and changes
-	steps[13] = writeRecord("p", "q", 3, "Not listed")         // another's
+	steps[0] = func() { gh.Mine[0].RecordThreads = 3 } // read at poll 10, records only: no line
+	h1, h2, h3 := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("3", 40)
+	steps[11] = writeRecord(false, "o", "r", 7, h1, "Add the loop")       // a record appears
+	steps[12] = writeRecord(false, "o", "r", 7, h1, "Add the loop again") // and changes
+	steps[13] = writeRecord(false, "p", "q", 3, h2, "Not listed")         // another's
+	steps[14] = writeRecord(true, "o", "r", 7, h3, "Kept under o/r")      // one where records were kept before
 	got := s.run(t, steps...)
-	want := map[int]string{10: "", 12: LineRecord + "\n", 13: LineRecord + "\n"}
+	want := map[int]string{10: "", 12: LineRecord + "\n", 13: LineRecord + "\n", 15: LineRecord + "\n"}
 	for i, line := range got {
 		if w := want[i]; line != w {
 			t.Errorf("poll %d printed %q, want %q", i, line, w)

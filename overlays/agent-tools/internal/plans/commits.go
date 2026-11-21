@@ -2,8 +2,10 @@ package plans
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
@@ -14,15 +16,22 @@ import (
 var revisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// CommitIdentity resolves ref in top and uses its GitHub origin as a portable identity.
+// validLabel is whether repository is a commit's repository label: none,
+// or an owner/name.
+func validLabel(repository string) bool {
+	return repository == "" || repositoryPattern.MatchString(repository)
+}
+
+// CommitIdentity resolves ref in top to the commit's full object ID, which
+// is its identity, and its subject. Repository is only a label, which
+// matching ignores: origin's GitHub owner/name where it has one, else
+// localLabel's.
 func CommitIdentity(top, ref string) (Event, error) {
-	url, err := git.Run("-C", top, "remote", "get-url", "origin")
-	if err != nil {
-		return Event{}, err
-	}
-	repository := gh.Slug(url)
-	if !repositoryPattern.MatchString(repository) {
-		return Event{}, refusal.New("origin has no portable owner/name identity")
+	repository := ""
+	if url, err := git.Run("-C", top, "remote", "get-url", "origin"); err == nil && repositoryPattern.MatchString(gh.Slug(url)) {
+		repository = gh.Slug(url)
+	} else if common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		repository = localLabel(common)
 	}
 	revision, err := git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
@@ -33,6 +42,30 @@ func CommitIdentity(top, ref string) (Event, error) {
 	}
 	subject, err := git.Run("-C", top, "show", "-s", "--format=%s", revision)
 	return Event{Repository: repository, Revision: revision, Commit: subject, Worktree: top}, err
+}
+
+// labelPart is every character an owner or name of repositoryPattern takes.
+const labelPart = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+
+// localLabel labels a repository with no GitHub origin local/NAME, NAME
+// being the base name of its main checkout's top-level directory, the
+// parent of common, its git common dir, or of a bare repository, common
+// itself, with each character outside labelPart replaced by -. Every
+// worktree of a repository so gives one label, and every label is an
+// owner/name: an agent-plan that needs one refuses the whole log read at
+// an event without, and keys rewrites by it.
+func localLabel(common string) string {
+	top := common
+	if filepath.Base(common) == ".git" {
+		top = filepath.Dir(common)
+	}
+	name := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(labelPart, r) {
+			return r
+		}
+		return '-'
+	}, filepath.Base(top))
+	return "local/" + name
 }
 
 // CommitOptions selects exact associations; Item is local to Plan.
@@ -49,16 +82,18 @@ type CommitAssociation struct {
 	Subject          string `json:"subject"`
 }
 
-// CommitResolution follows aliases even when no plan associates the revision.
+// CommitResolution follows aliases even when no plan associates the
+// revision. Repository is the label asked with, if any.
 type CommitResolution struct {
 	Repository       string `json:"repository"`
 	OriginalRevision string `json:"original_revision"`
 	Revision         string `json:"revision"`
 }
 
+// ResolveCommit follows revision's rewrites; repository is only echoed.
 func (c Config) ResolveCommit(repository, revision string) (CommitResolution, error) {
-	if !repositoryPattern.MatchString(repository) || !revisionPattern.MatchString(revision) {
-		return CommitResolution{}, refusal.New("resolve-commit needs --repo owner/name and --revision FULL-OID")
+	if !validLabel(repository) || !revisionPattern.MatchString(revision) {
+		return CommitResolution{}, refusal.New("resolve-commit needs --revision FULL-OID, and --repo, if given, as owner/name")
 	}
 	ps, _, err := c.Plans()
 	if err != nil {
@@ -68,15 +103,18 @@ func (c Config) ResolveCommit(repository, revision string) (CommitResolution, er
 	if err != nil {
 		return CommitResolution{}, err
 	}
-	return CommitResolution{Repository: repository, OriginalRevision: revision, Revision: a.resolve(repository, revision)}, nil
+	return CommitResolution{Repository: repository, OriginalRevision: revision, Revision: a.resolve(revision)}, nil
 }
 
-// Commits reads every host's logs. Legacy subject-only events are unresolved.
+// Commits reads every host's logs. Legacy subject-only events are
+// unresolved. o.Revision matches by object ID alone, whatever the labels;
+// without it, o.Repository leaves out only associations labelled with
+// another repository.
 func (c Config) Commits(o CommitOptions) ([]CommitAssociation, error) {
 	if o.Item != "" && o.Plan == "" {
 		return nil, refusal.New("--item requires PLAN")
 	}
-	if o.Repository != "" && !repositoryPattern.MatchString(o.Repository) {
+	if !validLabel(o.Repository) {
 		return nil, refusal.New("--repo needs owner/name")
 	}
 	if o.Revision != "" && !revisionPattern.MatchString(o.Revision) {
@@ -113,7 +151,10 @@ func (c Config) Commits(o CommitOptions) ([]CommitAssociation, error) {
 	return out, nil
 }
 
-type aliases map[string]map[string]string
+// aliases maps a rewritten commit's object ID to its rewrite's. Object IDs
+// name commits alone, so a rewrite logged with a repository label applies
+// whatever label an association carries.
+type aliases map[string]string
 
 func commitAliases(plans []Plan) (aliases, error) {
 	a := aliases{}
@@ -126,10 +167,10 @@ func commitAliases(plans []Plan) (aliases, error) {
 			if e.Kind != "commit-rewritten" {
 				continue
 			}
-			if !repositoryPattern.MatchString(e.Repository) || !revisionPattern.MatchString(e.Revision) || !revisionPattern.MatchString(e.OldRevision) {
+			if !validLabel(e.Repository) || !revisionPattern.MatchString(e.Revision) || !revisionPattern.MatchString(e.OldRevision) {
 				return nil, fmt.Errorf("invalid rewrite identity in %s", p.log())
 			}
-			if err := a.add(e.Repository, e.OldRevision, e.Revision); err != nil {
+			if err := a.add(e.OldRevision, e.Revision); err != nil {
 				return nil, err
 			}
 		}
@@ -137,38 +178,36 @@ func commitAliases(plans []Plan) (aliases, error) {
 	return a, nil
 }
 
-func (a aliases) add(repository, old, revision string) error {
-	if a[repository] == nil {
-		a[repository] = map[string]string{}
+func (a aliases) add(old, revision string) error {
+	if previous := a[old]; previous != "" && previous != revision {
+		return refusal.New("conflicting rewrites of %s", old)
 	}
-	if previous := a[repository][old]; previous != "" && previous != revision {
-		return refusal.New("conflicting rewrites of %s in %s", old, repository)
-	}
-	a[repository][old] = revision
+	a[old] = revision
 	seen := map[string]bool{}
-	for at := old; at != ""; at = a[repository][at] {
+	for at := old; at != ""; at = a[at] {
 		if seen[at] {
-			return refusal.New("cyclic commit rewrites in %s", repository)
+			return refusal.New("cyclic commit rewrites through %s", old)
 		}
 		seen[at] = true
 	}
 	return nil
 }
 
-func (a aliases) resolve(repository, revision string) string {
-	for a[repository][revision] != "" {
-		revision = a[repository][revision]
+func (a aliases) resolve(revision string) string {
+	for a[revision] != "" {
+		revision = a[revision]
 	}
 	return revision
 }
 
 // RecordRewrites appends aliases to this host's located plan, once each.
-// Readable plans of every host share the aliases; mirrored logs are never edited.
+// Readable plans of every host share the aliases; mirrored logs are never
+// edited. repository is the label the events carry, if any.
 func (c Config) RecordRewrites(session, top, repository string, rewrites map[string]string, now time.Time) error {
-	if !repositoryPattern.MatchString(repository) {
-		return refusal.New("rewrites need a portable owner/name repository")
+	if !validLabel(repository) {
+		return refusal.New("a rewrite's repository label, if any, is an owner/name")
 	}
-	all, err := c.Commits(CommitOptions{Repository: repository})
+	all, err := c.Commits(CommitOptions{})
 	if err != nil {
 		return err
 	}
@@ -180,7 +219,7 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 	if err != nil {
 		return err
 	}
-	affected, holder := rewriteHolder(ps, all, a, repository, rewrites)
+	affected, holder := rewriteHolder(ps, all, a, rewrites)
 	if !affected {
 		return nil
 	}
@@ -192,7 +231,7 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 		if from == to {
 			continue
 		}
-		if err := a.add(repository, from, to); err != nil {
+		if err := a.add(from, to); err != nil {
 			return err
 		}
 		old = append(old, from)
@@ -235,14 +274,15 @@ func (p Plan) commitAssociations(o CommitOptions, aliases aliases, seen map[stri
 		return nil, err
 	}
 	for _, e := range events {
-		if e.Revision == "" || e.OldRevision != "" || o.Repository != "" && e.Repository != o.Repository || o.Item != "" && e.Item != o.Item {
+		if e.Revision == "" || e.OldRevision != "" || o.Item != "" && e.Item != o.Item ||
+			o.Revision == "" && o.Repository != "" && e.Repository != "" && e.Repository != o.Repository {
 			continue
 		}
-		if !revisionPattern.MatchString(e.Revision) || !repositoryPattern.MatchString(e.Repository) {
+		if !revisionPattern.MatchString(e.Revision) || !validLabel(e.Repository) {
 			return nil, fmt.Errorf("invalid commit identity in %s", p.log())
 		}
-		resolved := aliases.resolve(e.Repository, e.Revision)
-		if o.Revision != "" && aliases.resolve(e.Repository, o.Revision) != resolved {
+		resolved := aliases.resolve(e.Revision)
+		if o.Revision != "" && aliases.resolve(o.Revision) != resolved {
 			continue
 		}
 		it, ok := items[e.Item]
@@ -259,7 +299,7 @@ func (p Plan) commitAssociations(o CommitOptions, aliases aliases, seen map[stri
 	return out, nil
 }
 
-func rewriteHolder(ps []Plan, all []CommitAssociation, a aliases, repository string, rewrites map[string]string) (affected bool, holder *Plan) {
+func rewriteHolder(ps []Plan, all []CommitAssociation, a aliases, rewrites map[string]string) (affected bool, holder *Plan) {
 	own := map[string]Plan{}
 	for _, p := range ps {
 		if p.Own {
@@ -267,7 +307,7 @@ func rewriteHolder(ps []Plan, all []CommitAssociation, a aliases, repository str
 		}
 	}
 	for _, association := range all {
-		for at := association.OriginalRevision; at != ""; at = a[repository][at] {
+		for at := association.OriginalRevision; at != ""; at = a[at] {
 			if rewrites[at] != "" {
 				affected = true
 				if p, ok := own[association.Plan]; ok && holder == nil && rewrites[at] != at {
@@ -287,7 +327,7 @@ func (l *lockedPlan) recordRewrites(part, top, repository string, old []string, 
 	}
 	kept := map[string]string{}
 	for _, e := range events {
-		if e.Kind == "commit-rewritten" && e.Repository == repository {
+		if e.Kind == "commit-rewritten" {
 			kept[e.OldRevision] = e.Revision
 		}
 	}

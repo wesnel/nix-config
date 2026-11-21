@@ -1,6 +1,8 @@
 package plans
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,7 +35,7 @@ func reviewedRepo(t *testing.T, diagrams ...record.Diagram) (string, string) {
 	base := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD~1"))
 	head := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
 	hostpaths.Bake(t, t.TempDir(), t.TempDir())
-	path, err := record.RangeFile("o", "r", base, head)
+	path, err := record.RangeFile(base, head)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +78,36 @@ func TestVisual(t *testing.T) {
 		}
 		if drift := structureDrift(t, p); len(drift) != 0 {
 			t.Errorf("drift %v", drift)
+		}
+	})
+
+	t.Run("a kept diagram of a repository with no GitHub origin", func(t *testing.T) {
+		repo, span := reviewedRepo(t, keptDiagram("D1", "holds"))
+		gitIn(t, repo, "remote", "set-url", "origin", "https://git.sr.ht/~o/r")
+		d, err := ReadDiagram(repo, "HEAD~1..HEAD", "D1")
+		if err != nil || d.ID != "D1" || d.Range != span {
+			t.Errorf("read %+v, %v", d, err)
+		}
+		gitIn(t, repo, "remote", "remove", "origin")
+		if d, err := ReadDiagram(repo, "HEAD~1..HEAD", "D1"); err != nil || d.ID != "D1" {
+			t.Errorf("with no remote, read %+v, %v", d, err)
+		}
+	})
+
+	// A record kept under OWNER/NAME before records moved to ranges/ is
+	// read where it is.
+	t.Run("a kept diagram under its GitHub name", func(t *testing.T) {
+		repo, span := reviewedRepo(t, keptDiagram("D1", "holds"))
+		kept := filepath.Join(record.Dir(), "ranges", span+".org")
+		old := filepath.Join(record.Dir(), "o", "r", span+".org")
+		if err := os.MkdirAll(filepath.Dir(old), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(kept, old); err != nil {
+			t.Fatal(err)
+		}
+		if d, err := ReadDiagram(repo, "HEAD~1..HEAD", "D1"); err != nil || d.ID != "D1" {
+			t.Errorf("read %+v, %v", d, err)
 		}
 	})
 

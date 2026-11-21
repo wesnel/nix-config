@@ -146,7 +146,7 @@ func TestPaths(t *testing.T) {
 	if got, want := Dir(), filepath.Join(state, "agent-tools", "reviews"); got != want {
 		t.Errorf("Dir() = %s, want %s", got, want)
 	}
-	if got, err := RangeFile("owner", "repo", base, head); err != nil || got != filepath.Join(Dir(), "owner", "repo", base+".."+head+".org") {
+	if got, err := RangeFile(base, head); err != nil || got != filepath.Join(state, "agent-tools", "reviews", "ranges", base+".."+head+".org") {
 		t.Errorf("RangeFile = %s, %v", got, err)
 	}
 	if got, err := PRFile("owner", "repo.js", 12); err != nil || got != filepath.Join(Dir(), "owner", "repo.js", "pr-12.org") {
@@ -157,7 +157,7 @@ func TestPaths(t *testing.T) {
 			t.Errorf("PRFile(%q, %q) is not refused", bad[0], bad[1])
 		}
 	}
-	if _, err := RangeFile("owner", "repo", base[:12], head); err == nil {
+	if _, err := RangeFile(base[:12], head); err == nil {
 		t.Error("a short SHA is not refused")
 	}
 	if _, err := PRFile("owner", "repo", 0); err == nil {

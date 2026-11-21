@@ -209,21 +209,30 @@ func EnvSession() (harness, id string) {
 }
 
 // RecordCommit logs e as a commit session made in the worktree at top, in
-// the plan Locate finds for them. Where there is none, it first makes one:
-// a plan of the repository's unplanned work, working under the full
-// pipeline, that names the session and the worktree. It returns the plan
-// and whether it made it. Calls running at once make one plan between
-// them.
+// the plan Locate finds for them where that plan names top's repository:
+// a worktree in its WORKTREES shares top's git common dir. Otherwise it
+// goes in a plan of the repository's unplanned work, working under the
+// full pipeline and naming the worktree, made first where this host has
+// none; that plan names the session too, unless the session has a plan
+// of its own already, which keeps the session's other work. It returns
+// the plan and whether it made it. Calls running at once make one plan
+// between them.
 func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan, bool, error) {
 	e.Kind, e.Session = "committed", session
 	p, part, ok := c.Locate(session, top)
+	elsewhere := ok && !p.namesRepository(top)
 	created := false
-	if !ok {
+	if !ok || elsewhere {
 		if top == "" {
 			return Plan{}, false, refusal.New("a commit outside a worktree has no plan to go in. Run the commit inside the repository")
 		}
 		var err error
-		if p, part, created, err = c.unplanned(session, top, now); err != nil {
+		if elsewhere {
+			p, part, created, err = c.unplannedElsewhere(top, now)
+		} else {
+			p, part, created, err = c.unplanned(session, top, now)
+		}
+		if err != nil {
 			return Plan{}, false, err
 		}
 	}
@@ -231,10 +240,86 @@ func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan,
 	return p, created, err
 }
 
+// namesRepository is whether a worktree any of p's files names in
+// WORKTREES is of the repository top is a worktree of, by git common dir.
+func (p Plan) namesRepository(top string) bool {
+	common := commonDir(top)
+	files, err := p.files()
+	if common == "" || err != nil {
+		return false
+	}
+	for _, f := range files {
+		props, err := planHeading(f)
+		if err != nil {
+			continue
+		}
+		for _, w := range strings.Fields(props["WORKTREES"]) {
+			if w == top || commonDir(w) == common {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// commonDir is the git common dir of the worktree at dir, with symbolic
+// links resolved, or "" where git cannot read one.
+func commonDir(dir string) string {
+	out, err := git.Run("-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(out); err == nil {
+		return real
+	}
+	return out
+}
+
+// unplannedPrefix begins the title of a plan RecordCommit makes.
+const unplannedPrefix = "Unplanned work in "
+
+// unplannedElsewhere is this host's newest plan of unplanned work whose
+// own file names top, once the plans directory is locked, or else a new
+// one, which names no session, and whether it is new.
+func (c Config) unplannedElsewhere(top string, now time.Time) (Plan, string, bool, error) {
+	return c.lockedNew(now, func() (Plan, string, bool) {
+		found, err := c.Find(FindOptions{Worktree: top})
+		if err != nil {
+			return Plan{}, "", false
+		}
+		for _, f := range found {
+			if f.Part == "" && strings.HasPrefix(f.Title, unplannedPrefix) {
+				p, err := c.Open(f.Plan)
+				return p, "", err == nil
+			}
+		}
+		return Plan{}, "", false
+	}, c.unplannedOptions("", top))
+}
+
 // unplanned is the plan Locate finds for session and top once this host's
 // plans directory is locked, or else a new one for them, and whether it is
 // new.
 func (c Config) unplanned(session, top string, now time.Time) (Plan, string, bool, error) {
+	return c.lockedNew(now, func() (Plan, string, bool) { return c.Locate(session, top) }, c.unplannedOptions(session, top))
+}
+
+// unplannedOptions make the plan of the unplanned work in top's
+// repository, naming session where it is one.
+func (c Config) unplannedOptions(session, top string) NewOptions {
+	name := repoName(top)
+	o := NewOptions{Title: unplannedPrefix + name, Slug: slug("unplanned " + name), Repos: []string{name},
+		Worktrees: []string{top}, Goal: unplannedPrefix + name + ".", Status: "working"}
+	if session != "" && checkWords("session", []string{session}) == nil {
+		o.Sessions = []string{session}
+	}
+	return o
+}
+
+// lockedNew is, once this host's plans directory is locked, the plan
+// existing finds, or else a new plan made with o, and whether it is new.
+// Calls running at once make one plan between them.
+func (c Config) lockedNew(now time.Time, existing func() (Plan, string, bool), o NewOptions) (Plan, string, bool, error) {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
 		return Plan{}, "", false, err
 	}
@@ -253,14 +338,8 @@ func (c Config) unplanned(session, top string, now time.Time) (Plan, string, boo
 		return Plan{}, "", false, err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	if p, part, ok := c.Locate(session, top); ok {
+	if p, part, ok := existing(); ok {
 		return p, part, false, nil
-	}
-	name := repoName(top)
-	o := NewOptions{Title: "Unplanned work in " + name, Slug: slug("unplanned " + name), Repos: []string{name},
-		Worktrees: []string{top}, Goal: "Unplanned work in " + name + ".", Status: "working"}
-	if checkWords("session", []string{session}) == nil {
-		o.Sessions = []string{session}
 	}
 	made, err := c.New(o, now)
 	if err != nil {

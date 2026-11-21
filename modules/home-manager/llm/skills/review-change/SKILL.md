@@ -243,9 +243,9 @@ in pr-review.
    reply or resolve on someone else's pull request. Write a proposed
    finding's reason as the comment the operator would post.
 4. Record each outcome with `git delegate settle OWNER/NAME#N FINDING
-   OUTCOME [--target X] [--reason-file F]`. The pull request's review
-   record, under `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/`, is the
-   one record of them, every round's, and `git delegate show
+   OUTCOME [--target X] [--reason-file F]`. The pull request's range
+   record, `$XDG_STATE_HOME/agent-tools/reviews/ranges/BASE..HEAD.org` by
+   full commit IDs, is the one record of them, every round's, and `git delegate show
    OWNER/NAME#N` prints it with the threads. The plan's log gets only the
    round and the counts: `agent-plan log PLAN --item ID --kind reviewed
    --summary 'round 1: 5 findings, 3 proposed'`.

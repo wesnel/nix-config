@@ -98,10 +98,18 @@ func reviewRoot(t *testing.T) string {
 
 var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
 
+// A request is marked reviewed by a record of its head, under ranges/ as
+// git delegate writes it, or under its GitHub name as it wrote before.
 func TestGitHub(t *testing.T) {
+	for name, dir := range map[string][]string{"under ranges": {"ranges"}, "under its GitHub name": {"p", "q"}} {
+		t.Run(name, func(t *testing.T) { testGitHub(t, dir) })
+	}
+}
+
+func testGitHub(t *testing.T, dir []string) {
 	fakeGitHub(t, reply)
 	root := reviewRoot(t)
-	record := filepath.Join(root, "p", "q", strings.Repeat("0", 40)+".."+head1+".org")
+	record := filepath.Join(append(append([]string{root}, dir...), strings.Repeat("0", 40)+".."+head1+".org")...)
 	os.MkdirAll(filepath.Dir(record), 0o755)
 	os.WriteFile(record, []byte("{}"), 0o644)
 

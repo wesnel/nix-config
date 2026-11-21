@@ -233,10 +233,12 @@ func (r *Range) check() error {
 	return nil
 }
 
+// checkHeader allows an empty REPO: a range of a repository with no GitHub
+// name.
 func (r *Range) checkHeader() error {
 	owner, repo, ok := strings.Cut(r.Repo, "/")
 	switch {
-	case !ok || checkRepo(owner, repo) != nil:
+	case r.Repo != "" && (!ok || checkRepo(owner, repo) != nil):
 		return fmt.Errorf("record: %q is not a GitHub owner/name", r.Repo)
 	case !sha.MatchString(r.Base) || !sha.MatchString(r.Head):
 		return fmt.Errorf("record: a range needs full SHAs, got %q..%q", r.Base, r.Head)

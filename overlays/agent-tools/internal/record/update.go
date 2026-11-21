@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -41,6 +42,37 @@ func Update[T any, P interface {
 	*T
 	doc
 }](path string, apply func(P) error) error {
+	return updateFrom(path, "", apply)
+}
+
+// UpdateRange is Update of the range record at path, one FindRange,
+// Ranges or NewestRange gave, written at RangeFile's path for the
+// BASE..HEAD of path's file name, which it returns. Where nothing is there
+// yet and path is a record kept under OWNER/NAME, it starts from path's
+// record and leaves that file as it was.
+func UpdateRange(path string, apply func(*Range) error) (string, error) {
+	return updateRange(Dir(), path, apply)
+}
+
+func updateRange(dir, path string, apply func(*Range) error) (string, error) {
+	b, h, _ := strings.Cut(strings.TrimSuffix(filepath.Base(path), ".org"), "..")
+	target, err := rangeFile(dir, b, h)
+	if err != nil {
+		return "", err
+	}
+	from := ""
+	if path != target {
+		from = path
+	}
+	return target, updateFrom(target, from, apply)
+}
+
+// updateFrom is Update, which starts from the record at from, where path
+// has none and from is not "".
+func updateFrom[T any, P interface {
+	*T
+	doc
+}](path, from string, apply func(P) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -63,14 +95,19 @@ func Update[T any, P interface {
 
 	var v T
 	rec := P(&v)
+	read := path
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) && from != "" {
+		read = from
+		data, err = os.ReadFile(from)
+	}
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
 		return err
 	default:
 		if err := rec.parse(data); err != nil {
-			return inFile(path, err)
+			return inFile(read, err)
 		}
 	}
 	if err := apply(rec); err != nil {

@@ -65,17 +65,25 @@ have (see status) is refused and writes nothing.
                      keywords, pending commands, checkpoints and stale state.
                      A handed-back event's --command is what the operator
                      runs next, in the absolute --dir if given. --revision
-                     records an exact commit and its GitHub origin owner/name
-                     from the current worktree, deriving the subject; applies
-                     to done and verified. --commit alone records only a subject
+                     records an exact commit, by its full object ID in the
+                     current worktree, deriving the subject. Its repository
+                     label, which matching ignores, is origin's GitHub
+                     owner/name, else local/ and the name of the
+                     repository's main checkout.
+                     Applies to done and verified. --commit alone records
+                     only a subject
   commits [PLAN] [--repo OWNER/NAME] [--revision FULL-OID] [--item ID]
                      JSON exact associations from every readable host's plans,
-                     or PLAN, resolved through signing rewrite aliases in all
-                     logs. --item requires PLAN. Subject-only events have no
-                     exact association. No matches prints []
-  resolve-commit --repo OWNER/NAME --revision FULL-OID
-                     JSON repository, original_revision and resolved revision,
-                     even without an association. No alias leaves it unchanged
+                     or PLAN, matched by object ID and resolved through signing
+                     rewrite aliases in all logs. --revision matches by
+                     object ID alone; without it, --repo leaves out only
+                     associations labelled with another repository. --item
+                     requires PLAN. Subject-only events have no exact
+                     association. No matches prints []
+  resolve-commit --revision FULL-OID [--repo OWNER/NAME]
+                     JSON repository (the --repo given, if any),
+                     original_revision and resolved revision, even without an
+                     association. No alias leaves it unchanged
   waiting PLAN [--json]
                      pending hand-back commands, with their event ID and
                      directory. Observations and changes to plan text or
@@ -910,8 +918,8 @@ func runCommits(item string, revision string, repos multi, c plans.Config, posit
 }
 
 func runResolveCommit(revision string, repos multi, c plans.Config, positional []string, report func(any, error) int) int {
-	if len(positional) != 0 || len(repos) != 1 {
-		return report(nil, fmt.Errorf("resolve-commit takes --repo and --revision, without PLAN"))
+	if len(positional) != 0 || len(repos) > 1 {
+		return report(nil, fmt.Errorf("resolve-commit takes --revision and at most one --repo, without PLAN"))
 	}
 	return report(c.ResolveCommit(lastValue(repos), revision))
 }
