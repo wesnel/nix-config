@@ -62,7 +62,7 @@
     "mcp__other__create_page"
   ];
   guardedPublication = hooks:
-    builtins.all (commandForTool "pr-loop guard --baseline" hooks "PreToolUse") publications
+    builtins.all (commandForTool "agent-ops guard --baseline" hooks "PreToolUse") publications
     && builtins.all (commandForTool "plan-dash record" hooks "PostToolUse") publications
     && builtins.all (tool: !(commandForTool "plan-dash record" hooks "PostToolUse" tool)) otherTools;
   config =

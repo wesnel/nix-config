@@ -21,10 +21,10 @@ progress, and a checkout or reset there can delete it, even a plain
 
 ```bash
 git worktree add <scratch>/restack --detach <parent-branch>
-pr-loop setup <scratch>/restack                  # where pr-loop is installed
+agent-ops setup <scratch>/restack                  # where agent-pr is installed
 ```
 
-`pr-loop setup` runs the setup command the operator configured for the
+`agent-ops setup` runs the setup command the operator configured for the
 repository, such as generating files it does not commit, and does nothing
 where none is configured. Run it again in the worktree after each checkout
 or rebase there.

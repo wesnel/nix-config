@@ -102,7 +102,7 @@ func TestNext(t *testing.T) {
 		gitIn(t, dir, "switch", "-qc", "fresh", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add fresh")
 		step, ok := nextStep(t, "fresh").(ToOpen)
-		if !ok || step.Kind != "open" || !strings.HasPrefix(step.Command, "pr-loop open --title") || !strings.HasSuffix(step.Command, " fresh") {
+		if !ok || step.Kind != "open" || !strings.HasPrefix(step.Command, "agent-pr open --title") || !strings.HasSuffix(step.Command, " fresh") {
 			t.Errorf("fresh: %+v", step)
 		}
 	})
@@ -137,7 +137,7 @@ func TestNext(t *testing.T) {
 		f.prs["feat"] = 7
 		gitIn(t, dir, append(signing(t, dir), "--amend", "--no-edit", "--allow-empty")...)
 		published(t, f, dir, "feat")
-		if step, ok := nextStep(t, "feat").(Done); !ok || step.PR != 7 {
+		if step, ok := nextStep(t, "feat").(Done); !ok || step.PR != 7 || step.Kind != "complete" || !strings.Contains(step.text(), "publication complete") {
 			t.Errorf("feat: %#v", nextStep(t, "feat"))
 		}
 	})
@@ -267,7 +267,7 @@ func TestNext(t *testing.T) {
 	t.Run("no commits of its own: nothing", func(t *testing.T) {
 		_, dir := pushedBranch(t)
 		gitIn(t, dir, "branch", "empty", "main")
-		if step, ok := nextStep(t, "empty").(Done); !ok || step.Kind != "nothing" {
+		if step, ok := nextStep(t, "empty").(Done); !ok || step.Kind != "complete" {
 			t.Errorf("empty: %#v", nextStep(t, "empty"))
 		}
 	})

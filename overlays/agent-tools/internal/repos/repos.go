@@ -31,13 +31,13 @@ import (
 // settings file holds them: a JSON object of these keys and no others.
 type Settings struct {
 	// Setup prepares a fresh checkout, such as generating files the
-	// repository does not commit. `pr-loop setup [PATH]` runs it with sh in
+	// repository does not commit. `agent-ops setup [PATH]` runs it with sh in
 	// a worktree, inside a sandboxed session's sandbox; nothing runs it on
 	// its own.
 	Setup string `json:"setup,omitempty"`
 	// Suites are the test suites git red-check runs, each where a commit
 	// changes its test files: a JSON object of redcheck.Suite's keys alone,
-	// which redcheck.CheckSuites must accept. git delegate never runs them,
+	// which redcheck.CheckSuites must accept. agent-review never runs them,
 	// since they run the reviewed commits' code.
 	Suites []redcheck.Suite `json:"suites,omitempty"`
 	// Routes are rules that route this repository's changes to focused

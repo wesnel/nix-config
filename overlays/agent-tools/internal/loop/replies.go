@@ -68,7 +68,7 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no %q lines; see pr-loop --help", ReplyHeader)
+		return nil, fmt.Errorf("no %q lines; see agent-pr --help", ReplyHeader)
 	}
 	return out, nil
 }
@@ -118,9 +118,9 @@ func ReplyAll(plan []PlannedReply, round int) ([]ReplyResult, error) {
 	if os.Getenv(ModeEnv) != "bots" {
 		var err error
 		if tty, err = openTTY(); err != nil {
-			return nil, refuse("outside a bots-mode review loop, `pr-loop reply --from` posts only from the operator's "+
+			return nil, refuse("outside a bots-mode review loop, `agent-pr reply --from` posts only from the operator's "+
 				"terminal, confirming each reply there, and /dev/tty cannot be opened here (%v). Put the reply file in "+
-				"the report, with `pr-loop reply --from FILE --round N` for the operator to run in the worktree", err)
+				"the report, with `agent-pr reply --from FILE --round N` for the operator to run in the worktree", err)
 		}
 		defer tty.Close()
 		answers = bufio.NewReader(tty)
@@ -209,7 +209,7 @@ func (policy *threadPolicy) checkAll(plan []PlannedReply) ([]*threadCheck, error
 	if len(problems) > 0 {
 		if allRefused {
 			return nil, refuse("nothing was posted, since these threads cannot be answered; drop them from the file, "+
-				"put them in the report, and run `pr-loop reply --from` again:\n  %s", strings.Join(problems, "\n  "))
+				"put them in the report, and run `agent-pr reply --from` again:\n  %s", strings.Join(problems, "\n  "))
 		}
 		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
 	}

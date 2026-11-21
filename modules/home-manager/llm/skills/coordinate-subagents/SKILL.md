@@ -109,13 +109,13 @@ what is this work's.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held: your review of each
   part (Review each branch below); also the fallback where
-  `git delegate` cannot run the selected provider, from the prompt
-  `git delegate --print-prompt` prints, replying in the form it gives.
+  `agent-review` cannot run the selected provider, from the prompt
+  `agent-review --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`**, **`compat-reviewer`** and
   **`upgrade-reviewer`:** that focus's review of a part's range outside
   the fresh review loop, or from the prompt
-  `git delegate --print-prompt --reviewer ROUTE` prints where delegate
+  `agent-review --print-prompt --reviewer ROUTE` prints where agent-review
   cannot run it headless (its stderr names the type). An
   `upgrade-reviewer` reads only the upstream text its prompt holds: give
   it that prompt, never a task to look upstream changes up itself.
@@ -197,7 +197,7 @@ Settle its questions as the `plan-work` skill's "Questions for the operator"
 says: decide the reversible ones yourself, and merge the one-way doors and
 product direction into the Decide phase's list when there is one. A design
 on which sub-agents, or you and the design review, disagree gets a second
-opinion with `git delegate ask` first, as the `review-change` skill's
+opinion with `agent-review ask` first, as the `review-change` skill's
 design review says.
 
 A finding by one sub-agent that bears on another part goes to that part's
@@ -224,7 +224,7 @@ its model, which through a gateway is of another family than the author's.
   restack with few conflicts.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
   security-sensitive code (the guard, the sandbox, `git sign-pass`,
-  `pr-loop`), restacks with many conflicts, and anything ambiguous.
+  `agent-pr`), restacks with many conflicts, and anything ambiguous.
 - Reviewers are never given a cheaper model: use the `review-change`
   skill's Harness choice for independence and provider fallback.
 
@@ -360,7 +360,7 @@ Before Coalesce, select and run reviews as the `review-change` skill says
 for each completed branch: the range `<base>..<branch>`, with the part's
 Goal and its stable review item. Give reviewers the interacting parts as
 context. An `adversarial-reviewer` sub-agent given that range, goal and
-items can supply the general review in place of delegate. Hand the
+items can supply the general review in place of agent-review. Hand the
 round's findings to the builder together, then verify the fixes under the
 same allowance, carrying it across restacks and moved tips. Check the
 builder's report as any other.
@@ -396,10 +396,10 @@ them fit together:
 
 If you are still running once the operator has pushed:
 
-- Check each stack's draft pull requests with `pr-loop stack <pr>`.
+- Check each stack's draft pull requests with `agent-pr stack <pr>`.
   If publication reported `unstacked`, link the stack, which GitHub shows
   on every pull request in it and merges from the bottom:
-  `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
+  `agent-pr link <bottom> ... <top>`, by number or branch. It refuses bases
   that do not chain, and leaves a stack already linked as it is.
 - Run the **Publish** phase: the drafted replies, and every description
   brought up to the change as it stands.

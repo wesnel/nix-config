@@ -51,10 +51,10 @@ type KeptDiagram struct {
 
 // ReadDiagram reads diagram id from the review record of given, a range
 // BASE..TIP resolved in the worktree top, as record.FindRange finds it:
-// the record git delegate keeps and git delegate show prints.
+// the record agent-review keeps and agent-review show prints.
 func ReadDiagram(top, given, id string) (KeptDiagram, error) {
 	if !diagramID.MatchString(id) {
-		return KeptDiagram{}, refusal.New("%q is not a diagram ID. Pass one `git delegate show %s` lists, as `--diagram D1`", id, given)
+		return KeptDiagram{}, refusal.New("%q is not a diagram ID. Pass one `agent-review show %s` lists, as `--diagram D1`", id, given)
 	}
 	base, tip, ok := strings.Cut(given, "..")
 	if !ok || base == "" || tip == "" || strings.HasPrefix(tip, ".") {
@@ -80,7 +80,7 @@ func ReadDiagram(top, given, id string) (KeptDiagram, error) {
 	}
 	r, err := record.ReadRange(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return KeptDiagram{}, refusal.New("%s has no review of %s (%s). Pass the range the review drew the diagram for, as `git delegate show` names it, or draw one with `git delegate --reviewer diagram`",
+		return KeptDiagram{}, refusal.New("%s has no review of %s (%s). Pass the range the review drew the diagram for, as `agent-review show` names it, or draw one with `agent-review --reviewer diagram`",
 			top, given, span)
 	}
 	if err != nil {
@@ -102,7 +102,7 @@ func ReadDiagram(top, given, id string) (KeptDiagram, error) {
 	if len(ids) > 0 {
 		kept = strings.Join(ids, ", ")
 	}
-	return KeptDiagram{}, refusal.New("the review of %s keeps no diagram %s; it keeps %s. Pass one it keeps with `--diagram`, as `git delegate show %s` lists them",
+	return KeptDiagram{}, refusal.New("the review of %s keeps no diagram %s; it keeps %s. Pass one it keeps with `--diagram`, as `agent-review show %s` lists them",
 		given, id, kept, given)
 }
 
@@ -215,7 +215,7 @@ func newDiagramVisual(o VisualOptions, branch [2]string) (visual, error) {
 	d := *o.Diagram
 	switch {
 	case !slices.Contains(keptVerdicts, d.Verdict):
-		return visual{}, refusal.New("diagram %s's verdict is %q, and only a diagram that %s may be published, since the critic found the rest untrue or could not tell. Redraw it with `git delegate --reviewer diagram`, or pick another",
+		return visual{}, refusal.New("diagram %s's verdict is %q, and only a diagram that %s may be published, since the critic found the rest untrue or could not tell. Redraw it with `agent-review --reviewer diagram`, or pick another",
 			d.ID, d.Verdict, strings.Join(keptVerdicts, " or is "))
 	case !diagramID.MatchString(d.ID) || !fullRange.MatchString(d.Range) || !diagram.ValidSource(d.Mermaid):
 		return visual{}, refusal.New("diagram %q of %q is not one a review record keeps. Copy it with `agent-plan visual PLAN --range BASE..TIP --diagram D1`", d.ID, d.Range)

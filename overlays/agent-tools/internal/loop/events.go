@@ -10,14 +10,14 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// logEvent logs e, an action of pr-loop's that has happened, in the plan of
+// logEvent logs e, an action of agent-pr's that has happened, in the plan of
 // the session running it: the plan plans.Config.Locate finds for the
 // harness's session or this worktree. A failure is reported on stderr and
 // never fails the action.
 func logEvent(e plans.Event) {
 	c, err := plans.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "pr-loop: %s is not logged: %v\n", e.Kind, err)
+		fmt.Fprintf(os.Stderr, "agent-pr: %s is not logged: %v\n", e.Kind, err)
 		return
 	}
 	top, _ := git.Run("rev-parse", "--show-toplevel")
@@ -31,7 +31,7 @@ func logEvent(e plans.Event) {
 		return
 	}
 	if _, err := p.Record(part, e, time.Now()); err != nil {
-		fmt.Fprintf(os.Stderr, "pr-loop: %s is not logged in %s: %v\n", e.Kind, p.File(), err)
+		fmt.Fprintf(os.Stderr, "agent-pr: %s is not logged in %s: %v\n", e.Kind, p.File(), err)
 	}
 }
 

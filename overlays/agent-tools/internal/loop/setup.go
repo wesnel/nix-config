@@ -43,7 +43,7 @@ type SetupRun struct {
 func RunSetup(command string, dirs []string, log io.Writer) []SetupRun {
 	runs := []SetupRun{}
 	for _, dir := range dirs {
-		fmt.Fprintf(log, "pr-loop: setup in %s: %s\n", dir, command)
+		fmt.Fprintf(log, "agent-ops: setup in %s: %s\n", dir, command)
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = dir
 		cmd.Env = gitenv.Without(os.Environ())
@@ -55,10 +55,10 @@ func RunSetup(command string, dirs []string, log io.Writer) []SetupRun {
 				run.Exit = exit.ExitCode()
 			} else {
 				run.Exit = -1
-				fmt.Fprintf(log, "pr-loop: setup in %s: %s\n", dir, err)
+				fmt.Fprintf(log, "agent-ops: setup in %s: %s\n", dir, err)
 			}
 		}
-		fmt.Fprintf(log, "pr-loop: setup in %s: exit %d\n", dir, run.Exit)
+		fmt.Fprintf(log, "agent-ops: setup in %s: exit %d\n", dir, run.Exit)
 		runs = append(runs, run)
 	}
 	return runs

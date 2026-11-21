@@ -16,7 +16,7 @@ const maxDiagrams = 5
 // document stays within maxDoc.
 const diagramBudget = 64 << 10
 
-// A pull request's review, as this host's records keep it (git delegate's
+// A pull request's review, as this host's records keep it (agent-review's
 // newest range record of it, and its threads' record), goes into a PR's
 // and a Request's Record* fields in counts alone: no title, summary,
 // finding or other model text about a colleague's code leaves the host

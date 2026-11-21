@@ -101,15 +101,14 @@ func isBot(bots []*Bot, c ThreadComment) bool {
 	return c.Type == "Bot" && botNamed(bots, c.Author) != nil
 }
 
-// Threads lists a PR's unresolved review threads (all of them with all),
-// and writes every thread, resolved or not, with every comment, to the PR's
-// review record (internal/record), keeping the drafts the record holds.
+// Threads reads a PR's unresolved review threads (all of them with all),
+// with every comment. It does not read or change review records.
 func Threads(number int, all bool) (any, error) {
 	repo, err := repository()
 	if err != nil {
 		return nil, err
 	}
-	threads, err := RefreshThreads(repo.Slug, number)
+	threads, err := ReadThreads(repo.Slug, number)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +123,20 @@ func Threads(number int, all bool) (any, error) {
 
 // RefreshThreads reads every review thread of pull request number of slug,
 // owner/name, with every comment, and writes them to the PR's review record
-// as Threads does. git delegate refreshes a pull request's record with it.
+// while preserving drafts. agent-review and Draft refresh records with it.
 func RefreshThreads(slug string, number int) ([]Thread, error) {
+	threads, err := ReadThreads(slug, number)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
+		return nil, err
+	}
+	return threads, nil
+}
+
+// ReadThreads reads all review threads and comments without changing records.
+func ReadThreads(slug string, number int) ([]Thread, error) {
 	bots, err := botsFor(slug)
 	if err != nil {
 		return nil, err
@@ -182,9 +193,6 @@ func RefreshThreads(slug string, number int) ([]Thread, error) {
 		next := page.PageInfo.EndCursor
 		cursor = &next
 	}
-	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
-		return nil, err
-	}
 	return threads, nil
 }
 
@@ -233,7 +241,7 @@ func prFile(repo *Repo, number int) (string, error) {
 // an open PR by the authenticated user in this repository whose every
 // comment is a configured bot's or the user's. A person's thread is the
 // operator's to answer, through a people-mode loop's drafts and
-// `pr-loop post`.
+// `agent-pr post`.
 type threadPolicy struct {
 	repo    *Repo
 	bots    []*Bot
@@ -281,14 +289,14 @@ func (p *threadPolicy) read(id string) (*threadCheck, error) {
 		return nil, err
 	}
 	if data.Node == nil || data.Node.Comments.TotalCount == 0 {
-		return nil, refuse("%s is not a review thread; take thread IDs from `pr-loop threads PR`", id)
+		return nil, refuse("%s is not a review thread; take thread IDs from `agent-pr threads PR`", id)
 	}
 	pr := data.Node.PullRequest
 	switch {
 	case pr.Repository.NameWithOwner != p.repo.Slug:
-		return nil, refuse("%s is in %s, not %s; take thread IDs from `pr-loop threads PR`", id, pr.Repository.NameWithOwner, p.repo.Slug)
+		return nil, refuse("%s is in %s, not %s; take thread IDs from `agent-pr threads PR`", id, pr.Repository.NameWithOwner, p.repo.Slug)
 	case pr.State != "OPEN" || pr.Author.Login != p.repo.Viewer:
-		return nil, refuse("#%d is not an open pull request by %s, which pr-loop never writes to; leave it to the operator", pr.Number, p.repo.Viewer)
+		return nil, refuse("#%d is not an open pull request by %s, which agent-pr never writes to; leave it to the operator", pr.Number, p.repo.Viewer)
 	}
 	all, err := comments(id, data.Node.Comments)
 	if err != nil {
@@ -314,7 +322,7 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	for _, c := range thread.comments {
 		if c.Author != p.repo.Viewer && !isBot(p.bots, c) {
 			return nil, refuse("%s on #%d has a comment by %s, who is neither a configured review bot nor %s, and a person's "+
-				"thread is the operator's to answer; in a people-mode loop draft the answer with `pr-loop draft`, and "+
+				"thread is the operator's to answer; in a people-mode loop draft the answer with `agent-pr draft`, and "+
 				"otherwise put it in the report", id, thread.pr, c.Author, p.repo.Viewer)
 		}
 	}
@@ -366,7 +374,7 @@ func Reply(id, body string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPublic("the reply", body, append(threads, id), "run `pr-loop reply` again"); err != nil {
+	if err := checkPublic("the reply", body, append(threads, id), "run `agent-pr reply` again"); err != nil {
 		return nil, err
 	}
 	url, err := postReply(check.pr, id, body)
@@ -388,7 +396,7 @@ func Resolve(id string) (any, error) {
 		return nil, err
 	}
 	if check.lastAuthor != policy.repo.Viewer {
-		return nil, refuse("the last comment in %s is from %s, so it has no answer yet; reply with `pr-loop reply %s` before resolving",
+		return nil, refuse("the last comment in %s is from %s, so it has no answer yet; reply with `agent-pr reply %s` before resolving",
 			id, check.lastAuthor, id)
 	}
 	if err := resolveThread(check.pr, id); err != nil {

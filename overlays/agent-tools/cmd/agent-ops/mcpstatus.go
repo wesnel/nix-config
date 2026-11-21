@@ -32,7 +32,7 @@ func mcpStatus(args []string, stdout, stderr io.Writer) int {
 	case len(args) == 1 && args[0] == "--hook":
 		hook = true
 	default:
-		fmt.Fprintln(stderr, "pr-loop: mcp-status takes only --hook; see pr-loop --help")
+		fmt.Fprintln(stderr, "agent-ops: mcp-status takes only --hook; see agent-ops --help")
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)

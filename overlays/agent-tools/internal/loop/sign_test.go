@@ -51,7 +51,7 @@ func checkStack(t *testing.T) (*fixedStack, *fakeOpenPRs) {
 	return s, f
 }
 
-// TestSignCheck checks that pr-loop sign-check accepts the stack containing
+// TestSignCheck checks that agent-pr sign-check accepts the stack containing
 // HEAD when its fixups squash into each branch's own commits without moving
 // a branch, and refuses one where they do not, or that is not linear.
 func TestSignCheck(t *testing.T) {

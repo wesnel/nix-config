@@ -21,7 +21,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/review"
 )
 
-// serveMCPEnv makes TestMain run this test binary as `pr-loop mcp` against
+// serveMCPEnv makes TestMain run this test binary as `agent-ops mcp` against
 // the fake GitHub at its URL, so a test talks to the server as Codex does:
 // a process of its own, over its standard input and output.
 const serveMCPEnv = "PR_LOOP_TEST_SERVE_MCP"
@@ -54,6 +54,12 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		switch {
 		case strings.Contains(req.Query, "viewer { login }"):
 			data = `{"viewer": {"login": "me"}, "repository": {"id": "R", "nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}}}`
+		case strings.Contains(req.Query, "search(query"):
+			data = `{"search":{"nodes":[{"id":"PR_123","number":123,"headRefName":"feature","headRefOid":"abc","baseRefName":"main","author":{"login":"me"},"isDraft":true}]}}`
+		case strings.Contains(req.Query, "stack {"):
+			data = `{"repository":{"pullRequest":{"stack":null}}}`
+		case strings.Contains(req.Query, "mergeable mergeStateStatus reviewDecision"):
+			data = `{"repository":{"pullRequest":{"headRefOid":"abc","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"oid":"abc","statusCheckRollup":null}}]}}}}`
 		case strings.Contains(req.Query, "reviewThreads(first: 50"):
 			data = `{"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": [
 				{"id": "T1", "isResolved": false, "isOutdated": false, "path": "a.go", "line": 3, "comments": {
@@ -589,15 +595,15 @@ func TestMCP(t *testing.T) {
 			if s.Type != "object" || s.AdditionalProperties == nil || *s.AdditionalProperties {
 				t.Errorf("%s: schema takes properties it does not name: %+v", tool.Name, s)
 			}
-			if wantWorktree := !strings.HasPrefix(tool.Name, "github_"); slices.Contains(s.Required, "worktree") != wantWorktree {
+			if wantWorktree := !strings.HasPrefix(tool.Name, "github_") && tool.Name != "agent_pr_list"; slices.Contains(s.Required, "worktree") != wantWorktree {
 				t.Errorf("%s: requires worktree: %v, want %v", tool.Name, !wantWorktree, wantWorktree)
 			}
 		}
 		slices.Sort(names)
-		want := []string{"git_stage", "git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
-			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_next", "pr_loop_open", "pr_loop_push",
-			"pr_loop_reply", "pr_loop_request", "pr_loop_sign_check", "pr_loop_stack", "pr_loop_status", "pr_loop_threads",
-			"pr_loop_wait"}
+		want := []string{"git_stage", "agent_review", "agent_review_ask", "agent_review_settle", "agent_review_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
+			"agent_pr_ci", "agent_pr_draft", "agent_pr_end", "agent_pr_link", "agent_pr_list", "agent_pr_logs", "agent_pr_merge_preview", "agent_pr_publication_status", "agent_pr_open", "agent_pr_push",
+			"agent_pr_reply", "agent_pr_request", "agent_pr_sign_check", "agent_pr_stack", "agent_pr_status", "agent_pr_threads",
+			"agent_pr_wait"}
 		want = append(want, strings.Fields("agent_plan_new agent_plan_log agent_plan_set agent_plan_unfile agent_plan_ask agent_plan_decide agent_plan_followup agent_plan_step agent_plan_part agent_plan_edit agent_plan_after agent_plan_section agent_plan_visual agent_plan_digest agent_plan_brag agent_plan_reference agent_plan_link agent_plan_postpone agent_plan_carry agent_plan_pickup agent_plan_sign_id agent_plan_workstream_new agent_plan_workstream_list agent_plan_find agent_plan_status agent_plan_waiting agent_plan_acknowledge agent_plan_audit")...)
 		slices.Sort(want)
 		if !slices.Equal(names, want) {
@@ -605,10 +611,10 @@ func TestMCP(t *testing.T) {
 		}
 	})
 
-	t.Run("pr_loop_next returns a decision for each branch", func(t *testing.T) {
+	t.Run("publication status returns a decision for each branch", func(t *testing.T) {
 		f := newMCPFixture(t)
 		c := f.start(t)
-		r := c.tool(t, "pr_loop_next", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
+		r := c.tool(t, "agent_pr_publication_status", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
 		var steps []struct{ Kind, Branch, Why string }
 		if err := json.Unmarshal([]byte(r.out), &steps); err != nil || r.isError || len(steps) != 2 {
 			t.Fatalf("result %+v: %v", r, err)
@@ -620,10 +626,28 @@ func TestMCP(t *testing.T) {
 		}
 	})
 
-	t.Run("pr_loop_threads reads with the server's own login", func(t *testing.T) {
+	t.Run("merge preview routes the target to GitHub", func(t *testing.T) {
 		f := newMCPFixture(t)
 		c := f.start(t)
-		r := c.tool(t, "pr_loop_threads", map[string]any{"worktree": f.repo, "pr": 1})
+		r := c.tool(t, "agent_pr_merge_preview", map[string]any{"worktree": f.repo, "target": "123"})
+		var plan struct {
+			PR                      int
+			Repository, Destination string
+			PRs                     []struct {
+				Number             int
+				IsDraft            bool
+				Mergeable, CIState string
+			}
+		}
+		if err := json.Unmarshal([]byte(r.out), &plan); err != nil || r.isError || plan.PR != 123 || plan.Repository != "o/r" || plan.Destination != "main" || len(plan.PRs) != 1 || !plan.PRs[0].IsDraft || plan.PRs[0].Mergeable != "MERGEABLE" || plan.PRs[0].CIState != "UNKNOWN" {
+			t.Fatalf("preview %+v: result %+v, error %v", plan, r, err)
+		}
+	})
+
+	t.Run("agent_pr_threads reads with the server's own login", func(t *testing.T) {
+		f := newMCPFixture(t)
+		c := f.start(t)
+		r := c.tool(t, "agent_pr_threads", map[string]any{"worktree": f.repo, "pr": 1})
 		var threads []struct{ ID, Reviewer string }
 		if err := json.Unmarshal([]byte(r.out), &threads); err != nil || r.isError ||
 			len(threads) != 1 || threads[0].ID != "T1" || threads[0].Reviewer != "copilot" {
@@ -656,15 +680,15 @@ func TestMCP(t *testing.T) {
 			args       map[string]any
 			says       string
 		}{
-			{"an argument the tool does not take", "pr_loop_threads", map[string]any{"worktree": f.repo, "pr": 1, "repo": "x/y"}, "repo"},
-			{"a missing argument", "pr_loop_threads", map[string]any{"worktree": f.repo}, "pr"},
-			{"an argument of another type", "pr_loop_threads", map[string]any{"worktree": f.repo, "pr": "1"}, "pr"},
-			{"a value that reads as a flag", "pr_loop_stack", map[string]any{"worktree": f.repo, "target": "--help"}, "target"},
-			{"a relative worktree", "pr_loop_status", map[string]any{"worktree": "."}, "worktree"},
-			{"a file outside the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": outside, "round": 1}, "worktree"},
-			{"a file that leaves the worktree by ..", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "../replies.md", "round": 1}, "worktree"},
-			{"a link out of the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "link.md", "round": 1}, "worktree"},
-			{"a reply file without its round", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md"}, "round"},
+			{"an argument the tool does not take", "agent_pr_threads", map[string]any{"worktree": f.repo, "pr": 1, "repo": "x/y"}, "repo"},
+			{"a missing argument", "agent_pr_threads", map[string]any{"worktree": f.repo}, "pr"},
+			{"an argument of another type", "agent_pr_threads", map[string]any{"worktree": f.repo, "pr": "1"}, "pr"},
+			{"a value that reads as a flag", "agent_pr_stack", map[string]any{"worktree": f.repo, "target": "--help"}, "target"},
+			{"a relative worktree", "agent_pr_status", map[string]any{"worktree": "."}, "worktree"},
+			{"a file outside the worktree", "agent_pr_reply", map[string]any{"worktree": f.repo, "replies_file": outside, "round": 1}, "worktree"},
+			{"a file that leaves the worktree by ..", "agent_pr_reply", map[string]any{"worktree": f.repo, "replies_file": "../replies.md", "round": 1}, "worktree"},
+			{"a link out of the worktree", "agent_pr_reply", map[string]any{"worktree": f.repo, "replies_file": "link.md", "round": 1}, "worktree"},
+			{"a reply file without its round", "agent_pr_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md"}, "round"},
 			{"a tool it does not have", "gh_api", map[string]any{"worktree": f.repo}, "gh_api"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -677,7 +701,7 @@ func TestMCP(t *testing.T) {
 		// Outside a bots-mode loop, reply posts only on the operator's
 		// terminal, and the server's terminal is not theirs to answer: the
 		// tool refuses by the loop's mode, never reaching for /dev/tty.
-		r := c.tool(t, "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md", "round": 1})
+		r := c.tool(t, "agent_pr_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md", "round": 1})
 		if !r.isError || !strings.Contains(r.text, "bots-mode") || strings.Contains(r.text, "/dev/tty") {
 			t.Errorf("a reply outside a loop: %+v", r)
 		}
@@ -686,7 +710,7 @@ func TestMCP(t *testing.T) {
 		}
 	})
 
-	t.Run("git_delegate runs the reviewers it names", func(t *testing.T) {
+	t.Run("agent_review runs the reviewers it names", func(t *testing.T) {
 		f := newMCPFixture(t)
 		finding := map[string]any{"id": "1", "path": "code.txt", "line": 2, "endLine": nil, "kind": "vulnerability",
 			"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
@@ -698,7 +722,7 @@ func TestMCP(t *testing.T) {
 		os.WriteFile(filepath.Join(f.log, "security-reviewer-out"), []byte(reply(map[string]any{
 			"findings": []any{finding}, "unverified": []string{}, "checked": review.Categories})), 0o644)
 		c := f.start(t)
-		r := c.tool(t, "git_delegate", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD",
+		r := c.tool(t, "agent_review", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD",
 			"reviewer": []string{"security"}, "plan": f.plan})
 		var run struct {
 			Reviews []struct {
@@ -721,7 +745,7 @@ func TestMCP(t *testing.T) {
 		// does, and Codex, which is not installed here, is never asked.
 		os.WriteFile(filepath.Join(f.log, "adversarial-reviewer-out"), []byte(reply(map[string]any{
 			"findings": []any{}, "unverified": []string{}, "routes": []any{}})), 0o644)
-		r = c.tool(t, "git_delegate", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD", "plan": f.plan})
+		r = c.tool(t, "agent_review", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD", "plan": f.plan})
 		var general struct{ Reviews []struct{ Reviewer string } }
 		if err := json.Unmarshal([]byte(r.out), &general); err != nil || r.isError ||
 			len(general.Reviews) != 1 || general.Reviews[0].Reviewer != "claude" {

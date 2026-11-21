@@ -19,6 +19,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitgrant"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
+	"github.com/wesnel/agent-tools/internal/prcli"
 	"github.com/wesnel/agent-tools/internal/review"
 )
 
@@ -26,7 +27,7 @@ import (
 // session cannot run in its sandbox, which denies the gh login and the
 // reviewers' credentials to its commands, as tools of a stdio MCP server
 // Codex starts as a process of its own, outside that sandbox. Each tool
-// runs a GitHub read or one pr-loop, git delegate or agent-plan command
+// runs a GitHub read or one agent-pr, agent-review or agent-plan command
 // from typed arguments: no tool takes a shell line, gh arguments or
 // argv. The operations read the gh login themselves, as they do on the
 // command line, and print what they print there. Codex prompts for non-plan
@@ -92,25 +93,25 @@ func (a mcpArgs) opt(argv []string, flag, name string) []string {
 	return argv
 }
 
-func prLoopTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
-	return run(argv[0], argv[1:], strings.NewReader(""), stdout, stderr)
+func prTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
+	return prcli.Run(argv[0], argv[1:], strings.NewReader(""), stdout, stderr)
 }
 
-// replyTool is prLoopTool for pr_loop_reply, which runs only in a
+// replyTool is prTool for agent_pr_reply, which runs only in a
 // bots-mode loop: outside one, reply posts once someone answers on a
 // terminal, and the server's terminal, if it has one, is not the agent's
 // to answer.
 func replyTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	if os.Getenv(loop.ModeEnv) != "bots" {
-		fmt.Fprintln(stderr, "pr-loop: refused: pr_loop_reply runs only in a bots-mode review loop; outside one, posting replies "+
+		fmt.Fprintln(stderr, "agent-ops: refused: agent_pr_reply runs only in a bots-mode review loop; outside one, posting replies "+
 			"to bot threads is the operator's. Put the reply file in the worktree, and say in the report that it waits for "+
-			"`pr-loop reply --from FILE --round N` there.")
+			"`agent-pr reply --from FILE --round N` there.")
 		return 2
 	}
-	return prLoopTool(ctx, argv, stdout, stderr)
+	return prTool(ctx, argv, stdout, stderr)
 }
 
-func delegateTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
+func reviewTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	return review.Main(ctx, argv, strings.NewReader(""), stdout, stderr)
 }
 
@@ -123,15 +124,27 @@ var (
 )
 
 // mcpTools are the server's tools, each named for the command it runs:
-// pr-loop X is pr_loop_X and git delegate X is git_delegate_X, dashes as
+// agent-pr X is agent_pr_X and agent-review X is agent_review_X, dashes as
 // underscores, and each flag is the argument of its name.
 var mcpTools = []mcpTool{
-	{name: "pr_loop_next", desc: "pr-loop next: read each branch's next step: open an unsigned draft PR, sign, push, nothing, or blocked.",
+	{name: "agent_pr_list", desc: "agent-pr list: read every open PR in a repository, including drafts and forks, without a checkout or review-loop mode.",
+		params:     []mcpParam{{name: "repo", kind: text, required: true, desc: "GitHub repository OWNER/NAME"}},
+		noWorktree: true,
+		argv:       func(a mcpArgs) []string { return []string{"list", "--repo", a.str("repo")} }, run: prTool},
+	{name: "agent_pr_publication_status", desc: "agent-pr publication-status: read each branch's publication step: open an unsigned draft PR, sign, push, complete, or blocked. Completion describes publication only.",
 		params: []mcpParam{{name: "branches", kind: texts, desc: "branches to inspect; default: the worktree's branch"}},
 		argv: func(a mcpArgs) []string {
-			return append([]string{"next", "--json"}, a.strs("branches")...)
-		}, run: prLoopTool},
-	{name: "pr_loop_open", desc: "pr-loop open: push a branch GitHub does not have through the API and open it as a draft PR.",
+			return append([]string{"publication-status", "--json"}, a.strs("branches")...)
+		}, run: prTool},
+	{name: "agent_pr_merge_preview", desc: "agent-pr merge-preview: read the PR and its open downstack PRs, destination, heads, draft, CI and review state. Does not mark ready or merge.",
+		params: []mcpParam{{name: "target", kind: text, desc: "a PR by number or branch; default: the worktree's branch's"}},
+		argv: func(a mcpArgs) []string {
+			if target := a.str("target"); target != "" {
+				return []string{"merge-preview", target}
+			}
+			return []string{"merge-preview"}
+		}, run: prTool},
+	{name: "agent_pr_open", desc: "agent-pr open: push a branch GitHub does not have through the API and open it as a draft PR.",
 		params: []mcpParam{{name: "title", kind: text, required: true, desc: "the PR's title"},
 			{name: "body_file", kind: file, required: true, desc: "the description, a Markdown file in the worktree"},
 			{name: "base", kind: text, desc: "the base branch; default: the default branch"},
@@ -143,32 +156,32 @@ var mcpTools = []mcpTool{
 				argv = append(argv, b)
 			}
 			return argv
-		}, run: prLoopTool},
-	{name: "pr_loop_stack", desc: "pr-loop stack: the stack of open PRs containing a PR, and GitHub's stack of it.",
+		}, run: prTool},
+	{name: "agent_pr_stack", desc: "agent-pr stack: the stack of open PRs containing a PR, and GitHub's stack of it.",
 		params: []mcpParam{{name: "target", kind: text, desc: "a PR by number or branch; default: the worktree's branch's"}},
 		argv: func(a mcpArgs) []string {
 			if t := a.str("target"); t != "" {
 				return []string{"stack", t}
 			}
 			return []string{"stack"}
-		}, run: prLoopTool},
-	{name: "pr_loop_link", desc: "pr-loop link: put PRs, bottom first, each based on the one before, into one GitHub stack.",
+		}, run: prTool},
+	{name: "agent_pr_link", desc: "agent-pr link: put PRs, bottom first, each based on the one before, into one GitHub stack.",
 		params: []mcpParam{{name: "prs", kind: texts, required: true, desc: "PRs by number or branch, bottom first"}},
-		argv:   func(a mcpArgs) []string { return append([]string{"link"}, a.strs("prs")...) }, run: prLoopTool},
-	{name: "pr_loop_push", desc: "pr-loop push: push branches through the GitHub API, bottom up, in a bots-mode review loop.",
+		argv:   func(a mcpArgs) []string { return append([]string{"link"}, a.strs("prs")...) }, run: prTool},
+	{name: "agent_pr_push", desc: "agent-pr push: push branches through the GitHub API, bottom up, in a bots-mode review loop.",
 		params: []mcpParam{{name: "branches", kind: texts, desc: "branches, bottom first; default: the worktree's"},
 			{name: "lease", kind: texts, desc: "BRANCH=SHA, the head GitHub must have for a rebased branch"}, dryRun},
 		argv: func(a mcpArgs) []string {
 			argv := a.opt(a.opt([]string{"push"}, "--lease", "lease"), "--dry-run", "dry_run")
 			return append(argv, a.strs("branches")...)
-		}, run: prLoopTool},
-	{name: "pr_loop_threads", desc: "pr-loop threads: a PR's unresolved review threads, every comment read; writes its review record.",
+		}, run: prTool},
+	{name: "agent_pr_threads", desc: "agent-pr threads: read a PR's unresolved review threads and every comment without changing review records.",
 		params: []mcpParam{{name: "pr", kind: number, required: true, desc: "the PR's number"},
 			{name: "all", kind: toggle, desc: "resolved threads too"}},
 		argv: func(a mcpArgs) []string {
 			return append(a.opt([]string{"threads"}, "--all", "all"), strconv.Itoa(a["pr"].(int)))
-		}, run: prLoopTool},
-	{name: "pr_loop_reply", desc: "pr-loop reply --from: post the replies in a reply file, resolving the threads it marks, " +
+		}, run: prTool},
+	{name: "agent_pr_reply", desc: "agent-pr reply --from: post the replies in a reply file, resolving the threads it marks, " +
 		"each logged as a finding settled with its outcome.",
 		params: []mcpParam{{name: "replies_file", kind: file, required: true,
 			desc: "the reply file in the worktree: per thread a line `=== thread THREAD OUTCOME` or " +
@@ -177,32 +190,32 @@ var mcpTools = []mcpTool{
 		argv: func(a mcpArgs) []string {
 			return []string{"reply", "--from", a.str("replies_file"), "--round", strconv.Itoa(a["round"].(int))}
 		}, run: replyTool},
-	{name: "pr_loop_draft", desc: "pr-loop draft: write the answer to a thread into the PR's review record, for the operator to post.",
+	{name: "agent_pr_draft", desc: "agent-pr draft: write the answer to a thread into the PR's review record, for the operator to post.",
 		params: []mcpParam{{name: "thread", kind: text, required: true, desc: "the thread's ID"},
 			{name: "body_file", kind: file, required: true, desc: "the answer, a Markdown file in the worktree"},
 			{name: "outcome", kind: text, required: true, desc: "the review-change skill's Triage outcome"}},
 		argv: func(a mcpArgs) []string {
 			return []string{"draft", a.str("thread"), "--body-file", a.str("body_file"), "--outcome", a.str("outcome")}
-		}, run: prLoopTool},
-	{name: "pr_loop_request", desc: "pr-loop request: ask each configured bot that has not reviewed the head to review, once CI allows.",
+		}, run: prTool},
+	{name: "agent_pr_request", desc: "agent-pr request: ask each configured bot that has not reviewed the head to review, once CI allows.",
 		params: []mcpParam{{name: "bot", kind: texts, desc: "only these bots"}, prsParam},
 		argv: func(a mcpArgs) []string {
 			return append(a.opt([]string{"request"}, "--bot", "bot"), a.strs("prs")...)
-		}, run: prLoopTool},
-	{name: "pr_loop_status", desc: "pr-loop status: CI, each bot's review and the open threads of PRs.",
+		}, run: prTool},
+	{name: "agent_pr_status", desc: "agent-pr status: CI, each bot's review and the open threads of PRs.",
 		params: []mcpParam{prsParam},
-		argv:   func(a mcpArgs) []string { return append([]string{"status"}, a.strs("prs")...) }, run: prLoopTool},
-	{name: "pr_loop_ci", desc: "pr-loop ci: the checks on each PR's head, compared with its base.",
+		argv:   func(a mcpArgs) []string { return append([]string{"status"}, a.strs("prs")...) }, run: prTool},
+	{name: "agent_pr_ci", desc: "agent-pr ci: the checks on each PR's head, compared with its base.",
 		params: []mcpParam{prsParam},
-		argv:   func(a mcpArgs) []string { return append([]string{"ci"}, a.strs("prs")...) }, run: prLoopTool},
-	{name: "pr_loop_logs", desc: "pr-loop logs: the end of a failed GitHub Actions job's log.",
+		argv:   func(a mcpArgs) []string { return append([]string{"ci"}, a.strs("prs")...) }, run: prTool},
+	{name: "agent_pr_logs", desc: "agent-pr logs: the end of a failed GitHub Actions job's log.",
 		params: []mcpParam{{name: "pr", kind: text, required: true, desc: "the PR by number or branch"},
 			{name: "check", kind: text, required: true, desc: "the check's name"},
 			{name: "lines", kind: number, desc: "lines from the end; default 200"}},
 		argv: func(a mcpArgs) []string {
 			return append(a.opt([]string{"logs"}, "--lines", "lines"), a.str("pr"), a.str("check"))
-		}, run: prLoopTool},
-	{name: "pr_loop_wait", desc: "pr-loop wait: block until CI on each head finishes (exit 3 on timeout, 4 when a head has no checks), " +
+		}, run: prTool},
+	{name: "agent_pr_wait", desc: "agent-pr wait: block until CI on each head finishes (exit 3 on timeout, 4 when a head has no checks), " +
 		"or until requested reviews land (exit 3 on timeout).",
 		params: []mcpParam{{name: "for", kind: text, required: true, enum: []string{"ci", "reviews"}, desc: "what to wait for"},
 			{name: "sha", kind: text, desc: "ci only: the commit the PR's head must become"},
@@ -211,18 +224,18 @@ var mcpTools = []mcpTool{
 		argv: func(a mcpArgs) []string {
 			argv := a.opt(a.opt(a.opt([]string{"wait", a.str("for")}, "--sha", "sha"), "--grace", "grace"), "--timeout", "timeout")
 			return append(argv, a.strs("prs")...)
-		}, run: prLoopTool},
-	{name: "pr_loop_sign_check", desc: "pr-loop sign-check: squash the fixups of the worktree's stack unsigned in a throwaway " +
+		}, run: prTool},
+	{name: "agent_pr_sign_check", desc: "agent-pr sign-check: squash the fixups of the worktree's stack unsigned in a throwaway " +
 		"worktree and check every branch keeps its own commits and files.",
-		argv: func(mcpArgs) []string { return []string{"sign-check"} }, run: prLoopTool},
-	{name: "pr_loop_end", desc: "pr-loop end: delete your review-request trigger comments.",
+		argv: func(mcpArgs) []string { return []string{"sign-check"} }, run: prTool},
+	{name: "agent_pr_end", desc: "agent-pr end: delete your review-request trigger comments.",
 		params: []mcpParam{prsParam},
-		argv:   func(a mcpArgs) []string { return append([]string{"end"}, a.strs("prs")...) }, run: prLoopTool},
+		argv:   func(a mcpArgs) []string { return append([]string{"end"}, a.strs("prs")...) }, run: prTool},
 
-	{name: "git_delegate", desc: "git delegate: review a range or a pull request with reviewers that did not write it, and keep " +
+	{name: "agent_review", desc: "agent-review: review a range or a pull request with reviewers that did not write it, and keep " +
 		"their findings in its review record. Exit 3: open findings; 4: a reviewer could not run here.",
 		params: []mcpParam{sourceParm,
-			{name: "reviewer", kind: texts, desc: "reviewer types to run (git delegate -h); default: one general review; specialists and guide require explicit selection"},
+			{name: "reviewer", kind: texts, desc: "reviewer types to run (agent-review -h); default: one general review; specialists and guide require explicit selection"},
 			{name: "plan", kind: text, desc: "the plan, its file or name, whose Goal is the goal statement; required for a range"},
 			{name: "part", kind: text, desc: "the plan's part whose Goal to read, as P1"},
 			{name: "items", kind: file, desc: "the items the change answers, a file in the worktree"},
@@ -235,8 +248,8 @@ var mcpTools = []mcpTool{
 				argv = a.opt(argv, "--"+strings.ReplaceAll(f, "_", "-"), f)
 			}
 			return append(argv, a.str("source"))
-		}, run: delegateTool},
-	{name: "git_delegate_ask", desc: "git delegate ask: a second opinion on a design question from another model family, " +
+		}, run: reviewTool},
+	{name: "agent_review_ask", desc: "agent-review ask: a second opinion on a design question from another model family, " +
 		"judged from the named files of the worktree's repository alone.",
 		params: []mcpParam{{name: "question", kind: file, required: true, desc: "the question, a file in the worktree"},
 			{name: "paths", kind: texts, required: true, desc: "the repository's files the answer rests on"},
@@ -244,8 +257,8 @@ var mcpTools = []mcpTool{
 		argv: func(a mcpArgs) []string {
 			argv := a.opt([]string{"ask"}, "--reviewer", "reviewer")
 			return append(append(argv, "--question", a.str("question")), a.strs("paths")...)
-		}, run: delegateTool},
-	{name: "git_delegate_settle", desc: "git delegate settle: record how a finding of a review was settled, in its record.",
+		}, run: reviewTool},
+	{name: "agent_review_settle", desc: "agent-review settle: record how a finding of a review was settled, in its record.",
 		params: []mcpParam{sourceParm, {name: "finding", kind: text, required: true, desc: "the finding's record ID, as F3"},
 			{name: "outcome", kind: text, required: true, desc: "the review-change skill's Triage outcome, or open"},
 			{name: "target", kind: text, desc: "for duplicate-of and belongs-in: the finding or branch"},
@@ -253,10 +266,10 @@ var mcpTools = []mcpTool{
 		argv: func(a mcpArgs) []string {
 			argv := []string{"settle", a.str("source"), a.str("finding"), a.str("outcome")}
 			return a.opt(a.opt(argv, "--target", "target"), "--reason-file", "reason_file")
-		}, run: delegateTool},
-	{name: "git_delegate_show", desc: "git delegate show: print a range's or a pull request's review record.",
+		}, run: reviewTool},
+	{name: "agent_review_show", desc: "agent-review show: print a range's or a pull request's review record.",
 		params: []mcpParam{sourceParm},
-		argv:   func(a mcpArgs) []string { return []string{"show", a.str("source")} }, run: delegateTool},
+		argv:   func(a mcpArgs) []string { return []string{"show", a.str("source")} }, run: reviewTool},
 
 	{name: "github_profile", desc: "The name and pronouns a GitHub user's profile lists, null where it lists none.",
 		params:     []mcpParam{{name: "login", kind: text, required: true, desc: "the user's login"}},
@@ -292,7 +305,7 @@ func githubProfile(ctx context.Context, argv []string, stdout, stderr io.Writer)
 	if err == nil {
 		result = map[string]any{"login": argv[0], "name": data.User.Name, "pronouns": data.User.Pronouns}
 	}
-	return cli.Report("pr-loop mcp", result, err, 0, stdout, stderr)
+	return cli.Report("agent-ops mcp", result, err, 0, stdout, stderr)
 }
 
 // schema is t's input schema, which takes nothing it does not name.
@@ -466,18 +479,18 @@ var mcpProtocols = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
 // terminal, so those point at stderr and nothing while it serves.
 func mcpMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
-		fmt.Fprintln(stderr, "pr-loop mcp takes no arguments")
+		fmt.Fprintln(stderr, "agent-ops mcp takes no arguments")
 		return 2
 	}
 	null, err := os.Open(os.DevNull)
 	if err != nil {
-		fmt.Fprintln(stderr, "pr-loop mcp:", err)
+		fmt.Fprintln(stderr, "agent-ops mcp:", err)
 		return 1
 	}
 	defer null.Close()
 	os.Stdin, os.Stdout = null, os.Stderr
 	if err := serveMCP(context.Background(), stdin, stdout); err != nil {
-		fmt.Fprintln(stderr, "pr-loop mcp:", err)
+		fmt.Fprintln(stderr, "agent-ops mcp:", err)
 		return 1
 	}
 	return 0
@@ -563,7 +576,7 @@ func answer(ctx context.Context, m rpcMessage) (any, map[string]any) {
 func callTool(ctx context.Context, name string, raw map[string]any, threadID string) map[string]any {
 	refused := func(err error) map[string]any {
 		return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text",
-			"text": "pr-loop mcp: refused: " + err.Error()}}}
+			"text": "agent-ops mcp: refused: " + err.Error()}}}
 	}
 	i := slices.IndexFunc(mcpTools, func(t mcpTool) bool { return t.name == name })
 	if i < 0 {

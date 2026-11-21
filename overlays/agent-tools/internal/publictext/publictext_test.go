@@ -43,13 +43,13 @@ func TestCheck(t *testing.T) {
 		{"a decision", "Per D188 this stays as it is.", Context{}, []string{"D188"}},
 		{"a question in a part", "P1.Q3 covers the rest; see Q45.", Context{}, []string{"P1.Q3", "Q45"}},
 		{"a question of the known plan", "As Q4 settled, the flag stays.", Context{PlanIDs: []string{"Q4"}}, []string{"Q4"}},
-		{"loop vocabulary", "pr-loop pushed this in round 3, after a sub-agent fixed it.", Context{},
-			[]string{"pr-loop", "round 3", "sub-agent"}},
+		{"loop vocabulary", "agent-pr pushed this in round 3, after a sub-agent fixed it.", Context{},
+			[]string{"agent-pr", "round 3", "sub-agent"}},
 		{"the loop's roles", "The coordinator agent overruled the owner sub-agent.", Context{},
 			[]string{"coordinator agent", "owner sub-agent"}},
 		{"review receipts and routes", "The review receipt is written; the review route is owed; fresh-review found nothing.", Context{},
 			[]string{"review receipt", "review route", "fresh-review"}},
-		{"vocabulary in code", "Ran `pr-loop reply` here.", Context{}, []string{"pr-loop"}},
+		{"vocabulary in code", "Ran `agent-pr reply` here.", Context{}, []string{"agent-pr"}},
 		{"a scratch path", "Notes are in /tmp/claude-501/abc/scratchpad/notes.md.", Context{},
 			[]string{"/tmp/claude-501/abc/scratchpad/notes.md"}},
 		{"TMPDIR", "Wrote it to `$TMPDIR/reply.md` first.", Context{}, []string{"$TMPDIR/reply.md"}},
@@ -61,7 +61,7 @@ func TestCheck(t *testing.T) {
 		{"the session", "From " + session + ".", Context{Sessions: []string{session}}, []string{session}},
 		{"a session ID", "Seen in session " + session + ".", Context{}, []string{session}},
 		{"a web session", "Seen in session_01AbCdEfGhIjKlMn.", Context{}, []string{"session_01AbCdEfGhIjKlMn"}},
-		{"the harness's own repository keeps its IDs out", "Serve pr-loop to sub-agents (tZ1Cm) per D188.", Context{Harness: true},
+		{"the harness's own repository keeps its IDs out", "Serve agent-pr to sub-agents (tZ1Cm) per D188.", Context{Harness: true},
 			[]string{"tZ1Cm", "D188"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestCheckPasses(t *testing.T) {
 }
 
 func TestRefusal(t *testing.T) {
-	got := Refusal("the reply", Check("Fixed per D188 (tZ1Cm).", Context{}), "run `pr-loop reply` again")
+	got := Refusal("the reply", Check("Fixed per D188 (tZ1Cm).", Context{}), "run `agent-pr reply` again")
 	for _, want := range []string{`the reply names "D188" (a plan's ID) and "tZ1Cm" (a review thread's short key)`,
 		"never seen", "URL", "short SHA", "key"} {
 		if !strings.Contains(got, want) {
@@ -135,15 +135,15 @@ func TestIn(t *testing.T) {
 		}
 	}
 	run("init", "-q", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("Run `pr-loop` here.\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("Run `agent-pr` here.\n"), 0o644)
 	run("add", "README.md")
 	run("-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "Start")
 	if In(dir).Harness {
-		t.Error("a repository without remotes that names pr-loop is the harness's")
+		t.Error("a repository without remotes that names agent-pr is the harness's")
 	}
 	run("remote", "add", "origin", "https://github.com/o/product.git")
 	if In(dir).Harness {
-		t.Error("a product repository that names pr-loop is the harness's")
+		t.Error("a product repository that names agent-pr is the harness's")
 	}
 	run("remote", "add", "upstream", "git@github.com:o/harness.git")
 	if !In(dir).Harness {

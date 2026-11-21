@@ -23,8 +23,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// AskUsage is `git delegate ask -h`.
-const AskUsage = `usage: git delegate ask [--reviewer TYPE] [--print-prompt] --question FILE [--model M] [--timeout S] PATH...
+// AskUsage is `agent-review ask -h`.
+const AskUsage = `usage: agent-review ask [--reviewer TYPE] [--print-prompt] --question FILE [--model M] [--timeout S] PATH...
 
 Asks the other model family (Claude for a Codex caller, Codex otherwise)
 for a second opinion on a design
@@ -64,7 +64,7 @@ Reply with one JSON object and nothing else:
 const askSchema = `{"type": "object", "additionalProperties": false, "required": ["answer", "unverified"],
  "properties": {"answer": {"type": "string"}, "unverified": {"type": "array", "items": {"type": "string"}}}}`
 
-// Answer is what `git delegate ask` prints.
+// Answer is what `agent-review ask` prints.
 type Answer struct {
 	Reviewer   string   `json:"reviewer"`
 	Model      *string  `json:"model"`
@@ -72,7 +72,7 @@ type Answer struct {
 	Unverified []string `json:"unverified"`
 }
 
-// ask runs `git delegate ask` with args and returns its exit status.
+// ask runs `agent-review ask` with args and returns its exit status.
 func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" ask", flag.ContinueOnError)
 	reviewer := flags.String("reviewer", generalReviewer(), "")
@@ -105,7 +105,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if len(paths) == 0 {
 		return report(nil, refusal.New("the reviewer reads only the files a question names, and none is named; "+
-			"pass each file the answer rests on, as `git delegate ask --question %s PATH...`", *question), 0)
+			"pass each file the answer rests on, as `agent-review ask --question %s PATH...`", *question), 0)
 	}
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
@@ -148,7 +148,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		fmt.Fprintf(stderr, "%s: Codex cannot answer here: %s. Ask a new sub-agent that only reads instead, "+
-			"giving it %s and the same files; or report that `git delegate ask` needs running outside this sandbox.\n",
+			"giving it %s and the same files; or report that `agent-review ask` needs running outside this sandbox.\n",
 			name, unconfined, *question)
 		return 4
 	}
@@ -195,7 +195,7 @@ func questionText(top, path string, stdin io.Reader) (string, error) {
 // linked is the refusal of a file at path with other hard links.
 func linked(path string) error {
 	return refusal.New("%s has other hard links, which may be anywhere, so where it is cannot be told from its "+
-		"name; put what the question needs from it into a file of its own, and pass that to `git delegate ask`", path)
+		"name; put what the question needs from it into a file of its own, and pass that to `agent-review ask`", path)
 }
 
 // askFile is a file a question names: its path relative to the repository,
@@ -222,14 +222,14 @@ func named(top string, paths []string) ([]askFile, error) {
 			return nil, linked(abs)
 		}
 		if err != nil {
-			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git delegate ask "+
+			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `agent-review ask "+
 				"--question FILE PATH...`", p)
 		}
 		rel, err := filepath.Rel(top, real)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			f.Close()
 			return nil, refusal.New("%s is outside the repository at %s; put what the question needs from it into the "+
-				"question file, and name only files in the repository, as `git delegate ask --question FILE PATH...`", p, top)
+				"question file, and name only files in the repository, as `agent-review ask --question FILE PATH...`", p, top)
 		}
 		data, err := io.ReadAll(f)
 		f.Close()

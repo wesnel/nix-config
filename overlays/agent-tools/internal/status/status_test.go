@@ -99,7 +99,7 @@ func reviewRoot(t *testing.T) string {
 var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
 
 // A request is marked reviewed by a record of its head, under ranges/ as
-// git delegate writes it, or under its GitHub name as it wrote before.
+// agent-review writes it, or under its GitHub name as it wrote before.
 func TestGitHub(t *testing.T) {
 	for name, dir := range map[string][]string{"under ranges": {"ranges"}, "under its GitHub name": {"p", "q"}} {
 		t.Run(name, func(t *testing.T) { testGitHub(t, dir) })

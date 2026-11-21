@@ -34,7 +34,7 @@ func Draft(id, body, outcome string) (any, error) {
 	if record.Text(body) != body {
 		return nil, refuse("the draft would be posted other than as written, since a review record keeps no control "+
 			"characters but newline and tab, no file-variable markers (`Local Variables:`, `-*-`) and at most %d bytes; "+
-			"rewrite it without them and run `pr-loop draft` again", record.TextCap)
+			"rewrite it without them and run `agent-pr draft` again", record.TextCap)
 	}
 	if err := redact.Outgoing(body); err != nil {
 		return nil, err
@@ -53,7 +53,10 @@ func Draft(id, body, outcome string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPublic("the draft", body, append(threads, id), "run `pr-loop draft` again"); err != nil {
+	if err := checkPublic("the draft", body, append(threads, id), "run `agent-pr draft` again"); err != nil {
+		return nil, err
+	}
+	if _, err := RefreshThreads(policy.repo.Slug, thread.pr); err != nil {
 		return nil, err
 	}
 	path, err := prFile(policy.repo, thread.pr)
@@ -68,7 +71,7 @@ func Draft(id, body, outcome string) (any, error) {
 				return nil
 			}
 		}
-		return refuse("#%d's review record does not hold %s yet; run `pr-loop threads %d`, then draft again", thread.pr, id, thread.pr)
+		return refuse("#%d no longer contains thread %s; inspect it with `agent-pr threads %d` before drafting again", thread.pr, id, thread.pr)
 	})
 	if err != nil {
 		return nil, err
@@ -97,7 +100,7 @@ type PostResult struct {
 func Post(number int, threads []string) (any, error) {
 	tty, err := openTTY()
 	if err != nil {
-		return nil, refuse("`pr-loop post` asks the operator on the terminal before each reply, and /dev/tty cannot be "+
+		return nil, refuse("`agent-pr post` asks the operator on the terminal before each reply, and /dev/tty cannot be "+
 			"opened here (%v); the operator runs it from a terminal of their own", err)
 	}
 	defer tty.Close()
@@ -112,14 +115,14 @@ func Post(number int, threads []string) (any, error) {
 	}
 	p, err := record.ReadPR(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, refuse("#%d has no review record, so nothing is drafted; run `pr-loop threads %d` first", number, number)
+		return nil, refuse("#%d has no review record, so nothing is drafted; draft an answer with `agent-pr draft THREAD --body-file FILE --outcome OUTCOME` first", number)
 	}
 	if err != nil {
 		return nil, err
 	}
 	for _, id := range threads {
 		if !slices.ContainsFunc(p.Threads, func(t record.Thread) bool { return t.ID == id }) {
-			return nil, refuse("#%d's review record holds no thread %s; `pr-loop threads %d` lists them", number, id, number)
+			return nil, refuse("#%d's review record holds no thread %s; `agent-pr threads %d` lists them", number, id, number)
 		}
 	}
 	answers := bufio.NewReader(tty)
@@ -166,7 +169,7 @@ func postDraft(policy *threadPolicy, number int, path string, t record.Thread, t
 		return PostResult{}, err
 	}
 	if thread.pr != number {
-		return PostResult{}, refuse("%s is on #%d, not #%d; rerun `pr-loop threads %d` to fix the record", t.ID, thread.pr, number, number)
+		return PostResult{}, refuse("%s is on #%d, not #%d; inspect `agent-pr threads %d` and draft the answer again", t.ID, thread.pr, number, number)
 	}
 	if result.URL, err = postReply(number, t.ID, body); err != nil {
 		return PostResult{}, err
@@ -189,7 +192,7 @@ func markPosted(path, id, body string) error {
 		for i := range p.Threads {
 			if d := p.Threads[i].Draft; p.Threads[i].ID == id && d != nil {
 				if d.Body != body {
-					return fmt.Errorf("the draft for %s changed while it was posted; it was posted as shown, and its record is left for the next `pr-loop post`", id)
+					return fmt.Errorf("the draft for %s changed while it was posted; it was posted as shown, and its record is left for the next `agent-pr post`", id)
 				}
 				d.Posted = time.Now()
 				return nil

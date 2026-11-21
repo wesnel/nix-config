@@ -1,7 +1,9 @@
-package main
+package prcli
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +12,52 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/loop"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+func TestReadyDispatch(t *testing.T) {
+	for _, cause := range []error{errors.New("GitHub unavailable"), refusal.New("head changed")} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			posting(t)
+			old := runReady
+			t.Cleanup(func() { runReady = old })
+			called := false
+			runReady = func(target string) (any, error) {
+				called = true
+				if target != "3" {
+					t.Errorf("ready target %q, want 3", target)
+				}
+				return loop.ReadyResult{PR: 3, Ready: []int{1}}, cause
+			}
+			var stdout, stderr bytes.Buffer
+			code := Main([]string{"ready", "3"}, strings.NewReader(""), &stdout, &stderr)
+			var got loop.ReadyResult
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.PR != 3 || len(got.Ready) != 1 || got.Ready[0] != 1 {
+				t.Fatalf("partial progress missing: stdout %q, error %v", stdout.String(), err)
+			}
+			var refused refusal.Refusal
+			wantCode := 1
+			if errors.As(cause, &refused) {
+				wantCode = 2
+			}
+			if !called || code != wantCode || !strings.Contains(stderr.String(), cause.Error()) {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+		})
+	}
+}
+
 func TestRun(t *testing.T) {
+	for _, command := range []string{"merge-preview", "ready"} {
+		t.Run(command+" rejects extra targets", func(t *testing.T) {
+			posting(t)
+			var stdout, stderr bytes.Buffer
+			if code := Run(command, []string{"3", "4"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), command+" takes at most one PR") {
+				t.Fatalf("exit %d: %s", code, stderr.String())
+			}
+		})
+	}
 	// A command run from a worktree that GIT_DIR, set by a git hook or
 	// `rebase --exec` elsewhere, does not name is refused before it reads or
 	// writes either repository.
@@ -27,7 +72,7 @@ func TestRun(t *testing.T) {
 		os.Unsetenv("GIT_WORK_TREE")
 		t.Chdir(dir)
 		var stdout, stderr bytes.Buffer
-		if code := run("end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
+		if code := Run("end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
 			t.Errorf("exit %d\n%s", code, stderr.String())
 		}
 	})
@@ -45,7 +90,7 @@ func TestRun(t *testing.T) {
 		t.Run("merge/"+name, func(t *testing.T) {
 			_, calls := posting(t)
 			var stdout, stderr bytes.Buffer
-			if code := run("merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
+			if code := Run("merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
 				t.Errorf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(calls); err == nil {
@@ -80,7 +125,7 @@ func posting(t *testing.T) (string, string) {
 	return dir, calls
 }
 
-// pr-loop may run outside the sandbox with the operator's login, so text
+// agent-pr may run outside the sandbox with the operator's login, so text
 // it posts holds no secret's shape.
 func TestOutgoingText(t *testing.T) {
 	ghCalled := func(calls string) bool {
@@ -89,7 +134,7 @@ func TestOutgoingText(t *testing.T) {
 	}
 	pr := func(args ...string) (int, string) {
 		var stdout, stderr bytes.Buffer
-		code := run(args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
+		code := Run(args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
 		return code, stderr.String()
 	}
 	// The fake gh fails, so the reply gets as far as GitHub and no further.
